@@ -10,11 +10,11 @@ env:
     - ZFS_BUILD_TAGS=0
     - ZFS_BUILD_TAGS=1
 before_install:
-   # - sudo apt-get -qq update
+  # sudo apt-get -qq update
     - sudo apt-get install --yes -qq build-essential autoconf libtool gawk alien fakeroot linux-headers-$(uname -r) libaio-dev
     - sudo apt-get install --yes -qq zlib1g-dev uuid-dev libattr1-dev libblkid-dev libselinux-dev libudev-dev libssl-dev
     - sudo apt-get install --yes -qq lcov libjemalloc-dev
-    # packages for tests
+  # packages for tests
     - sudo apt-get install --yes -qq parted lsscsi ksh attr acl nfs-kernel-server fio
     - sudo apt-get install --yes -qq libgtest-dev cmake
 install:
@@ -25,7 +25,7 @@ install:
     - sudo cp *.a /usr/lib
     - popd
     - cd ..
-    - git clone https://github.com/zfsonlinux/spl
+    - git clone https://github.com/openebs/spl
     - cd spl
     - git checkout spl-0.7.4
     - sh autogen.sh
@@ -36,21 +36,13 @@ install:
         make --no-print-directory -s pkg-utils pkg-kmod;
         sudo dpkg -i *.deb;
       fi
-    - cd ../ZoL
+    - cd ../zfs
     - sh autogen.sh
     - if [ $ZFS_BUILD_TAGS = 0 ]; then
-        if [ $TRAVIS_BRANCH = "zfs-0.7-release" ]; then
-          ./configure --enable-code-coverage=yes --enable-uzfs=yes --with-jemalloc || travis_terminate 1;
-        else
-          ./configure --enable-code-coverage=yes --enable-debug --enable-uzfs=yes --with-jemalloc || travis_terminate 1;
-        fi;
+        ./configure --enable-code-coverage=yes --enable-uzfs=yes --with-jemalloc || travis_terminate 1;
         make;
       else
-        if [ $TRAVIS_BRANCH = "zfs-0.7-release" ]; then
-          ./configure --enable-code-coverage=yes || travis_terminate 1;
-        else
-          ./configure --enable-code-coverage=yes --enable-debug || travis_terminate 1;
-        fi;
+        ./configure --enable-code-coverage=yes || travis_terminate 1;
         make --no-print-directory -s pkg-utils pkg-kmod || travis_terminate 1;
         sudo dpkg -i *.deb || travis_terminate 1;
       fi
@@ -62,12 +54,8 @@ script:
         sudo mkdir /etc/zfs;
         travis_wait 60 ./tests/cbtest/script/test_uzfs.sh || travis_terminate 1;
       else
-        if [ $TRAVIS_BRANCH = "zfs-0.7-release" ]; then
-          travis_wait 100 /usr/share/zfs/zfs-tests.sh -r linux_cstor.run -v || travis_terminate 1;
-        else
-          sudo /sbin/modprobe zfs;
-          travis_wait 10 /sbin/ztest || travis_terminate 1;
-        fi;
+        sudo /sbin/modprobe zfs;
+        travis_wait 10 /sbin/ztest || travis_terminate 1;
       fi
 after_failure:
     - find /var/tmp/test_results/current/log -type f -name '*' -printf "%f\n" -exec cut -c -$ZFS_TEST_TRAVIS_LOG_MAX_LENGTH {} \;

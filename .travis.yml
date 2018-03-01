@@ -39,10 +39,10 @@ install:
     - cd ../zfs
     - sh autogen.sh
     - if [ $ZFS_BUILD_TAGS = 0 ]; then
-        ./configure --enable-code-coverage=yes --enable-uzfs=yes --with-jemalloc || travis_terminate 1;
+        ./configure --enable-code-coverage=yes --enable-debug --enable-uzfs=yes --with-jemalloc || travis_terminate 1;
         make;
       else
-        ./configure --enable-code-coverage=yes || travis_terminate 1;
+        ./configure --enable-code-coverage=yes --enable-debug || travis_terminate 1;
         make --no-print-directory -s pkg-utils pkg-kmod || travis_terminate 1;
         sudo dpkg -i *.deb || travis_terminate 1;
       fi

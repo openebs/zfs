@@ -39,6 +39,8 @@ uzfs_test_info_t uzfs_tests[] = {
 	{ uzfs_zvol_zap_operation, "uzfs zap operation test" },
 	{ replay_fn, "zvol replay test" },
 	{ unit_test_fn, "zvol read/write verification test"},
+	{ uzfs_zvol_txg_diff_blk_test, "uzfs modified blocks between two txg" },
+	{ uzfs_zvol_txg_mtree_test, "uzfs offset:len base tree test" },
 };
 
 uint64_t metaverify = 0;
@@ -326,7 +328,7 @@ static void usage(int num)
 
 	printf("uzfs_test -t <total_time_in_sec> -a <active data size>"
 	    " -b <block_size> -i <io size> -v <vol size> -l(for log device)"
-	    " -m <metadata to verify during replay>"
+	    " -m <metadata to verify during replay> -n <number of iterations>"
 	    " -s(for sync on) -S(for silent) -V <data to verify during replay>"
 	    " -w(for write during replay) -T <test id>\n");
 
@@ -401,7 +403,7 @@ static void process_options(int argc, char **argv)
 	uint64_t val = 0;
 	uint64_t num_tests = sizeof (uzfs_tests) / sizeof (uzfs_tests[0]);
 
-	while ((opt = getopt(argc, argv, "a:b:i:lm:sSt:v:V:wT:n:")) != EOF) {
+	while ((opt = getopt(argc, argv, "a:b:i:lm:n:sSt:T:v:V:w")) != EOF) {
 		if (optarg != NULL)
 			val = nicenumtoull(optarg);
 		switch (opt) {

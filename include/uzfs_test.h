@@ -33,6 +33,8 @@ extern int write_op;
 extern int verify_err;
 extern int verify;
 extern int test_iterations;
+extern uint64_t active_size;
+extern uint64_t vol_size;
 
 extern unsigned long zfs_arc_max;
 extern unsigned long zfs_arc_min;
@@ -58,4 +60,6 @@ typedef struct uzfs_test_info {
 
 void uzfs_zvol_zap_operation(void *arg);
 void unit_test_fn(void *arg);
+void uzfs_zvol_txg_diff_blk_test(void *arg);
+void uzfs_zvol_txg_mtree_test(void *arg);
 #endif

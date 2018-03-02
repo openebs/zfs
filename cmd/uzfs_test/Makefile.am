@@ -14,7 +14,8 @@ sbin_PROGRAMS = uzfs_test
 uzfs_test_SOURCES = \
 	uzfs_test.c	\
 	uzfs_test_sync.c \
-	uzfs_zvol_zap.c
+	uzfs_zvol_zap.c \
+	uzfs_txg_diff.c
 
 uzfs_test_LDADD = \
 	$(top_builddir)/lib/libnvpair/libnvpair.la \

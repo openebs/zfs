@@ -1,5 +1,6 @@
 #include <sys/types.h>
 #include <sys/spa.h>
+#include <sys/zap_impl.h>
 #include <uzfs_mgmt.h>
 #include <uzfs_zap.h>
 #include <uzfs_test.h>
@@ -29,9 +30,8 @@ destroy_zap_entries(uzfs_zap_kv_t **kv_array, uint64_t zap_count)
 
 	for (i = 0; i < zap_count; i++) {
 		kv = kv_array[i];
-		free(kv->key);
-		free(kv->value);
-		free(kv);
+		umem_free(kv->key,  strlen(kv->key) + 1);
+		umem_free(kv, sizeof (*kv));
 		kv = NULL;
 	}
 }
@@ -41,22 +41,19 @@ fill_up_zap_entries(uzfs_zap_kv_t **array, uint64_t n)
 {
 	int i = 0;
 	uzfs_zap_kv_t *zap;
-	uint64_t key_len, value_len;
+	uint64_t key_len, value;
 
 	for (i = 0; i < n; i++, zap = NULL) {
-		zap = malloc(sizeof (uzfs_zap_kv_t));
+		zap = umem_alloc(sizeof (uzfs_zap_kv_t), UMEM_NOFAIL);
 		key_len = uzfs_random(32);
-		value_len = uzfs_random(32);
 
 		key_len = (key_len < 8) ? 8 : key_len;
-		value_len = (value_len < 8) ? 8 : value_len;
 
-		zap->key = malloc(key_len);
-		zap->value = malloc(value_len);
-		zap->size = value_len;
+		zap->key = umem_alloc(key_len, UMEM_NOFAIL);
+		zap->value = uzfs_random(ULONG_MAX);
+		zap->size = sizeof (value);
 
 		populate_string(zap->key, key_len);
-		populate_string(zap->value, value_len);
 		array[i] = zap;
 	}
 }
@@ -69,7 +66,7 @@ update_zap_entries(uzfs_zap_kv_t **array, uint64_t n)
 
 	for (i = 0; i < n; i++) {
 		zap = array[i];
-		populate_string(zap->value, zap->size);
+		zap->value = uzfs_random(ULONG_MAX);
 	}
 
 }
@@ -78,23 +75,20 @@ void
 verify_zap_entries(void *zvol, uzfs_zap_kv_t **key_array, uint64_t count)
 {
 	uzfs_zap_kv_t *kv;
-	char *value, *temp_value;
+	uint64_t value;
 	int i = 0, err;
 	uzfs_zap_kv_t dummy_key;
 
 	for (i = 0; i < count; i++) {
 		kv = key_array[i];
-		temp_value = kv->value;
-		kv->value = calloc(1, kv->size);
+		value = kv->value;
+		kv->value = 0;
 		uzfs_read_zap_entry(zvol, kv);
-		VERIFY0(strncmp(kv->value, temp_value, kv->size));
-		free(temp_value);
-		value = NULL;
+		VERIFY(kv->value == value);
 	}
 
-	dummy_key.key = malloc(20);
-	dummy_key.value = malloc(20);
-	dummy_key.size = 20;
+	dummy_key.key = umem_alloc(20, UMEM_NOFAIL);
+	dummy_key.size = sizeof (dummy_key.value);
 
 	dummy_key.key = "DUMMY";
 	err = uzfs_read_zap_entry(zvol, &dummy_key);
@@ -125,7 +119,8 @@ uzfs_zvol_zap_operation(void *arg)
 	while (i++ < test_iterations) {
 		zap_count = uzfs_random(16) + 1;
 
-		kv_array = malloc(zap_count * sizeof (*kv_array));
+		kv_array = umem_alloc(zap_count * sizeof (*kv_array),
+		    UMEM_NOFAIL);
 		fill_up_zap_entries(kv_array, zap_count);
 
 		/* update key/value pair in ZAP entries */
@@ -142,8 +137,18 @@ uzfs_zvol_zap_operation(void *arg)
 
 		verify_zap_entries(zvol, kv_array, zap_count);
 
+		uzfs_zap_kv_t *temp_kv;
+		temp_kv = kv_array[0];
+		umem_free(temp_kv->key, strlen(temp_kv->key) + 1);
+		temp_kv->key = umem_alloc(MZAP_NAME_LEN + 4, UMEM_NOFAIL);
+		populate_string(temp_kv->key, MZAP_NAME_LEN + 4);
+		temp_kv->value = 2;
+		temp_kv->size = sizeof (temp_kv->value);
+		VERIFY(uzfs_update_zap_entries(zvol,
+		    (const uzfs_zap_kv_t **) kv_array, zap_count) == EINVAL);
+
 		destroy_zap_entries(kv_array, zap_count);
-		free(kv_array);
+		umem_free(kv_array, zap_count * sizeof (*kv_array));
 		kv_array = NULL;
 
 		printf("%s pass:%d\n", test_info->name, i);

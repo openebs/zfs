@@ -19,28 +19,13 @@
  * CDDL HEADER END
  */
 
-#ifndef	_UZFS_ZAP_H
-#define	_UZFS_ZAP_H
+#ifndef	_UZFS_MTREE_H
+#define	_UZFS_MTREE_H
 
-typedef struct {
-	char *key; 	/* zap key to update */
-	uint64_t value;	/* value to update against zap key */
-	size_t size;	/* size of value */
-} uzfs_zap_kv_t;
-
-#define	LAST_ITER_TXG	"last_iter_txg"
-
-extern long long txg_update_interval_time;
-
-/*
- * Here, allocation/freeing of kv_array needs to be handled by
- * caller function. uzfs_*_zap_entry will handle only microzap
- * entries or value with uint64_t entries.
- */
-int uzfs_update_zap_entries(void *zv, const uzfs_zap_kv_t **kv_array,
-    uint64_t n);
-int uzfs_read_zap_entry(void *zv, uzfs_zap_kv_t *entry);
-int uzfs_read_last_iter_txg(void *spa, uint64_t *val);
-void uzfs_update_txg_zap_thread(void *s);
-
+extern int uzfs_txg_block_diff(void *zv, uint64_t start_txg,
+    uint64_t end_txg, void **tree);
+extern void dump_mblktree(void *tree);
+extern void uzfs_create_mblktree(void **tree);
+extern void uzfs_destroy_mblktree(void *tree);
+extern int add_to_mblktree(void *tree, uint64_t offset, uint64_t size);
 #endif

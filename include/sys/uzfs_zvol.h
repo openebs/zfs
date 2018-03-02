@@ -103,5 +103,11 @@ uint64_t get_metadata_len(zvol_state_t *zv, uint64_t offset, uint64_t len);
  */
 extern zil_replay_func_t zvol_replay_vector[TX_MAX_TYPE];
 
+typedef struct uzfs_zvol_blk_phy {
+	uint64_t offset;
+	uint64_t len;
+	avl_node_t uzb_link;
+} uzfs_zvol_blk_phy_t;
+
 #endif
 #endif

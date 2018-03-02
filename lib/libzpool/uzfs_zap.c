@@ -23,6 +23,7 @@
 #include <sys/dsl_synctask.h>
 #include <sys/dsl_pool.h>
 #include <sys/dmu_objset.h>
+#include <sys/zap_impl.h>
 #include <sys/dmu_tx.h>
 #include <sys/zap.h>
 #include <sys/uzfs_zvol.h>
@@ -50,6 +51,17 @@ uzfs_update_zap_entries(void *zvol, const uzfs_zap_kv_t **array,
 	int err;
 	int i = 0;
 
+	/*
+	 * check if key length is greater than MZAP_NAME_LEN.
+	 * key with MZAP_NAME_LEN+ length will convert microzap
+	 * to fatzap.
+	 */
+	for (i = 0; i < count; i++) {
+		kv = array[i];
+		if (strlen(kv->key) >= MZAP_NAME_LEN)
+			return (EINVAL);
+	}
+
 	tx = dmu_tx_create(os);
 	dmu_tx_hold_zap(tx, ZVOL_ZAP_OBJ, TRUE, NULL);
 
@@ -61,8 +73,8 @@ uzfs_update_zap_entries(void *zvol, const uzfs_zap_kv_t **array,
 
 	for (i = 0; i < count; i++) {
 		kv = array[i];
-		VERIFY0(zap_update(os, ZVOL_ZAP_OBJ, kv->key, 1, kv->size,
-		    kv->value, tx));
+		VERIFY0(zap_update(os, ZVOL_ZAP_OBJ, kv->key, kv->size, 1,
+		    &kv->value, tx));
 	}
 
 	dmu_tx_commit(tx);
@@ -80,8 +92,8 @@ uzfs_read_zap_entry(void *zvol, uzfs_zap_kv_t *entry)
 	objset_t *os = zv->zv_objset;
 	int err;
 
-	err = zap_lookup(os, ZVOL_ZAP_OBJ, entry->key, 1, entry->size,
-	    entry->value);
+	err = zap_lookup(os, ZVOL_ZAP_OBJ, entry->key, entry->size, 1,
+	    &entry->value);
 	if (err)
 		return (SET_ERROR(err));
 

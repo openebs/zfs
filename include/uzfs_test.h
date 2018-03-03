@@ -33,6 +33,9 @@ extern int write_op;
 extern int verify_err;
 extern int verify;
 extern int test_iterations;
+extern uint32_t create;
+extern char *pool;
+extern char *ds;
 
 extern unsigned long zfs_arc_max;
 extern unsigned long zfs_arc_min;

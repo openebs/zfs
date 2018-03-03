@@ -21,6 +21,7 @@ USER_C = \
 	uzfs_io.c \
 	uzfs_task.c \
 	uzfs_mgmt.c \
+	uzfs_test_mgmt.c \
 	uzfs_zap.c \
 	vdev_disk_aio.c
 

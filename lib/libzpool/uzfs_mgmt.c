@@ -261,7 +261,7 @@ uzfs_objset_create_cb(objset_t *new_os, void *arg, cred_t *cr, dmu_tx_t *tx)
 
 /* owns objset with name 'ds_name' in pool 'spa'. Sets 'sync' property */
 int
-uzfs_open_dataset(spa_t *spa, const char *ds_name, int sync, zvol_state_t **z)
+uzfs_open_dataset(spa_t *spa, const char *ds_name, zvol_state_t **z)
 {
 	char name[ZFS_MAX_DATASET_NAME_LEN];
 	zvol_state_t *zv = NULL;
@@ -331,7 +331,6 @@ free_ret:
 	}
 
 	zv->zv_zilog = zil_open(os, zvol_get_data);
-	zv->zv_sync = sync;
 	zv->zv_volblocksize = block_size;
 	zv->zv_volsize = vol_size;
 
@@ -349,11 +348,11 @@ ret:
 
 /*
  * Creates dataset 'ds_name' in pool 'spa' with volume size 'vol_size',
- * block size as 'block_size' and with 'sync' property
+ * block size as 'block_size'
  */
 int
 uzfs_create_dataset(spa_t *spa, char *ds_name, uint64_t vol_size,
-    uint64_t block_size, int sync, zvol_state_t **z)
+    uint64_t block_size, zvol_state_t **z)
 {
 	char name[ZFS_MAX_DATASET_NAME_LEN];
 	zvol_state_t *zv = NULL;
@@ -375,7 +374,7 @@ uzfs_create_dataset(spa_t *spa, char *ds_name, uint64_t vol_size,
 	if (error)
 		goto ret;
 
-	error = uzfs_open_dataset(spa, ds_name, sync, &zv);
+	error = uzfs_open_dataset(spa, ds_name, &zv);
 	if (error != 0) {
 		zv = NULL;
 		goto ret;
@@ -383,12 +382,6 @@ uzfs_create_dataset(spa_t *spa, char *ds_name, uint64_t vol_size,
 ret:
 	*z = zv;
 	return (error);
-}
-
-uint64_t
-uzfs_synced_txg(zvol_state_t *zv)
-{
-	return (spa_last_synced_txg(zv->zv_spa));
 }
 
 /* disowns, closes dataset */

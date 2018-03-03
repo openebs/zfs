@@ -405,7 +405,8 @@ static void process_options(int argc, char **argv)
 	uint64_t val = 0;
 	uint64_t num_tests = sizeof (uzfs_tests) / sizeof (uzfs_tests[0]);
 
-	while ((opt = getopt(argc, argv, "a:b:cd:i:lm:p:sSt:v:V:wT:n:")) != EOF) {
+	while ((opt = getopt(argc, argv, "a:b:cd:i:lm:p:sSt:v:V:wT:n:"))
+	    != EOF) {
 		switch (opt) {
 			case 'd':
 			case 'p':
@@ -511,9 +512,6 @@ open_pool_ds(void **spa, void **zv)
 		printf("ds open errored.. %d\n", err);
 		exit(1);
 	}
-
-	/* sync option - 0 for standard, 1 for always */
-	//uzfs_set_sync(*zv, sync_data);
 }
 
 void

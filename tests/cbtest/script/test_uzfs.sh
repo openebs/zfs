@@ -90,9 +90,6 @@ init_test()
 	log_must truncate -s 2G "$TMPDIR/test_spare8.img"
 	log_must truncate -s 2G "$TMPDIR/test_log.img"
 
-	log_must truncate -s 2G "$TMPDIR/uztest.1a"
-	log_must truncate -s 2G "$TMPDIR/uztest.log"
-
 	$TGT -v $SRCPOOL/$SRCVOL &
 	TGT_PID=$!
 	sleep 1
@@ -118,8 +115,6 @@ close_test()
 	log_must rm "$TMPDIR/test_spare7.img"
 	log_must rm "$TMPDIR/test_spare8.img"
 	log_must rm "$TMPDIR/test_log.img"
-	log_must rm "$TMPDIR/uztest.1a"
-	log_must rm "$TMPDIR/uztest.log"
 }
 
 dump_data()
@@ -592,6 +587,9 @@ run_uzfs_test()
 {
 	log_must_not $UZFS_TEST
 
+	log_must truncate -s 2G "$TMPDIR/uztest.1a"
+	log_must truncate -s 2G "$TMPDIR/uztest.log"
+
 	log_must setup_uzfs_test nolog 4096 nosync
 	log_must $UZFS_TEST -T 2
 
@@ -619,6 +617,9 @@ run_uzfs_test()
 	log_must $UZFS_TEST -t 10 -T 0
 
 #	log_must . $UZFS_TEST_SYNC_SH
+
+	log_must rm "$TMPDIR/uztest.1a"
+	log_must rm "$TMPDIR/uztest.log"
 
 	return 0
 }
@@ -652,7 +653,6 @@ log_must run_dmu_test
 
 log_must $GTEST
 log_must $ZTEST
-
 
 echo "##################################"
 echo "All test cases passed"

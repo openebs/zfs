@@ -22,17 +22,6 @@
 #include <sys/dmu_objset.h>
 #include <sys/uzfs_zvol.h>
 
-void
-uzfs_set_sync(zvol_state_t *zv, uint8_t value)
-{
-	ASSERT(value == ZFS_SYNC_DISABLED || value == ZFS_SYNC_ALWAYS ||
-	    value == ZFS_SYNC_STANDARD);
-
-	zv->zv_objset->os_sync = value;
-	if (zv->zv_objset->os_zil)
-		zil_set_sync(zv->zv_objset->os_zil, value);
-}
-
 uint64_t
 uzfs_synced_txg(zvol_state_t *zv)
 {

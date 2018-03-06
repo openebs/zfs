@@ -22,10 +22,48 @@
 #ifndef	_UZFS_MTREE_H
 #define	_UZFS_MTREE_H
 
+/*
+ * API to get modified blocks between start_txg and end_txg
+ * Note: API will alocate condensed tree and populate it witch
+ *	modified block details (offset:lenth entries).
+ */
 extern int uzfs_txg_block_diff(void *zv, uint64_t start_txg,
     uint64_t end_txg, void **tree);
+
+extern int uzfs_txg_data_diff(void *zv, uint64_t start_txg,
+    uint64_t end_txg, void *r_data);
+
+
+/*
+ * dump_mblktree will print all entries (offset:length) to stdout
+ */
 extern void dump_mblktree(void *tree);
+
+/*
+ * dump_io_mblktree will print all entries from incoming io tree
+ */
+extern void dump_io_mblktree(void *zv);
+
+/*
+ * uzfs_create_mblktree will create avl tree to store incoming io's
+ * during rebuilding
+ */
 extern void uzfs_create_mblktree(void **tree);
 extern void uzfs_destroy_mblktree(void *tree);
+
 extern int add_to_mblktree(void *tree, uint64_t offset, uint64_t size);
+
+/*
+ * to add incoming io's details in io_tree
+ */
+extern void uzfs_add_to_rebuilding_tree(void *zv, uint64_t offset,
+    uint64_t len);
+
+/*
+ * API to search non-overlapping segment for rebuilding io
+ * It will create linked list with non-overlapping segment
+ * entries (i.e offset and length)
+ */
+extern int uzfs_search_rebuilding_tree(void *zv, uint64_t offset,
+    uint64_t len, void **list);
 #endif

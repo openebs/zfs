@@ -179,7 +179,7 @@ uzfs_zvol_txg_diff_blk_test(void *arg)
 			populate_data(buf, offset, 0, block_size);
 
 			if (uzfs_write_data(zvol, buf, offset, block_size,
-			    &io_num))
+			    &io_num, B_FALSE))
 				printf("IO error at offset: %lu len: %lu\n",
 				    offset, block_size);
 

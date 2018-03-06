@@ -69,6 +69,11 @@ struct zvol_state {
 	 * This should not be greater than volblocksize
 	 */
 	uint64_t zv_metavolblocksize;
+	boolean_t in_rebuilding_mode;	/* in rebuilding state */
+	/* mutex to synchronize io tree operation */
+	kmutex_t io_tree_mtx;
+	uint64_t rebuild_bytes;
+	avl_tree_t *incoming_io_tree;	/* incoming io tree */
 };
 
 typedef struct zvol_state zvol_state_t;
@@ -109,5 +114,18 @@ typedef struct uzfs_zvol_blk_phy {
 	avl_node_t uzb_link;
 } uzfs_zvol_blk_phy_t;
 
+typedef struct uzfs_io_chunk_list {
+	uint64_t offset;
+	uint64_t len;
+	char *buf;
+	list_node_t link;
+} uzfs_io_chunk_list_t;
+
+typedef struct uzfs_rebuild_data {
+	list_t *io_list;
+	kmutex_t mtx;
+	kcondvar_t cv;
+	boolean_t done;
+} uzfs_rebuild_data_t;
 #endif
 #endif

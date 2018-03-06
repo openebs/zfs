@@ -22,6 +22,7 @@
 #include <uzfs_mgmt.h>
 #include <uzfs_io.h>
 #include <uzfs_test.h>
+#include <uzfs_mtree.h>
 #include <math.h>
 
 int total_time_in_sec = 60;
@@ -41,6 +42,8 @@ uzfs_test_info_t uzfs_tests[] = {
 	{ unit_test_fn, "zvol read/write verification test"},
 	{ uzfs_zvol_txg_diff_blk_test, "uzfs modified blocks between two txg" },
 	{ uzfs_zvol_txg_mtree_test, "uzfs offset:len base tree test" },
+	{ uzfs_rebuild_tree_test, "uzfs rebuilding tree test" },
+	{ uzfs_rebuild_test, "uzfs rebuild pool test"},
 };
 
 uint64_t metaverify = 0;
@@ -207,7 +210,8 @@ writer_thread(void *arg)
 
 		/* randomness in io_num is to test VERSION_0 zil records */
 		err = uzfs_write_data(zv, buf[idx], offset,
-		    (idx + 1) * block_size, (uzfs_random(2) ? NULL : &io_num));
+		    (idx + 1) * block_size, (uzfs_random(2) ? NULL : &io_num),
+		    B_FALSE);
 		if (err != 0)
 			printf("IO error at offset: %lu len: %lu\n", offset,
 			    (idx + 1) * block_size);

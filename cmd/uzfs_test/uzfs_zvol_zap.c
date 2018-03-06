@@ -77,7 +77,7 @@ verify_zap_entries(void *zvol, uzfs_zap_kv_t **key_array, uint64_t count)
 	uzfs_zap_kv_t *kv;
 	uint64_t value;
 	int i = 0, err;
-	uzfs_zap_kv_t dummy_key;
+	uzfs_zap_kv_t *dummy_key;
 
 	for (i = 0; i < count; i++) {
 		kv = key_array[i];
@@ -87,15 +87,25 @@ verify_zap_entries(void *zvol, uzfs_zap_kv_t **key_array, uint64_t count)
 		VERIFY(kv->value == value);
 	}
 
-	dummy_key.key = umem_alloc(20, UMEM_NOFAIL);
-	dummy_key.size = sizeof (dummy_key.value);
+	dummy_key = umem_alloc(sizeof (*dummy_key), UMEM_NOFAIL);
+	dummy_key->size = sizeof (dummy_key->value);
 
-	dummy_key.key = "DUMMY";
-	err = uzfs_read_zap_entry(zvol, &dummy_key);
+	dummy_key->key = "DUMMY";
+	err = uzfs_read_zap_entry(zvol, dummy_key);
 	if (err == 0) {
 		printf("read zap should fail..\n");
 		exit(1);
 	}
+
+	dummy_key->size = 16;
+	err = uzfs_update_zap_entries(zvol,
+	    (const uzfs_zap_kv_t **) &dummy_key, 1);
+	if (err != EINVAL) {
+		printf("error in zap update\n");
+		exit(1);
+	}
+
+	umem_free(dummy_key, sizeof (*dummy_key));
 }
 
 void

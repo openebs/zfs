@@ -22,10 +22,10 @@
 #ifndef	_UZFS_MTREE_H
 #define	_UZFS_MTREE_H
 
-extern int uzfs_txg_block_diff(void *zv, uint64_t start_txg,
+extern int uzfs_get_txg_diff_tree(void *zv, uint64_t start_txg,
     uint64_t end_txg, void **tree);
-extern void dump_mblktree(void *tree);
-extern void uzfs_create_mblktree(void **tree);
-extern void uzfs_destroy_mblktree(void *tree);
-extern int add_to_mblktree(void *tree, uint64_t offset, uint64_t size);
+extern void dump_txg_diff_tree(void *tree);
+extern void uzfs_create_txg_diff_tree(void **tree);
+extern void uzfs_destroy_txg_diff_tree(void *tree);
+extern int add_to_txg_diff_tree(void *tree, uint64_t offset, uint64_t size);
 #endif

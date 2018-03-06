@@ -52,13 +52,20 @@ uzfs_update_zap_entries(void *zvol, const uzfs_zap_kv_t **array,
 	int i = 0;
 
 	/*
-	 * check if key length is greater than MZAP_NAME_LEN.
-	 * key with MZAP_NAME_LEN+ length will convert microzap
-	 * to fatzap.
+	 * micro zap will upgrade to fat-zap in following cases:
+	 * 	1. key length is greater or equal to MZAP_NAME_LEN
+	 *	2. value size is greater than 8
+	 * To avoid this, update zap-entries only if key length < MZAP_NAME_LEN
+	 * and value_size == 1.
 	 */
 	for (i = 0; i < count; i++) {
 		kv = array[i];
+		/*
+		 * checks to avoid fat zap upgrade and value size
+		 */
 		if (strlen(kv->key) >= MZAP_NAME_LEN)
+			return (EINVAL);
+		if (kv->size != 8)
 			return (EINVAL);
 	}
 

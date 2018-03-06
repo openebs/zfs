@@ -556,8 +556,8 @@ run_uzfs_test()
 	log_must $UZFS_TEST -l -i 8192 -b 65536 -T 2
 	log_must $UZFS_TEST -s -l -i 8192 -b 65536 -T 2
 	log_must $UZFS_TEST -t 10 -T 0 -n 10
-	log_must $UZFS_TEST -t 10 -T 3 -n 5
-	log_must $UZFS_TEST -t 10 -T 4 -n 5
+	log_must $UZFS_TEST -t 10 -T 3 -n 100
+	log_must $UZFS_TEST -t 10 -T 4
 
 	log_must . $UZFS_TEST_SYNC_SH
 

@@ -39,8 +39,9 @@ uzfs_test_info_t uzfs_tests[] = {
 	{ uzfs_zvol_zap_operation, "uzfs zap operation test" },
 	{ replay_fn, "zvol replay test" },
 	{ unit_test_fn, "zvol read/write verification test"},
-	{ uzfs_zvol_txg_diff_blk_test, "uzfs modified blocks between two txg" },
-	{ uzfs_zvol_txg_mtree_test, "uzfs offset:len base tree test" },
+	{ uzfs_txg_diff_verifcation_test,
+	    "test to verify modified blocks between two txg for zvol" },
+	{ uzfs_txg_diff_tree_test, "txg_diff_tree functionality test" },
 };
 
 uint64_t metaverify = 0;

@@ -144,8 +144,10 @@ replay_fn(void *arg)
 	zfs_txg_timeout = 30;
 
 	if (write_op == 1) {
-		setup_unit_test();
-		unit_test_create_pool_ds();
+		if (create == 1) {
+			setup_unit_test();
+			unit_test_create_pool_ds();
+		}
 		open_pool_ds(&spa, &zv);
 	} else if (verify != 0) {
 		open_pool_ds(&spa, &zv);

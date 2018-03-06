@@ -28,7 +28,7 @@ int
 uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
     blk_metadata_t *metadata)
 {
-	uint64_t bytes = 0, sync = zv->zv_sync;
+	uint64_t bytes = 0, sync;
 	uint64_t volsize = zv->zv_volsize;
 	uint64_t blocksize = zv->zv_volblocksize;
 	uint64_t end = len + offset;
@@ -42,6 +42,7 @@ uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 	uint64_t metadatasize = zv->zv_volmetadatasize;
 	uint64_t len_in_first_aligned_block = 0;
 
+	sync = dmu_objset_syncprop(os);
 	if (zv->zv_volmetablocksize == 0)
 		metadata = NULL;
 	/*

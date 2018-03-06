@@ -19,21 +19,11 @@
  * CDDL HEADER END
  */
 
-#ifndef	_UZFS_MGMT_H
+#include <sys/dmu_objset.h>
+#include <sys/uzfs_zvol.h>
 
-#define	_UZFS_MGMT_H
-
-extern int uzfs_init(void);
-extern int uzfs_create_pool(char *name, char *path, void **spa);
-extern int uzfs_open_pool(char *name, void **spa);
-extern int uzfs_vdev_add(void *spa, char *path, int ashift, int log);
-extern int uzfs_create_dataset(void *spa, char *ds, uint64_t vol_size,
-    uint64_t block_size, void **zv);
-extern int uzfs_open_dataset(void *spa, char *ds, void **zv);
-extern uint64_t uzfs_synced_txg(void *zv);
-extern void uzfs_close_dataset(void *zv);
-extern void uzfs_close_pool(void *spa);
-extern void uzfs_fini(void);
-extern uint64_t uzfs_random(uint64_t);
-
-#endif
+uint64_t
+uzfs_synced_txg(zvol_state_t *zv)
+{
+	return (spa_last_synced_txg(zv->zv_spa));
+}

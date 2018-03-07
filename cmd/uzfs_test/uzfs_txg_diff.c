@@ -38,12 +38,6 @@ static int del_from_txg_diff_tree(avl_tree_t *tree, uint64_t b_offset,
 static int uzfs_search_txg_diff_tree(avl_tree_t *tree, uint64_t offset,
     uint64_t *len);
 
-typedef struct wblkinfo {
-	uint64_t offset;
-	uint64_t len;
-	list_node_t link;
-} wblkinfo_t;
-
 /*
  * Delete entry (offset, len) from tree.
  * Note : As of now, this API is used in testing code only. To use it in
@@ -160,98 +154,91 @@ void
 uzfs_txg_diff_verifcation_test(void *arg)
 {
 	uzfs_test_info_t *test_info = (uzfs_test_info_t *)arg;
-	avl_tree_t *tree;
+	avl_tree_t *modified_block_tree;
 	uint64_t first_txg, last_txg;
 	hrtime_t end, now;
 	uint64_t blk_offset, offset, vol_blocks;
-	uint64_t blksz = io_block_size, io_num = 0;
-	void *spa, *zvol;
+	uint64_t io_num = 0;
+	void *spa, *zvol, *cookie = NULL;
 	char *buf;
 	int max_io, count, i = 0;
-	list_t wlist;
-	wblkinfo_t *blk, *temp_blk;
-	boolean_t offset_matched;
+	avl_tree_t *write_io_tree;
+	avl_index_t where;
+	uzfs_zvol_blk_phy_t *blk_info, temp_blk_info;
 
 	setup_unit_test();
 	unit_test_create_pool_ds();
 	open_pool_ds(&spa, &zvol);
 
-	vol_blocks = active_size / blksz;
+	vol_blocks = active_size / block_size;
 	buf = umem_alloc(block_size, UMEM_NOFAIL);
 
-	list_create(&wlist, sizeof (wblkinfo_t), offsetof(wblkinfo_t, link));
+	uzfs_create_txg_diff_tree((void **)&write_io_tree);
 
 	now = gethrtime();
 	end = now + (hrtime_t)(total_time_in_sec * (hrtime_t)(NANOSEC));
 
-	while (i++ < test_iterations) {
+	while (i++ < 5) {
 		count = 0;
-		max_io = MAX(uzfs_random(100), 5);
+		cookie = NULL;
+		// Here, consider test_iterations as number of ios
+		max_io = test_iterations;
+		io_num = 0;
 
 		txg_wait_synced(spa_get_dsl(spa), 0);
 		first_txg  = spa_last_synced_txg(spa);
 
 		while (count++ < max_io) {
-			io_num++;
+			where = 0;
 			blk_offset = uzfs_random(vol_blocks - 16);
 			/*
 			 * make sure offset is aligned to block size
 			 */
-			offset = ((blk_offset * blksz + block_size) /
-			    block_size) * block_size;
+			offset = blk_offset * block_size;
 
-			offset_matched = B_FALSE;
-			temp_blk = list_head(&wlist);
-			while (temp_blk) {
-				if (temp_blk->offset == offset) {
-					offset_matched = B_TRUE;
-					break;
-				}
-				if (temp_blk->offset + temp_blk->len ==
-				    offset) {
-					offset_matched = B_TRUE;
-					break;
-				}
-				temp_blk = list_next(&wlist, temp_blk);
-			}
-			if (offset_matched)
+			temp_blk_info.offset = offset;
+			if (avl_find(write_io_tree, &temp_blk_info, &where))
 				continue;
 
 			populate_data(buf, offset, 0, block_size);
 
-			if (uzfs_write_data(zvol, buf, offset, block_size,
-			    &io_num))
+			if (uzfs_write_data(zvol, buf, offset, uzfs_random(1) ?
+			    block_size : io_block_size, &io_num))
 				printf("IO error at offset: %lu len: %lu\n",
 				    offset, block_size);
 
-			blk = umem_alloc(sizeof (wblkinfo_t), UMEM_NOFAIL);
-			blk->offset = offset;
-			blk->len = block_size;
-			list_insert_tail(&wlist, blk);
-			blk = NULL;
+			blk_info = umem_alloc(sizeof (uzfs_zvol_blk_phy_t),
+			    UMEM_NOFAIL);
+			blk_info->offset = offset;
+			blk_info->len = block_size;
+			avl_insert(write_io_tree, blk_info, where);
+			blk_info = NULL;
+			io_num++;
 		}
 
 		txg_wait_synced(spa_get_dsl(spa), 0);
 		last_txg = spa_last_synced_txg(spa);
 
 		uzfs_get_txg_diff_tree(zvol, first_txg, last_txg,
-		    (void **)&tree);
+		    (void **)&modified_block_tree);
 
-		while ((blk = list_remove_head(&wlist))) {
-			VERIFY0(del_from_txg_diff_tree(tree, blk->offset,
-			    blk->len));
-			umem_free(blk, sizeof (*blk));
-			blk = NULL;
+		while ((blk_info = avl_destroy_nodes(write_io_tree,
+		    &cookie)) != NULL) {
+			VERIFY0(del_from_txg_diff_tree(modified_block_tree,
+			    blk_info->offset, blk_info->len));
+			umem_free(blk_info, sizeof (uzfs_zvol_blk_phy_t));
 		}
-		VERIFY0(avl_numnodes(tree));
+
+		VERIFY0(avl_numnodes(modified_block_tree));
+		VERIFY0(avl_numnodes(write_io_tree));
 		printf("%s : pass:%d\n", test_info->name, i);
-		umem_free(tree, sizeof (*tree));
-		tree = NULL;
+		umem_free(modified_block_tree, sizeof (*modified_block_tree));
+		modified_block_tree = NULL;
 	}
 
 	uzfs_close_dataset(zvol);
 	uzfs_close_pool(spa);
-	list_destroy(&wlist);
+	uzfs_destroy_txg_diff_tree(write_io_tree);
 	umem_free(buf, block_size);
 }
 

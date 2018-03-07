@@ -423,11 +423,6 @@ static void process_options(int argc, char **argv)
 		switch (opt) {
 			case 'a':
 				active_size = val;
-				if (vol_size == 0)
-					vol_size = active_size;
-				else
-					active_size = (active_size < vol_size)
-					    ? (active_size) : (vol_size);
 				break;
 			case 'b':
 				block_size = val;
@@ -461,11 +456,6 @@ static void process_options(int argc, char **argv)
 				break;
 			case 'v':
 				vol_size = val;
-				if (active_size == 0)
-					active_size = vol_size;
-				else
-					active_size = (active_size < vol_size)
-					    ? (active_size) : (vol_size);
 				break;
 			case 'V':
 				verify = val;
@@ -486,8 +476,14 @@ static void process_options(int argc, char **argv)
 				usage(0);
 		}
 	}
-	if (active_size == 0 || vol_size == 0)
-		active_size = vol_size = 1024*1024*1024ULL;
+	if (active_size == 0)
+		active_size = 1024*1024*1024ULL;
+
+	if (vol_size == 0)
+		vol_size = 1024*1024*1024ULL;
+
+	if (active_size > vol_size)
+		vol_size = active_size;
 
 	if (silent == 0) {
 		printf("vol size: %lu active size: %lu create: %d\n", vol_size,

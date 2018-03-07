@@ -53,6 +53,11 @@ To try zpool and zfs commands, start `cmd/tgt/tgt` binary with `sudo` and
 leave it running. Now zpool and zfs commands from cmd/ directory can be
 used in usual way.
 
+# Caveats
+
+Disk write cache must be disabled for any device not managed by linux
+sd driver. Cache flush is not supported for other drivers than sd.
+
 # Contributing
 Make sure to run cstyle on your changes before you submit a pull request:
 

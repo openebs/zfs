@@ -19,6 +19,9 @@
  * CDDL HEADER END
  */
 
+#include <scsi/scsi.h>
+#undef VERIFY	/* VERIFY macro name collision - we want the ZFS macro */
+
 #include <sys/zfs_context.h>
 #include <sys/spa.h>
 #include <sys/spa_impl.h>
@@ -34,6 +37,7 @@
 #include <libaio.h>
 #include <linux/fs.h>
 #include <rte_ring.h>
+#include <scsi/sg.h>
 
 /*
  * This is a max number of inflight IOs for a single vdev device and it governs
@@ -59,6 +63,10 @@ extern const uint32_t zfs_vdev_max_active;
  */
 #define	POLL_SLEEP	100000000
 
+/* SCSI flush command timeout in milliseconds */
+#define	SCSI_FLUSH_TIMEOUT	1000
+#define	SCSI_SENSE_BUF_LEN	32
+
 /*
  * Virtual device vector for disks accessed from userland using linux aio(7) API
  */
@@ -75,7 +83,8 @@ typedef struct vdev_disk_aio {
 	uint32_t vda_zio_next;	/* next zio to be submitted to kernel */
 				/* read & written only from poller thread */
 	uint32_t vda_zio_top;	/* latest incoming zio from uzfs */
-	struct rte_ring *vda_ring;	/* ring buffer to enqueue/dequeue zio */
+	struct rte_ring *vda_ring; /* ring buffer to enqueue/dequeue zio */
+	boolean_t vda_noflush;	/* disk cache flush not supported */
 } vdev_disk_aio_t;
 
 typedef struct aio_task {
@@ -90,11 +99,13 @@ typedef struct aio_task {
 typedef struct vda_stats {
 	kstat_named_t vda_stat_userspace_polls;
 	kstat_named_t vda_stat_kernel_polls;
+	kstat_named_t vda_stat_flush_errors;
 } vda_stats_t;
 
 static vda_stats_t vda_stats = {
 	{ "userspace_polls",	KSTAT_DATA_UINT64 },
 	{ "kernel_polls",	KSTAT_DATA_UINT64 },
+	{ "flush_errors",	KSTAT_DATA_UINT64 },
 };
 
 #define	VDA_STAT_BUMP(stat)	atomic_inc_64(&vda_stats.stat.value.ui64)
@@ -405,6 +416,87 @@ kick_submitter(vdev_disk_aio_t *vda)
 }
 
 /*
+ * This flush write-cache function works only for true SCSI disks (sd driver):
+ *
+ *  *) NVMe devices don't support the ioctl,
+ *  *) ATA/SATA disks haven't been tested.
+ *
+ * NOTE: This is called synchronously in zio pipeline. Attempt to execute
+ * flush asynchronously on behalf of taskq thread resulted in -10%
+ * performance regression for sync workloads.
+ */
+static void
+vdev_disk_aio_flush(zio_t *zio)
+{
+	vdev_t *vd = zio->io_vd;
+	vdev_disk_aio_t *vda = vd->vdev_tsd;
+
+	struct sg_io_hdr io_hdr;
+	unsigned char scCmdBlk[] =
+	    {SYNCHRONIZE_CACHE, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+	unsigned char sense_b[SCSI_SENSE_BUF_LEN];
+
+	memset(&io_hdr, 0, sizeof (io_hdr));
+
+	io_hdr.interface_id = 'S';
+	io_hdr.cmd_len = sizeof (scCmdBlk);
+	io_hdr.cmdp = scCmdBlk;
+	io_hdr.sbp = sense_b;
+	io_hdr.mx_sb_len = sizeof (sense_b);
+	io_hdr.dxfer_direction = SG_DXFER_NONE;
+	io_hdr.timeout = SCSI_FLUSH_TIMEOUT;
+
+	if (ioctl(vda->vda_fd, SG_IO, &io_hdr) < 0) {
+		if (errno == EINVAL || errno == ENOTTY) {
+			vda->vda_noflush = B_TRUE;
+		} else {
+			VDA_STAT_BUMP(vda_stat_flush_errors);
+			zio->io_error = errno;
+		}
+	} else if (io_hdr.status != GOOD) {
+		fprintf(stderr, "Synchronize cache SCSI command failed "
+		    "for %s\n", vd->vdev_path);
+		if (io_hdr.status == CHECK_CONDITION) {
+			char buf[3 * SCSI_SENSE_BUF_LEN];
+			int len = MIN(io_hdr.sb_len_wr, SCSI_SENSE_BUF_LEN);
+			unsigned char resp_code;
+			unsigned char sense_key = 0;
+
+			for (int i = 0; i < len; i++) {
+				snprintf(&buf[3 * i], 4, " %02X",
+				    io_hdr.sbp[i]);
+			}
+			fprintf(stderr, "Sense data:%s\n", buf);
+
+			resp_code = io_hdr.sbp[0] & 0x7f;
+			if (resp_code >= 0x72) {	/* descriptor format */
+				if (len > 1)
+					sense_key = (0xf & io_hdr.sbp[1]);
+			} else {			/* fixed format */
+				if (len > 2)
+					sense_key = (0xf & io_hdr.sbp[2]);
+			}
+			if (sense_key == ILLEGAL_REQUEST) {
+				vda->vda_noflush = B_TRUE;
+			} else {
+				VDA_STAT_BUMP(vda_stat_flush_errors);
+				zio->io_error = EIO;
+			}
+		} else {
+			VDA_STAT_BUMP(vda_stat_flush_errors);
+			zio->io_error = EIO;
+		}
+	}
+
+	if (vda->vda_noflush) {
+		fprintf(stderr, "Disk %s does not support synchronize "
+		    "cache SCSI command\n", vd->vdev_path);
+	}
+
+	zio_execute(zio);
+}
+
+/*
  * We probably can't do anything better from userland than opening the device
  * to prevent it from going away. So hold and rele are noops.
  */
@@ -498,6 +590,7 @@ vdev_disk_aio_open(vdev_t *vd, uint64_t *psize, uint64_t *max_psize,
 		return (SET_ERROR(ENOMEM));
 	}
 
+	vda->vda_noflush = B_FALSE;
 	vda->vda_stop_polling = B_FALSE;
 	vda->vda_poller_tid = (uintptr_t)thread_create(NULL, 0,
 	    vdev_disk_aio_poller, vda, 0, &p0, TS_RUN, 0);
@@ -588,19 +681,22 @@ vdev_disk_aio_start(zio_t *zio)
 			return;
 		}
 		/*
-		 * XXX fsync for device files should not be needed because with
-		 * O_DIRECT open flag VM caches are bypassed. But flushing disk
-		 * write cache is still needed but how to do that?
-		 */
-
-		/*
 		 * Flush suggests that higher level code has finished writing
 		 * and is waiting for data to be written to disk to continue.
 		 * So submit IOs which have been queued in input ring buffer.
 		 */
 		if (AIO_QUEUE_HIGH_WM > 1)
 			kick_submitter(vda);
-		zio_execute(zio);
+
+		/*
+		 * fsync for device files is not be needed because of O_DIRECT
+		 * open flag. But we still need to flush disk write-cache.
+		 */
+		if (!vda->vda_noflush) {
+			vdev_disk_aio_flush(zio);
+		} else {
+			zio_execute(zio);
+		}
 		return;
 
 	case ZIO_TYPE_WRITE:

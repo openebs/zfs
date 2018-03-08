@@ -47,6 +47,14 @@ struct rebuilding_info {
 	int active;
 };
 
+typedef struct uzfs_rebuild_data {
+	list_t *io_list;
+	zvol_state_t *zvol;
+	kmutex_t mtx;
+	kcondvar_t cv;
+	boolean_t done;
+} uzfs_rebuild_data_t;
+
 struct rebuilding_data {
 	uzfs_rebuild_data_t *r_data;
 	zvol_state_t *zvol;
@@ -150,6 +158,9 @@ replica_reader_thread(void *arg)
 		printf("Stopping read.. ios done: %lu total_read: %lu"
 		    " error:%lu\n", iops, r_data->len, mismatch_count);
 
+	if (mismatch_count)
+		exit(1);
+
 	mutex_enter(mtx);
 	*threads_done = *threads_done + 1;
 	cv_signal(cv);
@@ -157,21 +168,56 @@ replica_reader_thread(void *arg)
 	zk_thread_exit();
 }
 
+static int
+uzfs_test_txg_diff_traverse(off_t offset, size_t len,
+    uint64_t blkid, void *arg)
+{
+	uzfs_rebuild_data_t *r_data = (uzfs_rebuild_data_t *)arg;
+	uzfs_io_chunk_list_t *io;
+	int err = 0;
+
+	io = umem_alloc(sizeof (*io), UMEM_NOFAIL);
+	io->offset = offset;
+	io->len = len;
+	io->buf = umem_alloc(len, UMEM_NOFAIL);
+
+	err = uzfs_read_data(r_data->zvol, io->buf, offset, len,
+	    NULL, NULL);
+
+	if (err) {
+		umem_free(io, sizeof (*io));
+		umem_free(io->buf, len);
+		goto done;
+	}
+
+	mutex_enter(&r_data->mtx);
+	list_insert_tail(r_data->io_list, io);
+	mutex_exit(&r_data->mtx);
+
+done:
+	return (err);
+}
+
 void
 fetch_modified_data(void *arg)
 {
 	struct rebuilding_data *repl_data = arg;
+	uzfs_rebuild_data_t *r_data = repl_data->r_data;
 	int err;
 
 	printf("feting modified data\n");
 
-	err = uzfs_get_txg_diff_data_tree(repl_data->zvol, repl_data->start_txg,
-	    repl_data->end_txg, repl_data->r_data);
+	err = uzfs_get_txg_diff_tree(repl_data->zvol, repl_data->start_txg,
+	    repl_data->end_txg, uzfs_test_txg_diff_traverse, r_data);
 
 	if (err)
 		printf("error(%d)... while fetching modified data\n", err);
 
 	printf("finished fetching modified data\n");
+
+	mutex_enter(&r_data->mtx);
+	r_data->done = B_TRUE;
+	mutex_exit(&r_data->mtx);
 	zk_thread_exit();
 }
 
@@ -212,6 +258,7 @@ rebuild_replica_thread(void *arg)
 
 	r_data.done = B_FALSE;
 	r_data.io_list = io_list;
+	r_data.zvol = from_zvol;
 	mutex_init(&r_data.mtx, NULL, MUTEX_DEFAULT, NULL);
 	cv_init(&r_data.cv, NULL, CV_DEFAULT, NULL);
 
@@ -229,12 +276,8 @@ rebuild_replica_thread(void *arg)
 	mutex_enter(&r_data.mtx);
 	while (!r_data.done || (node = list_remove_head(io_list)) != NULL) {
 		mutex_exit(&r_data.mtx);
-		if (!node) {
-			mutex_enter(&r_data.mtx);
-			cv_wait(&r_data.cv, &r_data.mtx);
-			mutex_exit(&r_data.mtx);
+		if (!node)
 			continue;
-		}
 
 		err = uzfs_write_data(to_zvol, node->buf, node->offset,
 		    node->len, NULL, B_TRUE);
@@ -336,12 +379,13 @@ replica_writer_thread(void *arg)
 		} else if (now > replica_start_time) {
 			replica_active = B_TRUE;
 			if (!rebuilding_started) {
+				mutex_enter(&rebuild_info.mtx);
+
 				rebuilding_thread = zk_thread_create(NULL, 0,
 				    (thread_func_t)rebuild_replica_thread,
 				    &rebuild_info, 0, NULL, TS_RUN, 0,
 				    PTHREAD_CREATE_DETACHED);
 
-				mutex_enter(&rebuild_info.mtx);
 				while (!rebuilding_started) {
 					cv_wait(&rebuild_info.cv,
 					    &rebuild_info.mtx);
@@ -361,7 +405,8 @@ replica_writer_thread(void *arg)
 	if (silent == 0)
 		printf("Stopping write.. ios done: %lu\n", iops);
 
-	printf("mismatch should be %lu\n", mismatch_count);
+	printf("other replica missed %lu bytes during downtime\n",
+	    mismatch_count);
 
 	mutex_enter(&rebuild_info.mtx);
 	while (rebuild_info.active)
@@ -402,7 +447,7 @@ create_and_init_pool(void **spa, void **zvol)
 	}
 
 	err = uzfs_create_dataset(t_spa, zvol_name, vol_size,
-	    0, &t_zvol);
+	    block_size, &t_zvol);
 	if (t_zvol == NULL || err != 0) {
 		printf("creating ds(%s) errored %d..\n", zvol_name, err);
 		exit(1);
@@ -426,81 +471,86 @@ uzfs_rebuild_test(void *arg)
 	kthread_t *writer, *reader;
 	worker_args_t writer_args, **reader_args;
 	int reader_count;
+	int n = 0;
 
 	printf("starting %s\n", test_info->name);
 
-	create_and_init_pool(&spa1, &zvol1);
-	create_and_init_pool(&spa2, &zvol2);
+	while (n++ < test_iterations) {
+		create_and_init_pool(&spa1, &zvol1);
+		create_and_init_pool(&spa2, &zvol2);
 
-	mutex_init(&mtx, NULL, MUTEX_DEFAULT, NULL);
-	cv_init(&cv, NULL, CV_DEFAULT, NULL);
+		mutex_init(&mtx, NULL, MUTEX_DEFAULT, NULL);
+		cv_init(&cv, NULL, CV_DEFAULT, NULL);
 
-	writer_args.zv = NULL;
-	writer_args.threads_done = &threads_done;
-	writer_args.mtx = &mtx;
-	writer_args.cv = &cv;
-	writer_args.io_block_size = io_block_size;
-	writer_args.active_size = active_size;
+		writer_args.zv = NULL;
+		writer_args.threads_done = &threads_done;
+		writer_args.mtx = &mtx;
+		writer_args.cv = &cv;
+		writer_args.io_block_size = io_block_size;
+		writer_args.active_size = active_size;
 
-	writer = zk_thread_create(NULL, 0,
-	    (thread_func_t)replica_writer_thread, &writer_args, 0, NULL,
-	    TS_RUN, 0, PTHREAD_CREATE_DETACHED);
-	num_threads++;
-
-	mutex_enter(&mtx);
-	while (threads_done != num_threads)
-		cv_wait(&cv, &mtx);
-	mutex_exit(&mtx);
-
-	reader_count = 4;
-	int i = 0;
-
-	reader_args = umem_alloc(sizeof (*reader_args) * reader_count,
-	    UMEM_NOFAIL);
-
-	for (i = 0; i < reader_count; i++) {
-		worker_args_t *r_arg;
-		struct replica_read_data *r_data;
-
-		r_arg = umem_alloc(sizeof (*r_arg), UMEM_NOFAIL);
-		r_data = umem_alloc(sizeof (*r_data), UMEM_NOFAIL);
-
-		r_data->offset = i * ((vol_size) / reader_count);
-		r_data->len = (vol_size) / reader_count;
-		r_arg->zv = r_data;
-		r_arg->threads_done = &threads_done;
-		r_arg->mtx = &mtx;
-		r_arg->cv = &cv;
-		r_arg->io_block_size = io_block_size;
-		r_arg->active_size = active_size;
-		reader_args[i] = r_arg;
-
-		reader = zk_thread_create(NULL, 0,
-		    (thread_func_t)replica_reader_thread, reader_args[i], 0,
-		    NULL, TS_RUN, 0, PTHREAD_CREATE_DETACHED);
+		writer = zk_thread_create(NULL, 0,
+		    (thread_func_t)replica_writer_thread, &writer_args, 0, NULL,
+		    TS_RUN, 0, PTHREAD_CREATE_DETACHED);
 		num_threads++;
+
+		mutex_enter(&mtx);
+		while (threads_done != num_threads)
+			cv_wait(&cv, &mtx);
+		mutex_exit(&mtx);
+
+		reader_count = 4;
+		int i = 0;
+
+		reader_args = umem_alloc(sizeof (*reader_args) * reader_count,
+		    UMEM_NOFAIL);
+
+		for (i = 0; i < reader_count; i++) {
+			worker_args_t *r_arg;
+			struct replica_read_data *r_data;
+
+			r_arg = umem_alloc(sizeof (*r_arg), UMEM_NOFAIL);
+			r_data = umem_alloc(sizeof (*r_data), UMEM_NOFAIL);
+
+			r_data->offset = i * ((vol_size) / reader_count);
+			r_data->len = (vol_size) / reader_count;
+			r_arg->zv = r_data;
+			r_arg->threads_done = &threads_done;
+			r_arg->mtx = &mtx;
+			r_arg->cv = &cv;
+			r_arg->io_block_size = io_block_size;
+			r_arg->active_size = active_size;
+			reader_args[i] = r_arg;
+
+			reader = zk_thread_create(NULL, 0,
+			    (thread_func_t)replica_reader_thread,
+			    reader_args[i], 0, NULL, TS_RUN, 0,
+			    PTHREAD_CREATE_DETACHED);
+			num_threads++;
+		}
+
+		mutex_enter(&mtx);
+		while (threads_done != num_threads)
+			cv_wait(&cv, &mtx);
+		mutex_exit(&mtx);
+
+		for (i = 0; i < reader_count; i++) {
+			worker_args_t *r_arg;
+
+			r_arg  = reader_args[i];
+			umem_free(r_arg->zv, sizeof (*r_arg->zv));
+			umem_free(r_arg, sizeof (*r_arg));
+		}
+
+		umem_free(reader_args, sizeof (*reader_args) * reader_count);
+
+		cv_destroy(&cv);
+		mutex_destroy(&mtx);
+
+		uzfs_close_dataset(zvol1);
+		uzfs_close_dataset(zvol2);
+		uzfs_close_pool(spa1);
+		uzfs_close_pool(spa2);
+		printf("%s pass:%d\n", test_info->name, n);
 	}
-
-	mutex_enter(&mtx);
-	while (threads_done != num_threads)
-		cv_wait(&cv, &mtx);
-	mutex_exit(&mtx);
-
-	for (i = 0; i < reader_count; i++) {
-		worker_args_t *r_arg;
-
-		r_arg  = reader_args[i];
-		umem_free(r_arg->zv, sizeof (*r_arg->zv));
-		umem_free(r_arg, sizeof (*r_arg));
-	}
-
-	umem_free(reader_args, sizeof (*reader_args) * reader_count);
-
-	cv_destroy(&cv);
-	mutex_destroy(&mtx);
-
-	uzfs_close_dataset(zvol1);
-	uzfs_close_dataset(zvol2);
-	uzfs_close_pool(spa1);
-	uzfs_close_pool(spa2);
 }

@@ -71,7 +71,7 @@ uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 		if (!is_rebuild)
 			uzfs_add_to_incoming_io_tree(zv, offset, len);
 		if (is_rebuild) {
-			count = uzfs_search_rebuilding_tree(zv, offset,
+			count = uzfs_search_incoming_io_tree(zv, offset,
 			    len, (void **)&chunk_io);
 chunk_io:
 			if (count) {

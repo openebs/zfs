@@ -28,10 +28,7 @@
  *	modified block details (offset:lenth entries).
  */
 extern int uzfs_get_txg_diff_tree(void *zv, uint64_t start_txg,
-    uint64_t end_txg, void **tree);
-
-extern int uzfs_get_txg_diff_data_tree(void *zv, uint64_t start_txg,
-    uint64_t end_txg, void *r_data);
+    uint64_t end_txg, void *func, void *arg);
 
 /*
  * dump_txg_diff_tree will print all entries (offset:length) to stdout
@@ -63,6 +60,8 @@ extern void uzfs_add_to_incoming_io_tree(void *zv, uint64_t offset,
  * It will create linked list with non-overlapping segment
  * entries (i.e offset and length)
  */
-extern int uzfs_search_rebuilding_tree(void *zv, uint64_t offset,
+extern int uzfs_search_incoming_io_tree(void *zv, uint64_t offset,
     uint64_t len, void **list);
+
+extern int uzfs_txg_diff_tree_compare(const void *arg1, const void *arg2);
 #endif

@@ -340,9 +340,9 @@ static void usage(int num)
 	printf("uzfs_test -t <total_time_in_sec> -a <active data size>"
 	    " -b <block_size> -c -d <dsname> -i <io size> -v <vol size>"
 	    " -l(for log device) -m <metadata to verify during replay>"
-	    " -n <number of iterations> -p <pool name> -s(for sync on) -S(for silent)"
-	    " -V <data to verify during replay> -w(for write during replay)"
-	    " -T <test id>\n");
+	    " -n <number of iterations> -p <pool name> -s(for sync on)"
+	    " -S(for silent) -V <data to verify during replay>"
+	    " -w(for write during replay) -T <test id>\n");
 
 	printf("Test id:\n");
 

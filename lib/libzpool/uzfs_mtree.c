@@ -30,9 +30,10 @@
 #define	TXG_DIFF_SNAPNAME	"tsnap"
 
 typedef struct uzfs_txg_diff_cb_args {
-	void *uzfs_txg_diff_data;
+	uzfs_zvol_traverse_t *func;
 	uint64_t start_txg;
 	uint64_t end_txg;
+	void *arg_data;
 } uzfs_txg_diff_cb_args_t;
 
 /*
@@ -212,57 +213,12 @@ uzfs_txg_diff_cb(spa_t *spa, zilog_t *zillog, const blkptr_t *bp,
 		return (0);
 
 	blksz = BP_GET_LSIZE(bp);
-	add_to_txg_diff_tree(diff_blk_info->uzfs_txg_diff_data,
-	    zb->zb_blkid * blksz, blksz);
-	return (0);
+
+	return diff_blk_info->func(zb->zb_blkid * blksz, blksz, zb->zb_blkid,
+	    diff_blk_info->arg_data);
 }
 
 int
-uzfs_changed_block_data_cb(spa_t *spa, zilog_t *zillog, const blkptr_t *bp,
-    const zbookmark_phys_t *zb, const dnode_phys_t *dnp, void *arg)
-{
-	uint64_t blksz;
-	uzfs_txg_diff_cb_args_t *diff_blk_info = (uzfs_txg_diff_cb_args_t *)arg;
-	uzfs_rebuild_data_t *r_data;
-	int err = 0;
-	arc_flags_t aflags = ARC_FLAG_WAIT;
-	enum zio_flag zioflags = ZIO_FLAG_CANFAIL;
-	struct uzfs_io_chunk_list *io;
-	arc_buf_t *abuf = NULL;
-	r_data = (uzfs_rebuild_data_t *)diff_blk_info->uzfs_txg_diff_data;
-
-	if ((bp == NULL) || (BP_IS_HOLE(bp)) || (zb->zb_object != ZVOL_OBJ) ||
-	    (zb->zb_level != 0)) {
-		return (0);
-	}
-
-	if (bp->blk_birth > diff_blk_info->end_txg ||
-	    bp->blk_birth < diff_blk_info->start_txg)
-		return (0);
-
-	blksz = BP_GET_LSIZE(bp);
-
-	if ((err = arc_read(NULL, spa, bp, arc_getbuf_func, &abuf,
-	    ZIO_PRIORITY_ASYNC_READ, zioflags, &aflags, zb)) != 0) {
-		printf("Error %d in arc_read..\n", err);
-		return (SET_ERROR(EIO));
-	}
-
-	io = umem_alloc(sizeof (*io), UMEM_NOFAIL);
-	io->offset = zb->zb_blkid * blksz;
-	io->len = blksz;
-	io->buf = umem_alloc(blksz, UMEM_NOFAIL);
-	memcpy(io->buf, (char *)(abuf->b_data), blksz);
-
-	mutex_enter(&r_data->mtx);
-	list_insert_tail(r_data->io_list, io);
-	mutex_exit(&r_data->mtx);
-
-	arc_buf_destroy(abuf, &abuf);
-	return (0);
-}
-
-static int
 uzfs_txg_diff_tree_compare(const void *arg1, const void *arg2)
 {
 	uzfs_zvol_blk_phy_t *node1 = (uzfs_zvol_blk_phy_t *)arg1;
@@ -274,7 +230,7 @@ uzfs_txg_diff_tree_compare(const void *arg1, const void *arg2)
 
 int
 uzfs_get_txg_diff_tree(zvol_state_t *zv, uint64_t start_txg, uint64_t end_txg,
-    avl_tree_t **tree)
+    uzfs_zvol_traverse_t *func, void *arg)
 {
 	int error;
 	char snapname[ZFS_MAX_DATASET_NAME_LEN];
@@ -310,19 +266,13 @@ uzfs_get_txg_diff_tree(zvol_state_t *zv, uint64_t start_txg, uint64_t end_txg,
 
 	memset(&diff_blk, 0, sizeof (diff_blk));
 
-	diff_blk.uzfs_txg_diff_data = umem_alloc(sizeof (avl_tree_t),
-	    UMEM_NOFAIL);
-	avl_create(diff_blk.uzfs_txg_diff_data, uzfs_txg_diff_tree_compare,
-	    sizeof (uzfs_zvol_blk_phy_t),
-	    offsetof(uzfs_zvol_blk_phy_t, uzb_link));
-
+	diff_blk.func = func;
 	diff_blk.start_txg = start_txg;
 	diff_blk.end_txg = end_txg;
+	diff_blk.arg_data = arg;
 
 	error = traverse_dataset(ds_snap, start_txg,
 	    TRAVERSE_PRE, uzfs_txg_diff_cb, &diff_blk);
-
-	*tree = diff_blk.uzfs_txg_diff_data;
 
 	dsl_dataset_long_rele(ds_snap, FTAG);
 	dsl_dataset_rele(ds_snap, FTAG);
@@ -335,66 +285,6 @@ uzfs_get_txg_diff_tree(zvol_state_t *zv, uint64_t start_txg, uint64_t end_txg,
 	(void) dsl_destroy_snapshot(snapname, B_FALSE);
 	return (error);
 }
-
-int
-uzfs_get_txg_diff_data_tree(zvol_state_t *zv, uint64_t start_txg, uint64_t end_txg,
-    uzfs_rebuild_data_t *r_data)
-{
-	int error;
-	char snapname[ZFS_MAX_DATASET_NAME_LEN];
-	uzfs_txg_diff_cb_args_t diff_blk;
-	hrtime_t now;
-	dsl_pool_t *dp;
-	dsl_dataset_t *ds_snap;
-
-	now = gethrtime();
-	snprintf(snapname, sizeof (snapname), "%s%llu", TXG_DIFF_SNAPNAME, now);
-
-	error = dmu_objset_snapshot_one(zv->zv_name, snapname);
-	if (error) {
-		printf("failed to create snapshot for %s\n", zv->zv_name);
-		goto done;
-	}
-
-	memset(snapname, 0, sizeof (snapname));
-	snprintf(snapname, sizeof (snapname), "%s@%s%llu", zv->zv_name,
-	    TXG_DIFF_SNAPNAME, now);
-
-	error = dsl_pool_hold(snapname, FTAG, &dp);
-	if (error != 0)
-		goto done;
-
-	error = dsl_dataset_hold(dp, snapname, FTAG, &ds_snap);
-	if (error != 0) {
-		dsl_pool_rele(dp, FTAG);
-		goto done;
-	}
-
-
-	diff_blk.start_txg = start_txg;
-	diff_blk.end_txg = end_txg;
-	diff_blk.uzfs_txg_diff_data = r_data;
-
-	error = traverse_dataset(ds_snap, start_txg,
-	    TRAVERSE_PRE, uzfs_changed_block_data_cb, &diff_blk);
-
-	dsl_dataset_rele(ds_snap, FTAG);
-	dsl_pool_rele(dp, FTAG);
-
-	/*
-	 * TODO: if we failed to destroy snapshot here then
-	 * this should be handled separately from application.
-	 */
-	(void) dsl_destroy_snapshot(snapname, B_FALSE);
-
-done:
-	mutex_enter(&r_data->mtx);
-	r_data->done = B_TRUE;
-	cv_signal(&r_data->cv);
-	mutex_exit(&r_data->mtx);
-	return (error);
-}
-
 
 void
 uzfs_create_txg_diff_tree(void **tree)
@@ -439,7 +329,7 @@ uzfs_add_to_incoming_io_tree(zvol_state_t *zv, uint64_t offset, uint64_t len)
 }
 
 uint32_t
-uzfs_search_rebuilding_tree(zvol_state_t *zv, uint64_t offset, uint64_t len,
+uzfs_search_incoming_io_tree(zvol_state_t *zv, uint64_t offset, uint64_t len,
     list_t **list)
 {
 	avl_tree_t *tree = zv->incoming_io_tree;

@@ -120,11 +120,7 @@ typedef struct uzfs_io_chunk_list {
 	list_node_t link;
 } uzfs_io_chunk_list_t;
 
-typedef struct uzfs_rebuild_data {
-	list_t *io_list;
-	kmutex_t mtx;
-	kcondvar_t cv;
-	boolean_t done;
-} uzfs_rebuild_data_t;
+typedef int (uzfs_zvol_traverse_t)(off_t offset, size_t len, uint64_t blkid,
+    void *arg);
 #endif
 #endif

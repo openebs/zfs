@@ -60,7 +60,6 @@ struct zvol_state {
 	zfs_rlock_t zv_range_lock;	/* range lock */
 	zfs_rlock_t zv_mrange_lock;	/* range lock */
 	spa_t *zv_spa;			/* spa */
-	int zv_sync;			/* sync property of zv */
 	uint64_t zv_volmetablocksize;	/* meta block size */
 	uint64_t zv_volmetadatasize;	/* volume meta data size */
 

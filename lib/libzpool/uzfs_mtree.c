@@ -29,14 +29,19 @@
 
 #define	TXG_DIFF_SNAPNAME	"tsnap"
 
-struct diff_txg_blk {
-	void *data;
+typedef struct uzfs_txg_diff_cb_args {
+	void *uzfs_txg_diff_data;
 	uint64_t start_txg;
 	uint64_t end_txg;
-};
+} uzfs_txg_diff_cb_args_t;
 
+/*
+ * Add entry with (offset, len) to tree.
+ * Merge new entry with an existing entry if new entry overlaps with
+ * existing entry.
+ */
 void
-add_to_mblktree(avl_tree_t *tree, uint64_t boffset, uint64_t blen)
+add_to_txg_diff_tree(avl_tree_t *tree, uint64_t boffset, uint64_t blen)
 {
 	uint64_t new_offset, new_len, b_end, a_end;
 	uzfs_zvol_blk_phy_t *entry, *new_node, *b_entry, *a_entry;
@@ -51,6 +56,11 @@ find:
 	tofind.len = new_len;
 	entry = avl_find(tree, &tofind, &where);
 
+	/*
+	 * new_offset is available in tree.
+	 * If entry->len is greater than or equal to new_len then skip adding
+	 * a new_entry else remove entry and search again for new entry.
+	 */
 	if (entry != NULL) {
 		if (entry->len >= new_len) {
 			return;
@@ -61,12 +71,25 @@ find:
 		}
 	}
 
+	// search for nearest entry whose offset is lesser than new_offset
 	b_entry = avl_nearest(tree, where, AVL_BEFORE);
 	if (b_entry) {
 		b_end = (b_entry->offset + b_entry->len);
+
+		/*
+		 * If new entry doesn't overlap with new_entry then search
+		 * for after and entry whose offset is greater than
+		 * new_entry's offset
+		 */
 		if (b_end < new_offset)
 			goto after;
 
+		/*
+		 * If new_entry's offset and b_entry's end are same, then
+		 * remove b_entry and add new entry whose offset =
+		 * (b_entry's offset) and length  = (b_entry's len +
+		 * new entry's len).
+		 */
 		if (b_end == new_offset) {
 			new_len += (b_entry->len);
 			new_offset = b_entry->offset;
@@ -75,6 +98,11 @@ find:
 			goto find;
 		}
 
+		/*
+		 * If new_entry overlaps with b_entry, then remove b_entry and
+		 * add new entry whose offset = (b_entry's offset) and len =
+		 * ("b_entry's len" + "new_entry's len" - "overlap len").
+		 */
 		if (b_end < (new_offset + new_len)) {
 			new_len += (new_offset - b_entry->offset);
 			new_offset = b_entry->offset;
@@ -83,18 +111,28 @@ find:
 			goto find;
 		}
 
+		// new_entry overlaps with b_entry completely
 		if (b_end >= (new_offset + new_len))
 			return;
 	}
 
 after:
+	/*
+	 * search for nearest entry whose offset is greater than new_offset
+	 * Here, If we can not find any entry which overlaps with new_entry then
+	 * we will add new_entry to tree else merge new_entry with nearest
+	 * entry.
+	 */
 	a_entry = avl_nearest(tree, where, AVL_AFTER);
 
 	if (a_entry) {
 		a_end = (a_entry->offset + a_entry->len);
+
+		// new_entry doesn't overlap with a_entry
 		if ((new_offset + new_len) < a_entry->offset)
 			goto doadd;
 
+		// new_entry's end and a_entry's offset are same
 		if ((new_offset + new_len) == a_entry->offset) {
 			new_len += a_entry->len;
 			avl_remove(tree, a_entry);
@@ -102,6 +140,10 @@ after:
 			goto find;
 		}
 
+		/*
+		 * new_entry overlaps with a_entry and new_entry's end is
+		 * lesser or equal to a_entry's end
+		 */
 		if ((new_offset + new_len) <= (a_end)) {
 			new_len = (a_entry->len) +
 			    (a_entry->offset - new_offset);
@@ -110,6 +152,10 @@ after:
 			goto find;
 		}
 
+		/*
+		 * new_entry overlaps with a_entry and new_entry's end is
+		 * greater than a_entry's end
+		 */
 		if ((new_offset + new_len) > (a_end)) {
 			avl_remove(tree, a_entry);
 			umem_free(a_entry, sizeof (*a_entry));
@@ -125,7 +171,7 @@ doadd:
 }
 
 void
-dump_mblktree(avl_tree_t *tree)
+dump_txg_diff_tree(avl_tree_t *tree)
 {
 	uzfs_zvol_blk_phy_t *blk;
 
@@ -147,15 +193,15 @@ void
 dump_io_mblktree(zvol_state_t *zv)
 {
 	if (zv->incoming_io_tree)
-		dump_mblktree(zv->incoming_io_tree);
+		dump_txg_diff_tree(zv->incoming_io_tree);
 }
 
 int
-uzfs_changed_block_cb(spa_t *spa, zilog_t *zillog, const blkptr_t *bp,
+uzfs_txg_diff_cb(spa_t *spa, zilog_t *zillog, const blkptr_t *bp,
     const zbookmark_phys_t *zb, const dnode_phys_t *dnp, void *arg)
 {
 	uint64_t blksz;
-	struct diff_txg_blk *diff_blk_info = (struct diff_txg_blk *)arg;
+	uzfs_txg_diff_cb_args_t *diff_blk_info = (uzfs_txg_diff_cb_args_t *)arg;
 
 	if ((bp == NULL) || (BP_IS_HOLE(bp)) || (zb->zb_object != ZVOL_OBJ) ||
 	    (zb->zb_level != 0))
@@ -166,7 +212,7 @@ uzfs_changed_block_cb(spa_t *spa, zilog_t *zillog, const blkptr_t *bp,
 		return (0);
 
 	blksz = BP_GET_LSIZE(bp);
-	add_to_mblktree((avl_tree_t *)diff_blk_info->data,
+	add_to_txg_diff_tree(diff_blk_info->uzfs_txg_diff_data,
 	    zb->zb_blkid * blksz, blksz);
 	return (0);
 }
@@ -176,14 +222,14 @@ uzfs_changed_block_data_cb(spa_t *spa, zilog_t *zillog, const blkptr_t *bp,
     const zbookmark_phys_t *zb, const dnode_phys_t *dnp, void *arg)
 {
 	uint64_t blksz;
-	struct diff_txg_blk *diff_blk_info = (struct diff_txg_blk *)arg;
+	uzfs_txg_diff_cb_args_t *diff_blk_info = (uzfs_txg_diff_cb_args_t *)arg;
 	uzfs_rebuild_data_t *r_data;
 	int err = 0;
 	arc_flags_t aflags = ARC_FLAG_WAIT;
 	enum zio_flag zioflags = ZIO_FLAG_CANFAIL;
 	struct uzfs_io_chunk_list *io;
 	arc_buf_t *abuf = NULL;
-	r_data = (uzfs_rebuild_data_t *)diff_blk_info->data;
+	r_data = (uzfs_rebuild_data_t *)diff_blk_info->uzfs_txg_diff_data;
 
 	if ((bp == NULL) || (BP_IS_HOLE(bp)) || (zb->zb_object != ZVOL_OBJ) ||
 	    (zb->zb_level != 0)) {
@@ -217,7 +263,7 @@ uzfs_changed_block_data_cb(spa_t *spa, zilog_t *zillog, const blkptr_t *bp,
 }
 
 static int
-zvol_blk_off_cmpr(const void *arg1, const void *arg2)
+uzfs_txg_diff_tree_compare(const void *arg1, const void *arg2)
 {
 	uzfs_zvol_blk_phy_t *node1 = (uzfs_zvol_blk_phy_t *)arg1;
 	uzfs_zvol_blk_phy_t *node2 = (uzfs_zvol_blk_phy_t *)arg2;
@@ -227,12 +273,12 @@ zvol_blk_off_cmpr(const void *arg1, const void *arg2)
 
 
 int
-uzfs_txg_block_diff(zvol_state_t *zv, uint64_t start_txg, uint64_t end_txg,
+uzfs_get_txg_diff_tree(zvol_state_t *zv, uint64_t start_txg, uint64_t end_txg,
     avl_tree_t **tree)
 {
 	int error;
 	char snapname[ZFS_MAX_DATASET_NAME_LEN];
-	struct diff_txg_blk diff_blk;
+	uzfs_txg_diff_cb_args_t diff_blk;
 	hrtime_t now;
 	dsl_pool_t *dp;
 	dsl_dataset_t *ds_snap;
@@ -260,10 +306,13 @@ uzfs_txg_block_diff(zvol_state_t *zv, uint64_t start_txg, uint64_t end_txg,
 		return (error);
 	}
 
+	dsl_dataset_long_hold(ds_snap, FTAG);
+
 	memset(&diff_blk, 0, sizeof (diff_blk));
 
-	diff_blk.data = umem_alloc(sizeof (avl_tree_t), UMEM_NOFAIL);
-	avl_create(diff_blk.data, zvol_blk_off_cmpr,
+	diff_blk.uzfs_txg_diff_data = umem_alloc(sizeof (avl_tree_t),
+	    UMEM_NOFAIL);
+	avl_create(diff_blk.uzfs_txg_diff_data, uzfs_txg_diff_tree_compare,
 	    sizeof (uzfs_zvol_blk_phy_t),
 	    offsetof(uzfs_zvol_blk_phy_t, uzb_link));
 
@@ -271,10 +320,11 @@ uzfs_txg_block_diff(zvol_state_t *zv, uint64_t start_txg, uint64_t end_txg,
 	diff_blk.end_txg = end_txg;
 
 	error = traverse_dataset(ds_snap, start_txg,
-	    TRAVERSE_PRE, uzfs_changed_block_cb, &diff_blk);
+	    TRAVERSE_PRE, uzfs_txg_diff_cb, &diff_blk);
 
-	*tree = diff_blk.data;
+	*tree = diff_blk.uzfs_txg_diff_data;
 
+	dsl_dataset_long_rele(ds_snap, FTAG);
 	dsl_dataset_rele(ds_snap, FTAG);
 	dsl_pool_rele(dp, FTAG);
 
@@ -287,12 +337,12 @@ uzfs_txg_block_diff(zvol_state_t *zv, uint64_t start_txg, uint64_t end_txg,
 }
 
 int
-uzfs_txg_data_diff(zvol_state_t *zv, uint64_t start_txg, uint64_t end_txg,
+uzfs_get_txg_diff_data_tree(zvol_state_t *zv, uint64_t start_txg, uint64_t end_txg,
     uzfs_rebuild_data_t *r_data)
 {
 	int error;
 	char snapname[ZFS_MAX_DATASET_NAME_LEN];
-	struct diff_txg_blk diff_blk;
+	uzfs_txg_diff_cb_args_t diff_blk;
 	hrtime_t now;
 	dsl_pool_t *dp;
 	dsl_dataset_t *ds_snap;
@@ -323,7 +373,7 @@ uzfs_txg_data_diff(zvol_state_t *zv, uint64_t start_txg, uint64_t end_txg,
 
 	diff_blk.start_txg = start_txg;
 	diff_blk.end_txg = end_txg;
-	diff_blk.data = r_data;
+	diff_blk.uzfs_txg_diff_data = r_data;
 
 	error = traverse_dataset(ds_snap, start_txg,
 	    TRAVERSE_PRE, uzfs_changed_block_data_cb, &diff_blk);
@@ -347,18 +397,19 @@ done:
 
 
 void
-uzfs_create_mblktree(void **tree)
+uzfs_create_txg_diff_tree(void **tree)
 {
 	avl_tree_t *temp_tree;
 
 	temp_tree = umem_alloc(sizeof (avl_tree_t), UMEM_NOFAIL);
-	avl_create(temp_tree, zvol_blk_off_cmpr, sizeof (uzfs_zvol_blk_phy_t),
+	avl_create(temp_tree, uzfs_txg_diff_tree_compare,
+	    sizeof (uzfs_zvol_blk_phy_t),
 	    offsetof(uzfs_zvol_blk_phy_t, uzb_link));
 	*tree = temp_tree;
 }
 
 void
-uzfs_destroy_mblktree(void *tree)
+uzfs_destroy_txg_diff_tree(void *tree)
 {
 	avl_tree_t *temp_tree = tree;
 	uzfs_zvol_blk_phy_t *node;
@@ -373,17 +424,17 @@ uzfs_destroy_mblktree(void *tree)
 }
 
 void
-uzfs_add_to_rebuilding_tree(zvol_state_t *zv, uint64_t offset, uint64_t len)
+uzfs_add_to_incoming_io_tree(zvol_state_t *zv, uint64_t offset, uint64_t len)
 {
 	/*
 	 * Here: Handling of incoming_io_tree creation is for error case only.
 	 *	 It should be handled by replica or caller of uzfs_write_data
 	 */
 	if (!zv->incoming_io_tree)
-		uzfs_create_mblktree((void **)&zv->incoming_io_tree);
+		uzfs_create_txg_diff_tree((void **)&zv->incoming_io_tree);
 
 	mutex_enter(&zv->io_tree_mtx);
-	add_to_mblktree(zv->incoming_io_tree, offset, len);
+	add_to_txg_diff_tree(zv->incoming_io_tree, offset, len);
 	mutex_exit(&zv->io_tree_mtx);
 }
 

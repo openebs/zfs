@@ -133,7 +133,7 @@ extern "C" {
 
 #define	noinline	__attribute__((noinline))
 #define	likely(x)	__builtin_expect((x), 1)
-#define	unlikely(x)	__builtin_expect((x), 0)
+#define	unlikely(x)    __builtin_expect(!!(x), 0)
 
 /*
  * Debugging

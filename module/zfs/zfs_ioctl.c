@@ -282,6 +282,7 @@ static int get_nvlist(uint64_t nvl, uint64_t size, int iflag, nvlist_t **nvp);
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/dmu_impl.h>
+#include <uzfs_mgmt.h>
 
 #include "zfs_fletcher.h"
 #include "zfs_namecheck.h"
@@ -3397,6 +3398,9 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 	    is_insensitive ? DS_FLAG_CI_DATASET : 0, cbfunc, &zct);
 	nvlist_free(zct.zct_zplprops);
 
+#if !defined(_KERNEL)
+	(void) uzfs_zvol_create_cb((char *)fsname, NULL);
+#endif
 	/*
 	 * It would be nice to do this atomically.
 	 */

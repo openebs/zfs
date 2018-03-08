@@ -92,7 +92,6 @@ replica_reader_thread(void *arg)
 	int *threads_done = warg->threads_done;
 	uint64_t block_size = warg->io_block_size;
 	uint64_t len1 = 0, len2 = 0;
-	void *io_num1, *io_num2;
 	uint64_t mismatch_count = 0;
 
 	for (j = 0; j < 15; j++) {
@@ -121,13 +120,13 @@ replica_reader_thread(void *arg)
 			len = end - offset;
 
 		err = uzfs_read_data(zvol1, buf1[idx], offset,
-		    len, &io_num1, &len1);
+		    len, NULL, NULL);
 		if (err != 0)
 			printf("IO error at offset: %lu len: %lu\n", offset,
 			    len);
 
 		err = uzfs_read_data(zvol2, buf2[idx], offset,
-		    len, &io_num2, &len2);
+		    len, NULL, NULL);
 		if (err != 0)
 			printf("IO error at offset: %lu len: %lu\n", offset,
 			    len);
@@ -139,10 +138,6 @@ replica_reader_thread(void *arg)
 			printf("verification error at %lu, mismatch:%lu\n",
 			    offset, mismatch);
 
-		if (len1 != 0)
-			kmem_free(io_num1, len1);
-		if (len2 != 0)
-			kmem_free(io_num2, len2);
 		iops += (idx + 1);
 		offset += len;
 	}
@@ -170,7 +165,7 @@ fetch_modified_data(void *arg)
 
 	printf("feting modified data\n");
 
-	err = uzfs_txg_data_diff(repl_data->zvol, repl_data->start_txg,
+	err = uzfs_get_txg_diff_data_tree(repl_data->zvol, repl_data->start_txg,
 	    repl_data->end_txg, repl_data->r_data);
 
 	if (err)
@@ -295,10 +290,9 @@ replica_writer_thread(void *arg)
 	now = gethrtime();
 	end = now + (hrtime_t)(total_time_in_sec * (hrtime_t)(NANOSEC));
 	replica_start_time = now + (hrtime_t)(total_time_in_sec *
-	    (hrtime_t)(NANOSEC)) - (hrtime_t)(total_time_in_sec/4 *
+	    (hrtime_t)(NANOSEC)) - (hrtime_t)(total_time_in_sec/8 *
 	    (hrtime_t)(NANOSEC));
-	replica_down_time = now + (hrtime_t)(total_time_in_sec *
-	    (hrtime_t)(NANOSEC)) + (hrtime_t)(total_time_in_sec/8 *
+	replica_down_time = now + (hrtime_t)(total_time_in_sec/4 *
 	    (hrtime_t)(NANOSEC));
 
 	rebuild_info.to_zvol = zvol2;
@@ -408,7 +402,7 @@ create_and_init_pool(void **spa, void **zvol)
 	}
 
 	err = uzfs_create_dataset(t_spa, zvol_name, vol_size,
-	    block_size, 0, &t_zvol);
+	    0, &t_zvol);
 	if (t_zvol == NULL || err != 0) {
 		printf("creating ds(%s) errored %d..\n", zvol_name, err);
 		exit(1);

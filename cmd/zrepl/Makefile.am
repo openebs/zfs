@@ -9,23 +9,14 @@ DEFAULT_INCLUDES += \
 	-I$(top_srcdir)/include \
 	-I$(top_srcdir)/lib/libspl/include
 
-sbin_PROGRAMS = uzfs_test
+sbin_PROGRAMS = zrepl
 
-uzfs_test_SOURCES = \
-	uzfs_test.c	\
-	uzfs_test_sync.c \
-	uzfs_zvol_zap.c \
-	uzfs_txg_diff.c \
-	uzfs_rebuilding_tree.c \
-	uzfs_rebuilding.c \
-	uzfs_txg_diff.c
+zrepl_SOURCES = \
+	zrepl.c
 
-uzfs_test_LDADD = \
+zrepl_LDADD = \
 	$(top_builddir)/lib/libnvpair/libnvpair.la \
 	$(top_builddir)/lib/libuutil/libuutil.la \
 	$(top_builddir)/lib/libzpool/libzpool.la \
 	$(top_builddir)/lib/libzfs/libzfs.la \
 	$(top_builddir)/lib/libzfs_core/libzfs_core.la
-
-uzfs_test_LDADD += -lm
-

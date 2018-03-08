@@ -27,36 +27,35 @@
  * Note: API will alocate condensed tree and populate it witch
  *	modified block details (offset:lenth entries).
  */
-extern int uzfs_txg_block_diff(void *zv, uint64_t start_txg,
+extern int uzfs_get_txg_diff_tree(void *zv, uint64_t start_txg,
     uint64_t end_txg, void **tree);
 
-extern int uzfs_txg_data_diff(void *zv, uint64_t start_txg,
+extern int uzfs_get_txg_diff_data_tree(void *zv, uint64_t start_txg,
     uint64_t end_txg, void *r_data);
 
-
 /*
- * dump_mblktree will print all entries (offset:length) to stdout
+ * dump_txg_diff_tree will print all entries (offset:length) to stdout
  */
-extern void dump_mblktree(void *tree);
+extern void dump_txg_diff_tree(void *tree);
 
 /*
- * dump_io_mblktree will print all entries from incoming io tree
+ * dump_io_incoming_tree will print all entries from incoming io tree
  */
-extern void dump_io_mblktree(void *zv);
+extern void dump_io_incoming_tree(void *zv);
 
 /*
- * uzfs_create_mblktree will create avl tree to store incoming io's
+ * uzfs_create_txg_diff_tree will create avl tree to store incoming io's
  * during rebuilding
  */
-extern void uzfs_create_mblktree(void **tree);
-extern void uzfs_destroy_mblktree(void *tree);
+extern void uzfs_create_txg_diff_tree(void **tree);
+extern void uzfs_destroy_txg_diff_tree(void *tree);
 
-extern int add_to_mblktree(void *tree, uint64_t offset, uint64_t size);
+extern int add_to_txg_diff_tree(void *tree, uint64_t offset, uint64_t size);
 
 /*
  * to add incoming io's details in io_tree
  */
-extern void uzfs_add_to_rebuilding_tree(void *zv, uint64_t offset,
+extern void uzfs_add_to_incoming_io_tree(void *zv, uint64_t offset,
     uint64_t len);
 
 /*

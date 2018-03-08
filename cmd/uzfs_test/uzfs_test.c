@@ -24,6 +24,7 @@
 #include <uzfs_test.h>
 #include <uzfs_mtree.h>
 #include <math.h>
+#include <zrepl_mgmt.h>
 
 int total_time_in_sec = 60;
 int log_device = 0;
@@ -35,13 +36,17 @@ uint64_t active_size = 0;
 uint64_t vol_size = 0;
 int run_test = 0;
 uint32_t uzfs_test_id = 0;
+uint32_t create = 0;
+char *pool = "testp";
+char *ds = "ds0";
 
 uzfs_test_info_t uzfs_tests[] = {
 	{ uzfs_zvol_zap_operation, "uzfs zap operation test" },
 	{ replay_fn, "zvol replay test" },
 	{ unit_test_fn, "zvol read/write verification test"},
-	{ uzfs_zvol_txg_diff_blk_test, "uzfs modified blocks between two txg" },
-	{ uzfs_zvol_txg_mtree_test, "uzfs offset:len base tree test" },
+	{ uzfs_txg_diff_verifcation_test,
+	    "test to verify modified blocks between two txg for zvol" },
+	{ uzfs_txg_diff_tree_test, "txg_diff_tree functionality test" },
 	{ uzfs_rebuild_tree_test, "uzfs rebuilding tree test" },
 	{ uzfs_rebuild_test, "uzfs rebuild pool test"},
 };
@@ -261,42 +266,44 @@ void
 unit_test_create_pool_ds(void)
 {
 	void *spa1, *spa2, *spa3, *spa4, *spa;
-	void *zv1, *zv2, *zv3, *zv4, *zv5, *zv;
+	void *zv1 = NULL; void *zv3 = NULL;
+	void *zv2 = NULL; void *zv4 = NULL;
+	void *zv5 = NULL; void *zv = NULL;
 	int err, err1, err2, err3, err4, err5;
 
-	err1 = uzfs_create_pool("testp", "/tmp/uztest.xyz", &spa1);
+	err1 = uzfs_create_pool(pool, "/tmp/uztest.xyz", &spa1);
 	if (spa1 != NULL) {
 		printf("shouldn't create pool with non existing disk..\n");
 		exit(1);
 	}
 
-	err = uzfs_create_pool("testp", "/tmp/uztest.1a", &spa);
+	err = uzfs_create_pool(pool, "/tmp/uztest.1a", &spa);
 	if (err != 0 || spa == NULL) {
 		printf("creating pool errored %d..\n", err);
 		exit(1);
 	}
 
-	err1 = uzfs_create_pool("testp", "/tmp/uztest.1a", &spa1);
-	err2 = uzfs_create_pool("testp1", "/tmp/uztest.xyz", &spa2);
-	err3 = uzfs_open_pool("testp", &spa3);
-	err4 = uzfs_open_pool("testp1", &spa4);
+	err1 = uzfs_create_pool(pool, "/tmp/uztest.1a", &spa1);
+	err2 = uzfs_create_pool("testpxyz", "/tmp/uztest.xyz", &spa2);
+	err3 = uzfs_open_pool(pool, &spa3);
+	err4 = uzfs_open_pool("testpxyz", &spa4);
 	if (spa1 != NULL || spa2 != NULL || spa3 != NULL || spa4 != NULL ||
 	    err1 == 0 || err2 == 0 || err3 == 0 || err4 == 0) {
 		printf("shouldn't create/open, but succeeded..\n");
 		exit(1);
 	}
 
-	err = uzfs_create_dataset(spa, "ds0", vol_size, block_size, 0, &zv);
+	err = uzfs_create_dataset(spa, ds, vol_size, block_size, &zv);
 	if (zv == NULL || err != 0) {
 		printf("creating ds errored %d..\n", err);
 		exit(1);
 	}
 
-	err1 = uzfs_create_dataset(spa, "ds0", vol_size, block_size, 0, &zv1);
-	err2 = uzfs_open_dataset(spa, "ds0", 0, &zv2);
-	err3 = uzfs_open_dataset(spa, "ds1", 0, &zv3);
-	err4 = uzfs_open_dataset(NULL, "ds1", 0, &zv4);
-	err5 = uzfs_create_dataset(NULL, "ds0", vol_size, block_size, 0, &zv5);
+	err1 = uzfs_create_dataset(spa, ds, vol_size, block_size, &zv1);
+	err2 = uzfs_open_dataset(spa, ds, &zv2);
+	err3 = uzfs_open_dataset(spa, "dsxyz", &zv3);
+	err4 = uzfs_open_dataset(NULL, "dsxyz", &zv4);
+	err5 = uzfs_create_dataset(NULL, ds, vol_size, block_size, &zv5);
 	if (zv1 != NULL || zv2 != NULL || zv3 != NULL || zv4 != NULL ||
 	    zv5 != NULL || err1 == 0 || err2 == 0 || err3 == 0 || err4 == 0 ||
 	    err5 == 0) {
@@ -331,10 +338,11 @@ static void usage(int num)
 	int count = sizeof (uzfs_tests) / sizeof (uzfs_tests[0]);
 
 	printf("uzfs_test -t <total_time_in_sec> -a <active data size>"
-	    " -b <block_size> -i <io size> -v <vol size> -l(for log device)"
-	    " -m <metadata to verify during replay> -n <number of iterations>"
-	    " -s(for sync on) -S(for silent) -V <data to verify during replay>"
-	    " -w(for write during replay) -T <test id>\n");
+	    " -b <block_size> -c -d <dsname> -i <io size> -v <vol size>"
+	    " -l(for log device) -m <metadata to verify during replay>"
+	    " -n <number of iterations> -p <pool name> -s(for sync on) -S(for silent)"
+	    " -V <data to verify during replay> -w(for write during replay)"
+	    " -T <test id>\n");
 
 	printf("Test id:\n");
 
@@ -407,20 +415,30 @@ static void process_options(int argc, char **argv)
 	uint64_t val = 0;
 	uint64_t num_tests = sizeof (uzfs_tests) / sizeof (uzfs_tests[0]);
 
-	while ((opt = getopt(argc, argv, "a:b:i:lm:n:sSt:T:v:V:w")) != EOF) {
-		if (optarg != NULL)
-			val = nicenumtoull(optarg);
+	while ((opt = getopt(argc, argv, "a:b:cd:i:lm:p:sSt:v:V:wT:n:"))
+	    != EOF) {
+		switch (opt) {
+			case 'd':
+			case 'p':
+				break;
+			default:
+				if (optarg != NULL)
+					val = nicenumtoull(optarg);
+				break;
+		}
+
 		switch (opt) {
 			case 'a':
 				active_size = val;
-				if (vol_size == 0)
-					vol_size = active_size;
-				else
-					active_size = (active_size < vol_size)
-					    ? (active_size) : (vol_size);
 				break;
 			case 'b':
 				block_size = val;
+				break;
+			case 'c':
+				create = 1;
+				break;
+			case 'd':
+				ds = optarg;
 				break;
 			case 'i':
 				io_block_size = val;
@@ -429,9 +447,10 @@ static void process_options(int argc, char **argv)
 				log_device = 1;
 				break;
 			case 'm':
-				if (optarg != NULL)
-					val = nicenumtoull(optarg);
 				metaverify = val;
+				break;
+			case 'p':
+				pool = optarg;
 				break;
 			case 's':
 				sync_data = 1;
@@ -444,15 +463,8 @@ static void process_options(int argc, char **argv)
 				break;
 			case 'v':
 				vol_size = val;
-				if (active_size == 0)
-					active_size = vol_size;
-				else
-					active_size = (active_size < vol_size)
-					    ? (active_size) : (vol_size);
 				break;
 			case 'V':
-				if (optarg != NULL)
-					val = nicenumtoull(optarg);
 				verify = val;
 				break;
 			case 'w':
@@ -471,12 +483,19 @@ static void process_options(int argc, char **argv)
 				usage(0);
 		}
 	}
-	if (active_size == 0 || vol_size == 0)
-		active_size = vol_size = 1024*1024*1024ULL;
+	if (active_size == 0)
+		active_size = 1024*1024*1024ULL;
+
+	if (vol_size == 0)
+		vol_size = 1024*1024*1024ULL;
+
+	if (active_size > vol_size)
+		vol_size = active_size;
 
 	if (silent == 0) {
-		printf("vol size: %lu active size: %lu\n", vol_size,
-		    active_size);
+		printf("vol size: %lu active size: %lu create: %d\n", vol_size,
+		    active_size, create);
+		printf("pool: %s ds: %s\n", pool, ds);
 		printf("block size: %lu io blksize: %lu\n", block_size,
 		    io_block_size);
 		printf("log: %d sync: %d silent: %d\n", log_device, sync_data,
@@ -486,16 +505,23 @@ static void process_options(int argc, char **argv)
 		printf("total run time in seconds: %d\n", total_time_in_sec);
 	}
 }
+
 void
-open_pool_ds(void **spa, void **zv)
+open_pool(void **spa)
 {
 	int err;
-	err = uzfs_open_pool("testp", spa);
+	err = uzfs_open_pool(pool, spa);
 	if (err != 0) {
 		printf("pool open errored.. %d\n", err);
 		exit(1);
 	}
-	err = uzfs_open_dataset(*spa, "ds0", sync_data, zv);
+}
+
+void
+open_ds(void *spa, void **zv)
+{
+	int err;
+	err = uzfs_open_dataset(spa, ds, zv);
 	if (err != 0) {
 		printf("ds open errored.. %d\n", err);
 		exit(1);
@@ -508,21 +534,30 @@ unit_test_fn(void *arg)
 	void *spa, *zv;
 	kthread_t *reader1;
 	kthread_t *writer[3];
+	char name[MAXNAMELEN];
 	int i;
 	kmutex_t mtx;
 	kcondvar_t cv;
 	int threads_done = 0;
 	int num_threads = 0;
+	zvol_info_t *zinfo = NULL;
 	worker_args_t reader1_args, writer_args[3];
 
 	mutex_init(&mtx, NULL, MUTEX_DEFAULT, NULL);
 	cv_init(&cv, NULL, CV_DEFAULT, NULL);
 
-	setup_unit_test();
+	if (create == 1) {
+		setup_unit_test();
+		unit_test_create_pool_ds();
+	}
 
-	unit_test_create_pool_ds();
-
-	open_pool_ds(&spa, &zv);
+	open_pool(&spa);
+	if (create == 1) {
+		open_ds(spa, &zv);
+	} else {
+		zinfo = uzfs_zinfo_lookup(ds);
+		zv = zinfo->zv;
+	}
 
 	reader1_args.zv = zv;
 	reader1_args.threads_done = &threads_done;
@@ -557,8 +592,15 @@ unit_test_fn(void *arg)
 	cv_destroy(&cv);
 	mutex_destroy(&mtx);
 
-	uzfs_close_dataset(zv);
-	uzfs_close_pool(spa);
+	if (create == 1) {
+		uzfs_close_dataset(zv);
+		uzfs_close_pool(spa);
+	} else {
+		strlcpy(name, zinfo->name, MAXNAMELEN);
+		uzfs_zinfo_drop_refcnt(zinfo, 0);
+		uzfs_zinfo_destroy(name);
+		uzfs_close_pool(spa);
+	}
 }
 
 int

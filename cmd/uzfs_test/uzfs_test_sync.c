@@ -23,6 +23,7 @@
 #include <uzfs_io.h>
 #include <uzfs_test.h>
 #include <math.h>
+#include <zrepl_mgmt.h>
 
 int
 verify_fn(void *zv, char *buf, int block_size)
@@ -140,15 +141,32 @@ void
 replay_fn(void *arg)
 {
 	void *spa, *zv;
+	char name[MAXNAMELEN];
+	zvol_info_t *zinfo = NULL;
 
 	zfs_txg_timeout = 30;
 
 	if (write_op == 1) {
-		setup_unit_test();
-		unit_test_create_pool_ds();
-		open_pool_ds(&spa, &zv);
+		if (create == 1) {
+			setup_unit_test();
+			unit_test_create_pool_ds();
+		}
+
+		open_pool(&spa);
+		if (create == 1) {
+			open_ds(spa, &zv);
+		} else {
+			zinfo = uzfs_zinfo_lookup(ds);
+			zv = zinfo->zv;
+		}
 	} else if (verify != 0) {
-		open_pool_ds(&spa, &zv);
+		open_pool(&spa);
+		if (create == 1) {
+			open_ds(spa, &zv);
+		} else {
+			zinfo = uzfs_zinfo_lookup(ds);
+			zv = zinfo->zv;
+		}
 	} else {
 		printf("exiting program..\n");
 		uzfs_fini();
@@ -160,8 +178,15 @@ replay_fn(void *arg)
 	if (verify != 0)
 		if (silent == 0)
 			printf("verify error: %d\n", verify_err);
-	uzfs_close_dataset(zv);
-	uzfs_close_pool(spa);
+	if (create == 1) {
+		uzfs_close_dataset(zv);
+		uzfs_close_pool(spa);
+	} else {
+		strlcpy(name, zinfo->name, MAXNAMELEN);
+		uzfs_zinfo_drop_refcnt(zinfo, 0);
+		uzfs_zinfo_destroy(name);
+		uzfs_close_pool(spa);
+	}
 
 	if (verify_err)
 		exit(verify_err);

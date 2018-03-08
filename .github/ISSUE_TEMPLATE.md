@@ -22,11 +22,8 @@ Distribution Version    |
 Linux Kernel                 | 
 Architecture                 | 
 ZFS Version                  | 
-SPL Version                  | 
 <!-- 
-Commands to find ZFS/SPL versions:
-modinfo zfs | grep -iw version
-modinfo spl | grep -iw version 
+ZFS version can be a commit hash
 -->
 
 ### Describe the problem you're observing

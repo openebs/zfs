@@ -25,6 +25,7 @@
 #include <sys/stat.h>
 #include <uzfs.h>
 #include <uzfs_mtree.h>
+#include <zrepl_mgmt.h>
 
 static int uzfs_fd_rand = -1;
 
@@ -260,11 +261,11 @@ uzfs_objset_create_cb(objset_t *new_os, void *arg, cred_t *cr, dmu_tx_t *tx)
 	VERIFY(error == 0);
 }
 
+
 /* owns objset with name 'ds_name' in pool 'spa'. Sets 'sync' property */
 int
-uzfs_open_dataset(spa_t *spa, const char *ds_name, int sync, zvol_state_t **z)
+uzfs_open_dataset_init(spa_t *spa, const char *ds_name, zvol_state_t **z)
 {
-	char name[ZFS_MAX_DATASET_NAME_LEN];
 	zvol_state_t *zv = NULL;
 	int error = -1;
 	objset_t *os;
@@ -275,7 +276,6 @@ uzfs_open_dataset(spa_t *spa, const char *ds_name, int sync, zvol_state_t **z)
 
 	if (spa == NULL)
 		goto ret;
-	(void) snprintf(name, sizeof (name), "%s/%s", spa_name(spa), ds_name);
 
 	zv = kmem_zalloc(sizeof (zvol_state_t), KM_SLEEP);
 	if (zv == NULL)
@@ -285,11 +285,11 @@ uzfs_open_dataset(spa_t *spa, const char *ds_name, int sync, zvol_state_t **z)
 	zfs_rlock_init(&zv->zv_range_lock);
 	zfs_rlock_init(&zv->zv_mrange_lock);
 	mutex_init(&zv->io_tree_mtx, NULL, MUTEX_DEFAULT, NULL);
-	uzfs_create_mblktree((void **)&zv->incoming_io_tree);
+	uzfs_create_txg_diff_tree((void **)&zv->incoming_io_tree);
 
-	strlcpy(zv->zv_name, name, MAXNAMELEN);
+	strlcpy(zv->zv_name, ds_name, MAXNAMELEN);
 
-	error = dmu_objset_own(name, DMU_OST_ZVOL, 1, zv, &os);
+	error = dmu_objset_own(ds_name, DMU_OST_ZVOL, 1, zv, &os);
 	if (error)
 		goto free_ret;
 	zv->zv_objset = os;
@@ -334,7 +334,6 @@ free_ret:
 	}
 
 	zv->zv_zilog = zil_open(os, zvol_get_data);
-	zv->zv_sync = sync;
 	zv->zv_volblocksize = block_size;
 	zv->zv_volsize = vol_size;
 	zv->in_rebuilding_mode  = B_FALSE;
@@ -351,13 +350,28 @@ ret:
 	return (error);
 }
 
+/* owns objset with name 'ds_name' in pool 'spa'. Sets 'sync' property */
+int
+uzfs_open_dataset(spa_t *spa, const char *ds_name, zvol_state_t **z)
+{
+	char name[ZFS_MAX_DATASET_NAME_LEN];
+	int error = -1;
+
+	if (spa == NULL)
+		return (error);
+	(void) snprintf(name, sizeof (name), "%s/%s", spa_name(spa), ds_name);
+
+	error = uzfs_open_dataset_init(spa, name, z);
+	return (error);
+}
+
 /*
  * Creates dataset 'ds_name' in pool 'spa' with volume size 'vol_size',
- * block size as 'block_size' and with 'sync' property
+ * block size as 'block_size'
  */
 int
 uzfs_create_dataset(spa_t *spa, char *ds_name, uint64_t vol_size,
-    uint64_t block_size, int sync, zvol_state_t **z)
+    uint64_t block_size, zvol_state_t **z)
 {
 	char name[ZFS_MAX_DATASET_NAME_LEN];
 	zvol_state_t *zv = NULL;
@@ -379,7 +393,7 @@ uzfs_create_dataset(spa_t *spa, char *ds_name, uint64_t vol_size,
 	if (error)
 		goto ret;
 
-	error = uzfs_open_dataset(spa, ds_name, sync, &zv);
+	error = uzfs_open_dataset(spa, ds_name, &zv);
 	if (error != 0) {
 		zv = NULL;
 		goto ret;
@@ -389,10 +403,45 @@ ret:
 	return (error);
 }
 
-uint64_t
-uzfs_synced_txg(zvol_state_t *zv)
+/* uZFS Zvol create call back function */
+int
+uzfs_zvol_create_cb(const char *ds_name, void *arg)
 {
-	return (spa_last_synced_txg(zv->zv_spa));
+
+	zvol_state_t	*zv = NULL;
+	spa_t		*spa;
+	int 		error = -1;
+
+	printf("ds_name %s\n", ds_name);
+	error = spa_open(ds_name, &spa, "UZINFO");
+	if (error != 0) {
+		(void) spa_destroy((char *)ds_name);
+		return (error);
+	}
+
+	error = uzfs_open_dataset_init(spa, ds_name, &zv);
+	if (error) {
+		spa_close(spa, "UZINFO");
+		printf("Failed to open dataset: %s\n", ds_name);
+		return (error);
+	}
+
+	if (uzfs_zinfo_init(zv, ds_name) != 0) {
+		printf("Failed in uzfs_zinfo_init\n");
+		return (error);
+	}
+	return (0);
+}
+
+/* uZFS Zvol destroy call back function */
+int
+uzfs_zvol_destroy_cb(const char *ds_name, void *arg)
+{
+
+	printf("deleting ds_name %s\n", ds_name);
+
+	uzfs_zinfo_destroy(ds_name);
+	return (0);
 }
 
 /* disowns, closes dataset */
@@ -403,7 +452,7 @@ uzfs_close_dataset(zvol_state_t *zv)
 	dnode_rele(zv->zv_dn, zv);
 	dmu_objset_disown(zv->zv_objset, zv);
 	mutex_destroy(&zv->io_tree_mtx);
-	uzfs_destroy_mblktree(zv->incoming_io_tree);
+	uzfs_destroy_txg_diff_tree(zv->incoming_io_tree);
 	zfs_rlock_destroy(&zv->zv_range_lock);
 	zfs_rlock_destroy(&zv->zv_mrange_lock);
 	kmem_free(zv, sizeof (zvol_state_t));

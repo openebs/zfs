@@ -28,7 +28,7 @@ int
 uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
     blk_metadata_t *metadata, boolean_t is_rebuild)
 {
-	uint64_t bytes = 0, sync = zv->zv_sync;
+	uint64_t bytes = 0, sync;
 	uint64_t volsize = zv->zv_volsize;
 	uint64_t blocksize = zv->zv_volblocksize;
 	uint64_t end = len + offset;
@@ -45,8 +45,8 @@ uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 	list_t *chunk_io = NULL;
 	uzfs_io_chunk_list_t *node;
 	uint64_t orig_offset = offset;
-	uint64_t orig_len = len;
 
+	sync = dmu_objset_syncprop(os);
 	if (zv->zv_volmetablocksize == 0)
 		metadata = NULL;
 	/*
@@ -67,10 +67,9 @@ uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 	/*
 	 * TODO: error handling in case of UZFS_IO_TX_ASSIGN_FAIL
 	 */
-	int check = 0;
 	if (zv->in_rebuilding_mode) {
 		if (!is_rebuild)
-			uzfs_add_to_rebuilding_tree(zv, offset, len);
+			uzfs_add_to_incoming_io_tree(zv, offset, len);
 		if (is_rebuild) {
 			count = uzfs_search_rebuilding_tree(zv, offset,
 			    len, (void **)&chunk_io);

@@ -36,6 +36,9 @@ extern int test_iterations;
 extern uint64_t active_size;
 extern uint64_t vol_size;
 extern uint64_t block_size;
+extern uint32_t create;
+extern char *pool;
+extern char *ds;
 
 extern unsigned long zfs_arc_max;
 extern unsigned long zfs_arc_min;
@@ -43,7 +46,8 @@ extern unsigned long zfs_arc_min;
 extern void replay_fn(void *arg);
 extern void setup_unit_test(void);
 extern void unit_test_create_pool_ds(void);
-extern void open_pool_ds(void **, void **);
+extern void open_pool(void **);
+extern void open_ds(void *, void **);
 
 typedef struct worker_args {
 	void *zv;
@@ -61,8 +65,8 @@ typedef struct uzfs_test_info {
 
 void uzfs_zvol_zap_operation(void *arg);
 void unit_test_fn(void *arg);
-void uzfs_zvol_txg_diff_blk_test(void *arg);
-void uzfs_zvol_txg_mtree_test(void *arg);
+void uzfs_txg_diff_tree_test(void *arg);
+void uzfs_txg_diff_verifcation_test(void *arg);
 void uzfs_rebuild_tree_test(void *arg);
 void uzfs_rebuild_test(void *arg);
 #endif

@@ -120,7 +120,9 @@ uzfs_rebuild_tree_test(void *arg)
 
 	unit_test_create_pool_ds();
 
-	open_pool_ds(&spa, &zv);
+	open_pool(&spa);
+	open_ds(spa, &zv);
+
 	uzfs_set_rebuilding_mode(zv);
 
 	for (i = 0; i < 1; i++) {

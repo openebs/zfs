@@ -31,11 +31,15 @@ UZFS_TEST_SYNC_SH="$SRC_PATH/cmd/uzfs_test/uzfs_test_sync.sh"
 DMU_IO_TEST="cmd/dmu_io_test/dmu_io_test"
 TMPDIR="/tmp"
 VOLSIZE="1G"
+UZFS_TEST_POOL="testp"
+UZFS_TEST_VOL="ds0"
+UZFS_TEST_VOLSIZE="1G"
 SRCPOOL="src_pool"
 SRCVOL="src_vol"
 DSTPOOL="dst_pool"
 DSTVOL="dst_vol"
 TGT_PID="-1"
+TGT_PID2="-1"
 
 log_fail()
 {
@@ -144,6 +148,13 @@ run_zvol_tests()
 	log_must check_prop "$SRCPOOL/$SRCVOL" dedup on
 	log_must $ZFS set compression=on $SRCPOOL/$SRCVOL
 	log_must check_prop "$SRCPOOL/$SRCVOL" compression on
+
+	log_must $ZFS set sync=standard $SRCPOOL/$SRCVOL
+	log_must check_prop "$SRCPOOL/$SRCVOL" sync standard
+
+	log_must $ZFS set sync=disabled $SRCPOOL/$SRCVOL
+	log_must check_prop "$SRCPOOL/$SRCVOL" sync disabled
+
 	log_must $ZFS set sync=always $SRCPOOL/$SRCVOL
 	log_must check_prop "$SRCPOOL/$SRCVOL" sync always
 
@@ -545,17 +556,75 @@ test_raidz_pool()
 	return 0
 }
 
+setup_uzfs_test()
+{
+	$TGT &
+	sleep 1
+	TGT_PID2=$!
+
+	export_pool $UZFS_TEST_POOL
+
+	if [ "$1" == "log" ]; then
+		log_must $ZPOOL create -f $UZFS_TEST_POOL "$TMPDIR/uztest.1a" \
+		    log "$TMPDIR/uztest.log"
+	else
+		log_must $ZPOOL create -f $UZFS_TEST_POOL "$TMPDIR/uztest.1a"
+	fi
+
+	log_must $ZFS create -V $UZFS_TEST_VOLSIZE \
+	    $UZFS_TEST_POOL/$UZFS_TEST_VOL -b $2
+
+	if [ "$3" == "sync" ]; then
+		log_must $ZFS set sync=always $UZFS_TEST_POOL/$UZFS_TEST_VOL
+	else
+		log_must $ZFS set sync=standard $UZFS_TEST_POOL/$UZFS_TEST_VOL
+	fi
+	log_must kill -SIGKILL $TGT_PID2
+	return 0
+}
+
 run_uzfs_test()
 {
 	log_must_not $UZFS_TEST
+
+	log_must truncate -s 2G "$TMPDIR/uztest.1a"
+	log_must truncate -s 2G "$TMPDIR/uztest.log"
+
+	log_must setup_uzfs_test nolog 4096 nosync
+	log_must $UZFS_TEST -T 2
+
+	log_must setup_uzfs_test nolog 4096 sync
 	log_must $UZFS_TEST -s -T 2
+
+	log_must setup_uzfs_test log 4096 nosync
 	log_must $UZFS_TEST -l -T 2
+
+	log_must setup_uzfs_test log 4096 sync
 	log_must $UZFS_TEST -s -l -T 2
+
+	log_must setup_uzfs_test nolog 65536 nosync
 	log_must $UZFS_TEST -i 8192 -b 65536 -T 2
+
+	log_must setup_uzfs_test nolog 65536 sync
 	log_must $UZFS_TEST -s -i 8192 -b 65536 -T 2
+
+	log_must setup_uzfs_test log 65536 nosync
 	log_must $UZFS_TEST -l -i 8192 -b 65536 -T 2
+
+	K=1024
+	M=$(( 1024 * 1024 ))
+	G=$(( 1024 * 1024 * 1024 ))
+
+	log_must setup_uzfs_test log 65536 sync
 	log_must $UZFS_TEST -s -l -i 8192 -b 65536 -T 2
+	log_must $UZFS_TEST -t 10 -a  $(( 50 * 1024 * 1024 )) -T 3 -n 10000
+	log_must $UZFS_TEST -t 10 -a  $(( 100 * 1024 * 1024 )) -T 3 -n 10000
+	log_must $UZFS_TEST -t 10 -a  $(( 1000 * 1024 * 1024 )) -T 3 -n 10000
+	log_must $UZFS_TEST -t 10 -T 4
+
+	log_must $UZFS_TEST -t 10 -T 0
 	log_must $UZFS_TEST -t 10 -T 0 -n 10
+
 	log_must $UZFS_TEST -t 10 -T 3 -n 5
 	log_must $UZFS_TEST -t 10 -T 4 -n 5
 	log_must $UZFS_TEST -t 10 -T 6 -t 60
@@ -568,7 +637,10 @@ run_uzfs_test()
 	log_must $UZFS_TEST -t 10 -T 6 -t 120
 	log_must $UZFS_TEST -t 10 -T 6 -t 500
 
-	log_must . $UZFS_TEST_SYNC_SH
+#	log_must . $UZFS_TEST_SYNC_SH
+
+	log_must rm "$TMPDIR/uztest.1a"
+	log_must rm "$TMPDIR/uztest.log"
 
 	return 0
 }
@@ -594,14 +666,14 @@ log_must test_stripe_pool
 log_must test_mirror_pool
 log_must test_raidz_pool
 
+close_test
+
 log_must run_uzfs_test
 
 log_must run_dmu_test
 
 log_must $GTEST
 log_must $ZTEST
-
-close_test
 
 echo "##################################"
 echo "All test cases passed"

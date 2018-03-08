@@ -22,6 +22,7 @@
 #include <uzfs_mgmt.h>
 #include <uzfs_io.h>
 #include <uzfs_test.h>
+#include <uzfs_mtree.h>
 #include <math.h>
 #include <zrepl_mgmt.h>
 
@@ -46,6 +47,8 @@ uzfs_test_info_t uzfs_tests[] = {
 	{ uzfs_txg_diff_verifcation_test,
 	    "test to verify modified blocks between two txg for zvol" },
 	{ uzfs_txg_diff_tree_test, "txg_diff_tree functionality test" },
+	{ uzfs_rebuild_tree_test, "uzfs rebuilding tree test" },
+	{ uzfs_rebuild_test, "uzfs rebuild pool test"},
 };
 
 uint64_t metaverify = 0;
@@ -212,7 +215,8 @@ writer_thread(void *arg)
 
 		/* randomness in io_num is to test VERSION_0 zil records */
 		err = uzfs_write_data(zv, buf[idx], offset,
-		    (idx + 1) * block_size, (uzfs_random(2) ? NULL : &io_num));
+		    (idx + 1) * block_size, (uzfs_random(2) ? NULL : &io_num),
+		    B_FALSE);
 		if (err != 0)
 			printf("IO error at offset: %lu len: %lu\n", offset,
 			    (idx + 1) * block_size);
@@ -336,9 +340,9 @@ static void usage(int num)
 	printf("uzfs_test -t <total_time_in_sec> -a <active data size>"
 	    " -b <block_size> -c -d <dsname> -i <io size> -v <vol size>"
 	    " -l(for log device) -m <metadata to verify during replay>"
-	    " -p <pool name> -s(for sync on) -S(for silent)"
-	    " -V <data to verify during replay> -w(for write during replay)"
-	    " -T <test id>\n");
+	    " -n <number of iterations> -p <pool name> -s(for sync on)"
+	    " -S(for silent) -V <data to verify during replay>"
+	    " -w(for write during replay) -T <test id>\n");
 
 	printf("Test id:\n");
 

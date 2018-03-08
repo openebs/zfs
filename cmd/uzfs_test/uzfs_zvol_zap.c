@@ -8,7 +8,7 @@
 /*
  * populate_string will fill buf with [A-Z] characters
  */
-static void
+void
 populate_string(char *buf, uint64_t size)
 {
 	int i = 0;

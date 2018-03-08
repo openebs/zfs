@@ -23,7 +23,7 @@ fi
 ZPOOL="$SRC_PATH/cmd/zpool/zpool"
 ZFS="$SRC_PATH/cmd/zfs/zfs"
 ZDB="$SRC_PATH/cmd/zdb/zdb"
-TGT="$SRC_PATH/cmd/zrepl/zrepl"
+TGT="$SRC_PATH/cmd/tgt/tgt"
 GTEST="$SRC_PATH/tests/cbtest/gtest/test_uzfs"
 ZTEST="$SRC_PATH/cmd/ztest/ztest"
 UZFS_TEST="$SRC_PATH/cmd/uzfs_test/uzfs_test"
@@ -159,7 +159,7 @@ run_zvol_tests()
 	log_must check_prop "$SRCPOOL/$SRCVOL" sync always
 
 	# dump some data
-	#log_must dump_data
+	log_must dump_data
 
 	# test snapshot creation
 	log_must create_snapshot "$SRCPOOL/$SRCVOL" "snap"
@@ -271,6 +271,7 @@ create_snapshot()
 {
 	fs_vol=$1
 	snap=$2
+
 	test -z $fs_vol && log_fail "Filesystem or volume's name is undefined."
 	test -z $snap && log_fail "Snapshot's name is undefined."
 
@@ -558,7 +559,7 @@ test_raidz_pool()
 setup_uzfs_test()
 {
 	$TGT &
-	sleep 10
+	sleep 1
 	TGT_PID2=$!
 
 	export_pool $UZFS_TEST_POOL
@@ -622,6 +623,13 @@ run_uzfs_test()
 	log_must $UZFS_TEST -t 10 -T 4
 
 	log_must $UZFS_TEST -t 10 -T 0
+	log_must $UZFS_TEST -t 10 -T 0 -n 10
+
+	log_must $UZFS_TEST -t 10 -T 3 -n 5
+	log_must $UZFS_TEST -t 10 -T 4 -n 5
+	log_must $UZFS_TEST -t 10 -T 6 -t 60 -n 3
+	log_must $UZFS_TEST -t 10 -T 6 -t 120 -n 3
+	log_must $UZFS_TEST -t 10 -T 6 -t 500 -n 3
 
 #	log_must . $UZFS_TEST_SYNC_SH
 
@@ -647,7 +655,6 @@ run_dmu_test()
 }
 
 init_test
-sleep 10
 
 log_must test_stripe_pool
 log_must test_mirror_pool

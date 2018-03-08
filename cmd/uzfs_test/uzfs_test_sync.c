@@ -85,7 +85,7 @@ write_fn(void *zv, char *buf, int block_size)
 	txg1 = uzfs_synced_txg(zv);
 
 	err = uzfs_write_data(zv, buf, 0, block_size,
-	    (nometa == 1 ? NULL : &io_num));
+	    (nometa == 1 ? NULL : &io_num), B_FALSE);
 	if (err != 0)
 		printf("IO error\n");
 

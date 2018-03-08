@@ -30,9 +30,10 @@
 #define	TXG_DIFF_SNAPNAME	"tsnap"
 
 typedef struct uzfs_txg_diff_cb_args {
-	avl_tree_t *uzfs_txg_diff_tree;
+	uzfs_zvol_traverse_t *func;
 	uint64_t start_txg;
 	uint64_t end_txg;
+	void *arg_data;
 } uzfs_txg_diff_cb_args_t;
 
 /*
@@ -180,6 +181,22 @@ dump_txg_diff_tree(avl_tree_t *tree)
 	}
 }
 
+#define	ADD_TO_IO_CHUNK_LIST(list, e_offset, e_len, node, count)	\
+	do {	\
+		node = umem_alloc(sizeof (*node), UMEM_NOFAIL);		\
+		node->offset = e_offset;				\
+		node->len = e_len;					\
+		list_insert_tail(list, node);				\
+		count++;						\
+	} while (0)
+
+void
+dump_io_mblktree(zvol_state_t *zv)
+{
+	if (zv->incoming_io_tree)
+		dump_txg_diff_tree(zv->incoming_io_tree);
+}
+
 int
 uzfs_txg_diff_cb(spa_t *spa, zilog_t *zillog, const blkptr_t *bp,
     const zbookmark_phys_t *zb, const dnode_phys_t *dnp, void *arg)
@@ -197,12 +214,11 @@ uzfs_txg_diff_cb(spa_t *spa, zilog_t *zillog, const blkptr_t *bp,
 
 	blksz = BP_GET_LSIZE(bp);
 
-	add_to_txg_diff_tree(diff_blk_info->uzfs_txg_diff_tree,
-	    zb->zb_blkid * blksz, blksz);
-	return (0);
+	return diff_blk_info->func(zb->zb_blkid * blksz, blksz, zb->zb_blkid,
+	    diff_blk_info->arg_data);
 }
 
-static int
+int
 uzfs_txg_diff_tree_compare(const void *arg1, const void *arg2)
 {
 	uzfs_zvol_blk_phy_t *node1 = (uzfs_zvol_blk_phy_t *)arg1;
@@ -214,7 +230,7 @@ uzfs_txg_diff_tree_compare(const void *arg1, const void *arg2)
 
 int
 uzfs_get_txg_diff_tree(zvol_state_t *zv, uint64_t start_txg, uint64_t end_txg,
-    avl_tree_t **tree)
+    uzfs_zvol_traverse_t *func, void *arg)
 {
 	int error;
 	char snapname[ZFS_MAX_DATASET_NAME_LEN];
@@ -250,19 +266,13 @@ uzfs_get_txg_diff_tree(zvol_state_t *zv, uint64_t start_txg, uint64_t end_txg,
 
 	memset(&diff_blk, 0, sizeof (diff_blk));
 
-	diff_blk.uzfs_txg_diff_tree = umem_alloc(sizeof (avl_tree_t),
-	    UMEM_NOFAIL);
-	avl_create(diff_blk.uzfs_txg_diff_tree, uzfs_txg_diff_tree_compare,
-	    sizeof (uzfs_zvol_blk_phy_t),
-	    offsetof(uzfs_zvol_blk_phy_t, uzb_link));
-
+	diff_blk.func = func;
 	diff_blk.start_txg = start_txg;
 	diff_blk.end_txg = end_txg;
+	diff_blk.arg_data = arg;
 
 	error = traverse_dataset(ds_snap, start_txg,
 	    TRAVERSE_PRE, uzfs_txg_diff_cb, &diff_blk);
-
-	*tree = diff_blk.uzfs_txg_diff_tree;
 
 	dsl_dataset_long_rele(ds_snap, FTAG);
 	dsl_dataset_rele(ds_snap, FTAG);
@@ -301,4 +311,130 @@ uzfs_destroy_txg_diff_tree(void *tree)
 
 	avl_destroy(temp_tree);
 	umem_free(temp_tree, sizeof (*temp_tree));
+}
+
+void
+uzfs_add_to_incoming_io_tree(zvol_state_t *zv, uint64_t offset, uint64_t len)
+{
+	/*
+	 * Here: Handling of incoming_io_tree creation is for error case only.
+	 *	 It should be handled by replica or caller of uzfs_write_data
+	 */
+	if (!zv->incoming_io_tree)
+		uzfs_create_txg_diff_tree((void **)&zv->incoming_io_tree);
+
+	mutex_enter(&zv->io_tree_mtx);
+	add_to_txg_diff_tree(zv->incoming_io_tree, offset, len);
+	mutex_exit(&zv->io_tree_mtx);
+}
+
+uint32_t
+uzfs_search_incoming_io_tree(zvol_state_t *zv, uint64_t offset, uint64_t len,
+    list_t **list)
+{
+	avl_tree_t *tree = zv->incoming_io_tree;
+	uint32_t count = 0;
+	uzfs_zvol_blk_phy_t *b_entry, *a_entry, *entry;
+	avl_index_t where;
+	uzfs_zvol_blk_phy_t tofind;
+	uint64_t a_end, b_end;
+	list_t *chunk_list;
+	uzfs_io_chunk_list_t  *node;
+
+	if (!tree)
+		return (0);
+
+	chunk_list = umem_alloc(sizeof (*chunk_list), UMEM_NOFAIL);
+	list_create(chunk_list, sizeof (uzfs_io_chunk_list_t),
+	    offsetof(uzfs_io_chunk_list_t, link));
+
+	mutex_enter(&zv->io_tree_mtx);
+
+again:
+	tofind.offset = offset;
+	tofind.len = len;
+
+	// Check for exact match
+	entry = avl_find(tree, &tofind, &where);
+	if (entry) {
+		/*
+		 * Here, added entry length is greater or equals to rebuild
+		 * io len
+		 */
+		if (entry->len >= len)
+			goto done;
+
+		/*
+		 * Here added entry length is smaller than rebuild io len
+		 * so make offset to added offset + length and length to
+		 * len - rebuild io len
+		 */
+		if (entry->len < len) {
+			offset = entry->offset + entry->len;
+			len = len - entry->len;
+			goto again;
+		}
+	}
+
+	b_entry = avl_nearest(tree, where, AVL_BEFORE);
+	if (b_entry) {
+		b_end = b_entry->offset + b_entry->len;
+		a_end = offset + len;
+		if (b_end <= offset)
+			goto after;
+
+		if (a_end <= b_end) {
+			goto done;
+		}
+
+		if (a_end > b_end) {
+			len = len - (b_end - offset);
+			offset = b_end;
+			goto again;
+		}
+	}
+
+after:
+	a_entry = avl_nearest(tree, where, AVL_AFTER);
+	if (a_entry) {
+		a_end = a_entry->offset + a_entry->len;
+		b_end = offset + len;
+		if (b_end < a_entry->offset) {
+			ADD_TO_IO_CHUNK_LIST(chunk_list, offset, len, node,
+			    count);
+			goto done;
+		}
+
+		if (b_end == a_entry->offset) {
+			ADD_TO_IO_CHUNK_LIST(chunk_list, offset, len, node,
+			    count);
+			goto done;
+		}
+
+		if (b_end == a_end) {
+			ADD_TO_IO_CHUNK_LIST(chunk_list, offset,
+			    len - (b_end - a_entry->offset), node, count);
+			goto done;
+		}
+
+		if (b_end < a_end) {
+			ADD_TO_IO_CHUNK_LIST(chunk_list, offset,
+			    len - (b_end - a_entry->offset), node, count);
+			goto done;
+		}
+
+		if (b_end > a_end) {
+			ADD_TO_IO_CHUNK_LIST(chunk_list, offset,
+			    a_entry->offset - offset, node, count);
+			len = b_end - a_end;
+			offset = a_end;
+			goto again;
+		}
+	}
+
+	ADD_TO_IO_CHUNK_LIST(chunk_list, offset, len, node, count);
+done:
+	mutex_exit(&zv->io_tree_mtx);
+	*list = chunk_list;
+	return (count);
 }

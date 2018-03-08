@@ -22,10 +22,46 @@
 #ifndef	_UZFS_MTREE_H
 #define	_UZFS_MTREE_H
 
+/*
+ * API to get modified blocks between start_txg and end_txg
+ * Note: API will alocate condensed tree and populate it witch
+ *	modified block details (offset:lenth entries).
+ */
 extern int uzfs_get_txg_diff_tree(void *zv, uint64_t start_txg,
-    uint64_t end_txg, void **tree);
+    uint64_t end_txg, void *func, void *arg);
+
+/*
+ * dump_txg_diff_tree will print all entries (offset:length) to stdout
+ */
 extern void dump_txg_diff_tree(void *tree);
+
+/*
+ * dump_io_incoming_tree will print all entries from incoming io tree
+ */
+extern void dump_io_incoming_tree(void *zv);
+
+/*
+ * uzfs_create_txg_diff_tree will create avl tree to store incoming io's
+ * during rebuilding
+ */
 extern void uzfs_create_txg_diff_tree(void **tree);
 extern void uzfs_destroy_txg_diff_tree(void *tree);
+
 extern int add_to_txg_diff_tree(void *tree, uint64_t offset, uint64_t size);
+
+/*
+ * to add incoming io's details in io_tree
+ */
+extern void uzfs_add_to_incoming_io_tree(void *zv, uint64_t offset,
+    uint64_t len);
+
+/*
+ * API to search non-overlapping segment for rebuilding io
+ * It will create linked list with non-overlapping segment
+ * entries (i.e offset and length)
+ */
+extern int uzfs_search_incoming_io_tree(void *zv, uint64_t offset,
+    uint64_t len, void **list);
+
+extern int uzfs_txg_diff_tree_compare(const void *arg1, const void *arg2);
 #endif

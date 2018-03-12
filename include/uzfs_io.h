@@ -22,9 +22,13 @@
 #ifndef	_UZFS_IO_H
 #define	_UZFS_IO_H
 
-/* writes metadata 'md' to zil records */
+/*
+ * writes metadata 'md' to zil records
+ * is_rebuild: if io is from replica or for rebuilding then is_rebuild should
+ *		be set to TRUE else it should be FALSE
+ */
 extern int uzfs_write_data(void *zv, char *buf, uint64_t offset, uint64_t len,
-    void *md);
+    void *md, boolean_t is_rebuild);
 
 /*
  * calculates length required to store metadata for the data that it reads, and
@@ -35,4 +39,13 @@ extern int uzfs_read_data(void *zv, char *buf, uint64_t offset, uint64_t len,
 
 extern void uzfs_flush_data(void *zv);
 
+/*
+ * API to set/unset rebuilding mode
+ * If, rebuilding mode is set, then every normal write IO will be added to
+ * condensed avl tree (incoming io tree). For IO with is_rebuild
+ * flag set, it will be checked with incoming_io_tree and only non-overlapping
+ * part from IO will be written.
+ */
+extern void uzfs_set_rebuilding_mode(void *zv);
+extern void uzfs_unset_rebuilding_mode(void *zv);
 #endif

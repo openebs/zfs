@@ -212,7 +212,7 @@ uzfs_txg_diff_verifcation_test(void *arg)
 			populate_data(buf, offset, 0, block_size);
 
 			if (uzfs_write_data(zvol, buf, offset, uzfs_random(1) ?
-			    block_size : io_block_size, &io_num))
+			    block_size : io_block_size, &io_num, B_FALSE))
 				printf("IO error at offset: %lu len: %lu\n",
 				    offset, block_size);
 

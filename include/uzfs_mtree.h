@@ -48,4 +48,20 @@ extern void uzfs_create_txg_diff_tree(void **tree);
 extern void uzfs_destroy_txg_diff_tree(void *tree);
 
 extern int add_to_txg_diff_tree(void *tree, uint64_t offset, uint64_t size);
+
+/*
+ * to add incoming io's details in io_tree
+ */
+extern void uzfs_add_to_incoming_io_tree(void *zv, uint64_t offset,
+    uint64_t len);
+
+/*
+ * API to search non-overlapping segment for rebuilding io
+ * It will create linked list with non-overlapping segment
+ * entries (i.e offset and length)
+ */
+extern int uzfs_search_incoming_io_tree(void *zv, uint64_t offset,
+    uint64_t len, void **list);
+
+extern int uzfs_txg_diff_tree_compare(const void *arg1, const void *arg2);
 #endif

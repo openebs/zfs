@@ -46,6 +46,7 @@ uzfs_test_info_t uzfs_tests[] = {
 	{ uzfs_txg_diff_verifcation_test,
 	    "test to verify modified blocks between two txg for zvol" },
 	{ uzfs_txg_diff_tree_test, "txg_diff_tree functionality test" },
+	{ uzfs_rebuild_test, "uzfs rebuild pool test"},
 };
 
 uint64_t metaverify = 0;
@@ -212,7 +213,8 @@ writer_thread(void *arg)
 
 		/* randomness in io_num is to test VERSION_0 zil records */
 		err = uzfs_write_data(zv, buf[idx], offset,
-		    (idx + 1) * block_size, (uzfs_random(2) ? NULL : &io_num));
+		    (idx + 1) * block_size, (uzfs_random(2) ? NULL : &io_num),
+		    B_FALSE);
 		if (err != 0)
 			printf("IO error at offset: %lu len: %lu\n", offset,
 			    (idx + 1) * block_size);

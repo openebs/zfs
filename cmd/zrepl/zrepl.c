@@ -257,7 +257,7 @@ uzfs_zvol_worker(void *arg)
 			write = 1;
 			rc = uzfs_write_data(zinfo->zv,
 			    (char *)zio_cmd->buf,
-			    hdr->offset, hdr->len, NULL);
+			    hdr->offset, hdr->len, NULL, B_FALSE);
 			break;
 
 		case ZVOL_OPCODE_SYNC:

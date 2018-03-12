@@ -21,12 +21,12 @@
 
 #include <sys/dmu_objset.h>
 #include <sys/uzfs_zvol.h>
-
+#include <uzfs_mtree.h>
 
 /* Writes data 'buf' to dataset 'zv' at 'offset' for 'len' */
 int
 uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
-    blk_metadata_t *metadata)
+    blk_metadata_t *metadata, boolean_t is_rebuild)
 {
 	uint64_t bytes = 0, sync;
 	uint64_t volsize = zv->zv_volsize;
@@ -41,6 +41,10 @@ uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 	metaobj_blk_offset_t metablk;
 	uint64_t metadatasize = zv->zv_volmetadatasize;
 	uint64_t len_in_first_aligned_block = 0;
+	uint32_t count = 0;
+	list_t *chunk_io = NULL;
+	uzfs_io_chunk_list_t *node;
+	uint64_t orig_offset = offset;
 
 	sync = dmu_objset_syncprop(os);
 	if (zv->zv_volmetablocksize == 0)
@@ -59,6 +63,31 @@ uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 		len_in_first_aligned_block = len;
 
 	rl = zfs_range_lock(&zv->zv_range_lock, r_offset, r_len, RL_WRITER);
+
+	/*
+	 * TODO: error handling in case of UZFS_IO_TX_ASSIGN_FAIL
+	 */
+	if (zv->in_rebuilding_mode) {
+		if (!is_rebuild)
+			uzfs_add_to_incoming_io_tree(zv, offset, len);
+		if (is_rebuild) {
+			count = uzfs_search_incoming_io_tree(zv, offset,
+			    len, (void **)&chunk_io);
+chunk_io:
+			if (count) {
+				node = list_remove_head(chunk_io);
+				offset = node->offset;
+				len = node->len;
+				end = offset + len;
+				umem_free(node, sizeof (*node));
+				wrote = offset - orig_offset;
+				len_in_first_aligned_block = 0;
+				count--;
+				zv->rebuild_bytes += len;
+			} else
+				goto exit_with_error;
+		}
+	}
 
 	while (offset < end && offset < volsize) {
 		if (len_in_first_aligned_block != 0) {
@@ -109,6 +138,12 @@ uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 		len -= bytes;
 	}
 exit_with_error:
+	if (zv->in_rebuilding_mode && is_rebuild && count)
+		goto chunk_io;
+
+	if (chunk_io)
+		umem_free(chunk_io, sizeof (*chunk_io));
+
 	zfs_range_unlock(rl);
 
 	if (sync)
@@ -217,4 +252,17 @@ void
 uzfs_flush_data(zvol_state_t *zv)
 {
 	zil_commit(zv->zv_zilog, ZVOL_OBJ);
+}
+
+void
+uzfs_set_rebuilding_mode(zvol_state_t *zv)
+{
+	zv->in_rebuilding_mode = B_TRUE;
+	zv->rebuild_bytes = 0;
+}
+
+void
+uzfs_unset_rebuilding_mode(zvol_state_t *zv)
+{
+	zv->in_rebuilding_mode = B_FALSE;
 }

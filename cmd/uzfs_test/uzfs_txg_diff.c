@@ -30,7 +30,7 @@
 
 extern void populate_data(char *buf, uint64_t offset, int idx,
     uint64_t block_size);
-static void uzfs_test_txg_diff_traverse(off_t offset, size_t len,
+static int uzfs_test_txg_diff_traverse(off_t offset, size_t len,
     uint64_t blkid, void *arg);
 static int del_from_txg_diff_tree(avl_tree_t *tree, uint64_t b_offset,
     uint64_t b_len);
@@ -149,11 +149,12 @@ uzfs_search_txg_diff_tree(avl_tree_t *tree, uint64_t offset, uint64_t *len)
 	return (1);
 }
 
-static void
+static int
 uzfs_test_txg_diff_traverse(off_t offset, size_t len, uint64_t blkid, void *arg)
 {
 	avl_tree_t *tree = (avl_tree_t *)arg;
 	add_to_txg_diff_tree(tree, offset, len);
+	return (0);
 }
 
 void

@@ -165,6 +165,7 @@ replica_reader_thread(void *arg)
 	*threads_done = *threads_done + 1;
 	cv_signal(cv);
 	mutex_exit(mtx);
+
 	zk_thread_exit();
 }
 
@@ -205,7 +206,7 @@ fetch_modified_data(void *arg)
 	uzfs_rebuild_data_t *r_data = repl_data->r_data;
 	int err;
 
-	printf("feting modified data\n");
+	printf("fetching modified data\n");
 
 	err = uzfs_get_txg_diff_tree(repl_data->zvol, repl_data->start_txg,
 	    repl_data->end_txg, uzfs_test_txg_diff_traverse, r_data);
@@ -218,6 +219,7 @@ fetch_modified_data(void *arg)
 	mutex_enter(&r_data->mtx);
 	r_data->done = B_TRUE;
 	mutex_exit(&r_data->mtx);
+
 	zk_thread_exit();
 }
 
@@ -275,9 +277,13 @@ rebuild_replica_thread(void *arg)
 
 	mutex_enter(&r_data.mtx);
 	while (!r_data.done || (node = list_remove_head(io_list)) != NULL) {
-		mutex_exit(&r_data.mtx);
-		if (!node)
+		if (!node) {
+			mutex_exit(&r_data.mtx);
+			// sleep for some time here
+			usleep(1000);
+			mutex_enter(&r_data.mtx);
 			continue;
+		}
 
 		err = uzfs_write_data(to_zvol, node->buf, node->offset,
 		    node->len, NULL, B_TRUE);
@@ -289,8 +295,9 @@ rebuild_replica_thread(void *arg)
 
 		umem_free(node->buf, node->len);
 		umem_free(node, sizeof (*node));
-		mutex_enter(&r_data.mtx);
 	}
+
+	mutex_exit(&r_data.mtx);
 
 	printf("rebuilding finished.. written:%lu, actual written:%lu\n",
 	    diff_data, to_zvol->rebuild_bytes);
@@ -303,6 +310,7 @@ rebuild_replica_thread(void *arg)
 	r_info->active = B_FALSE;
 	cv_signal(&r_info->cv);
 	mutex_exit(&r_info->mtx);
+
 	zk_thread_exit();
 }
 
@@ -420,6 +428,7 @@ replica_writer_thread(void *arg)
 	*threads_done = *threads_done + 1;
 	cv_signal(cv);
 	mutex_exit(mtx);
+
 	zk_thread_exit();
 }
 

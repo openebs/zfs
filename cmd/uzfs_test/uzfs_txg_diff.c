@@ -28,11 +28,10 @@
 #include <uzfs_io.h>
 #include <uzfs_test.h>
 
-extern int total_time_in_sec;
 extern void populate_data(char *buf, uint64_t offset, int idx,
     uint64_t block_size);
-extern uint64_t block_size;
-
+static void uzfs_test_txg_diff_traverse(off_t offset, size_t len,
+    uint64_t blkid, void *arg);
 static int del_from_txg_diff_tree(avl_tree_t *tree, uint64_t b_offset,
     uint64_t b_len);
 static int uzfs_search_txg_diff_tree(avl_tree_t *tree, uint64_t offset,
@@ -150,6 +149,13 @@ uzfs_search_txg_diff_tree(avl_tree_t *tree, uint64_t offset, uint64_t *len)
 	return (1);
 }
 
+static void
+uzfs_test_txg_diff_traverse(off_t offset, size_t len, uint64_t blkid, void *arg)
+{
+	avl_tree_t *tree = (avl_tree_t *)arg;
+	add_to_txg_diff_tree(tree, offset, len);
+}
+
 void
 uzfs_txg_diff_verifcation_test(void *arg)
 {
@@ -175,6 +181,7 @@ uzfs_txg_diff_verifcation_test(void *arg)
 	buf = umem_alloc(block_size, UMEM_NOFAIL);
 
 	uzfs_create_txg_diff_tree((void **)&write_io_tree);
+	uzfs_create_txg_diff_tree((void **)&modified_block_tree);
 
 	now = gethrtime();
 	end = now + (hrtime_t)(total_time_in_sec * (hrtime_t)(NANOSEC));
@@ -221,7 +228,7 @@ uzfs_txg_diff_verifcation_test(void *arg)
 		last_txg = spa_last_synced_txg(spa);
 
 		uzfs_get_txg_diff_tree(zvol, first_txg, last_txg,
-		    (void **)&modified_block_tree);
+		    uzfs_test_txg_diff_traverse, (void *)modified_block_tree);
 
 		while ((blk_info = avl_destroy_nodes(write_io_tree,
 		    &cookie)) != NULL) {
@@ -233,13 +240,12 @@ uzfs_txg_diff_verifcation_test(void *arg)
 		VERIFY0(avl_numnodes(modified_block_tree));
 		VERIFY0(avl_numnodes(write_io_tree));
 		printf("%s : pass:%d\n", test_info->name, i);
-		umem_free(modified_block_tree, sizeof (*modified_block_tree));
-		modified_block_tree = NULL;
 	}
 
 	uzfs_close_dataset(zvol);
 	uzfs_close_pool(spa);
 	uzfs_destroy_txg_diff_tree(write_io_tree);
+	uzfs_destroy_txg_diff_tree(modified_block_tree);
 	umem_free(buf, block_size);
 }
 

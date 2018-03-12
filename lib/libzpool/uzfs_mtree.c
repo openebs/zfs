@@ -30,9 +30,10 @@
 #define	TXG_DIFF_SNAPNAME	"tsnap"
 
 typedef struct uzfs_txg_diff_cb_args {
-	avl_tree_t *uzfs_txg_diff_tree;
+	uzfs_zvol_traverse_t *func;
 	uint64_t start_txg;
 	uint64_t end_txg;
+	void *arg_data;
 } uzfs_txg_diff_cb_args_t;
 
 /*
@@ -197,9 +198,8 @@ uzfs_txg_diff_cb(spa_t *spa, zilog_t *zillog, const blkptr_t *bp,
 
 	blksz = BP_GET_LSIZE(bp);
 
-	add_to_txg_diff_tree(diff_blk_info->uzfs_txg_diff_tree,
-	    zb->zb_blkid * blksz, blksz);
-	return (0);
+	return diff_blk_info->func(zb->zb_blkid * blksz, blksz, zb->zb_blkid,
+	    diff_blk_info->arg_data);
 }
 
 static int
@@ -211,10 +211,9 @@ uzfs_txg_diff_tree_compare(const void *arg1, const void *arg2)
 	return (AVL_CMP(node1->offset, node2->offset));
 }
 
-
 int
 uzfs_get_txg_diff_tree(zvol_state_t *zv, uint64_t start_txg, uint64_t end_txg,
-    avl_tree_t **tree)
+    uzfs_zvol_traverse_t *func, void *arg)
 {
 	int error;
 	char snapname[ZFS_MAX_DATASET_NAME_LEN];
@@ -250,19 +249,13 @@ uzfs_get_txg_diff_tree(zvol_state_t *zv, uint64_t start_txg, uint64_t end_txg,
 
 	memset(&diff_blk, 0, sizeof (diff_blk));
 
-	diff_blk.uzfs_txg_diff_tree = umem_alloc(sizeof (avl_tree_t),
-	    UMEM_NOFAIL);
-	avl_create(diff_blk.uzfs_txg_diff_tree, uzfs_txg_diff_tree_compare,
-	    sizeof (uzfs_zvol_blk_phy_t),
-	    offsetof(uzfs_zvol_blk_phy_t, uzb_link));
-
+	diff_blk.func = func;
 	diff_blk.start_txg = start_txg;
 	diff_blk.end_txg = end_txg;
+	diff_blk.arg_data = arg;
 
 	error = traverse_dataset(ds_snap, start_txg,
 	    TRAVERSE_PRE, uzfs_txg_diff_cb, &diff_blk);
-
-	*tree = diff_blk.uzfs_txg_diff_tree;
 
 	dsl_dataset_long_rele(ds_snap, FTAG);
 	dsl_dataset_rele(ds_snap, FTAG);

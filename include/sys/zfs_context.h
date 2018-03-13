@@ -654,7 +654,7 @@ extern void delay(clock_t ticks);
 	} while (0);
 
 #define	max_ncpus	64
-#define	boot_ncpus	(sysconf(_SC_NPROCESSORS_ONLN))
+#define	boot_ncpus	(MIN(sysconf(_SC_NPROCESSORS_ONLN), max_ncpus))
 
 /*
  * Process priorities as defined by setpriority(2) and getpriority(2).

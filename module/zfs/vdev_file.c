@@ -260,8 +260,9 @@ vdev_ops_t vdev_file_ops = {
 void
 vdev_file_init(void)
 {
-	vdev_file_taskq = taskq_create("z_vdev_file", MAX(boot_ncpus, 16),
-	    minclsyspri, boot_ncpus, INT_MAX, TASKQ_DYNAMIC);
+	/* file backend is used for testing so we can safe some threads here */
+	vdev_file_taskq = taskq_create("z_vdev_file", 1,
+	    minclsyspri, MIN(boot_ncpus, 4), INT_MAX, TASKQ_DYNAMIC);
 
 	VERIFY(vdev_file_taskq);
 }

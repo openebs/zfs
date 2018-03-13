@@ -649,6 +649,7 @@ test_type :
 	- pool_test (verify pool create/destroy functionality)
 	- zvol_test (zvol sync test, read/write and replay tests)
 	- rebuild_test (zvol rebuild related tests)
+	- txg_diff_test (txg diff API test)
 EOF
 }
 
@@ -697,19 +698,23 @@ run_zvol_test()
 
 run_rebuild_test()
 {
+	log_must $UZFS_TEST -T 5 -t 60 -n 3
+#	log_must $UZFS_TEST -T 5 -t 120 -n 3
+#	log_must $UZFS_TEST -T 5 -t 500 -n 3
+}
+
+run_txg_diff_test()
+{
 	K=1024
 	M=$(( 1024 * 1024 ))
 	G=$(( 1024 * 1024 * 1024 ))
 
-	log_must $UZFS_TEST -t 10 -a  $(( 50 * 1024 * 1024 )) -T 3 -n 10000
-	log_must $UZFS_TEST -t 10 -a  $(( 100 * 1024 * 1024 )) -T 3 -n 10000
-	log_must $UZFS_TEST -t 10 -a  $(( 1000 * 1024 * 1024 )) -T 3 -n 10000
-	log_must $UZFS_TEST -t 10 -T 4
-	log_must $UZFS_TEST -t 10 -T 5 -t 60 -n 3
-	log_must $UZFS_TEST -t 10 -T 5 -t 120 -n 3
-	log_must $UZFS_TEST -t 10 -T 5 -t 500 -n 3
-}
+#	log_must $UZFS_TEST -a  $(( 50 * $M )) -T 3 -n 10000
+#	log_must $UZFS_TEST -a  $(( 100 * $M )) -T 3 -n 10000
+	log_must $UZFS_TEST -a  $(( 1 * $G)) -T 3 -n 10000
 
+	log_must $UZFS_TEST -T 4
+}
 
 test_func="run_${test_type}"
 type -t $test_func

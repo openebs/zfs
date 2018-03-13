@@ -699,8 +699,8 @@ run_zvol_test()
 run_rebuild_test()
 {
 	log_must $UZFS_TEST -T 5 -t 60 -n 3
-#	log_must $UZFS_TEST -T 5 -t 120 -n 3
-#	log_must $UZFS_TEST -T 5 -t 500 -n 3
+	log_must $UZFS_TEST -T 5 -t 120 -n 3
+
 }
 
 run_txg_diff_test()
@@ -709,8 +709,7 @@ run_txg_diff_test()
 	M=$(( 1024 * 1024 ))
 	G=$(( 1024 * 1024 * 1024 ))
 
-#	log_must $UZFS_TEST -a  $(( 50 * $M )) -T 3 -n 10000
-#	log_must $UZFS_TEST -a  $(( 100 * $M )) -T 3 -n 10000
+	log_must $UZFS_TEST -a  $(( 100 * $M )) -T 3 -n 10000
 	log_must $UZFS_TEST -a  $(( 1 * $G)) -T 3 -n 10000
 
 	log_must $UZFS_TEST -T 4

@@ -55,7 +55,7 @@ script:
     # run ztest and test supported zio backends
     - if [ $ZFS_BUILD_TAGS = 0 ]; then
         sudo mkdir /etc/zfs;
-        travis_wait 60 sudo bash ./tests/cbtest/script/test_uzfs.sh || travis_terminate 1;
+        travis_wait 60 sudo bash ./tests/cbtest/script/test_uzfs.sh -T $ZFS_TEST_TAGS || travis_terminate 1;
       else
         sudo /sbin/modprobe zfs;
         travis_wait 10 /sbin/ztest || travis_terminate 1;

@@ -8,6 +8,9 @@ env:
   matrix:
     # tags are mainly in ascending order
     - ZFS_BUILD_TAGS=0
+      ZFS_TEST_TAGS=pool_test
+      ZFS_TEST_TAGS=zvol_test
+      ZFS_TEST_TAGS=rebuild_test
     - ZFS_BUILD_TAGS=1
 before_install:
   # sudo apt-get -qq update

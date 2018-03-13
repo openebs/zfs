@@ -610,23 +610,11 @@ run_uzfs_test()
 	log_must setup_uzfs_test log 65536 nosync
 	log_must $UZFS_TEST -l -i 8192 -b 65536 -T 2
 
-	K=1024
-	M=$(( 1024 * 1024 ))
-	G=$(( 1024 * 1024 * 1024 ))
-
 	log_must setup_uzfs_test log 65536 sync
 	log_must $UZFS_TEST -s -l -i 8192 -b 65536 -T 2
-	log_must $UZFS_TEST -t 10 -a  $(( 50 * 1024 * 1024 )) -T 3 -n 10000
-	log_must $UZFS_TEST -t 10 -a  $(( 100 * 1024 * 1024 )) -T 3 -n 10000
-	log_must $UZFS_TEST -t 10 -a  $(( 1000 * 1024 * 1024 )) -T 3 -n 10000
-	log_must $UZFS_TEST -t 10 -T 4
 
 	log_must $UZFS_TEST -t 10 -T 0
 	log_must $UZFS_TEST -t 10 -T 0 -n 10
-
-	log_must $UZFS_TEST -t 10 -T 5 -t 60 -n 3
-	log_must $UZFS_TEST -t 10 -T 5 -t 120 -n 3
-	log_must $UZFS_TEST -t 10 -T 5 -t 500 -n 3
 
 #	log_must . $UZFS_TEST_SYNC_SH
 
@@ -651,22 +639,89 @@ run_dmu_test()
 	return 0
 }
 
-init_test
-sleep 10
+usage()
+{
+cat << EOF
+usage:
+$0 [h] [-T test_type]
 
-log_must test_stripe_pool
-log_must test_mirror_pool
-log_must test_raidz_pool
+test_type :
+	- pool_test (verify pool create/destroy functionality)
+	- zvol_test (zvol sync test, read/write and replay tests)
+	- rebuild_test (zvol rebuild related tests)
+EOF
+}
 
-close_test
+while getopts 'hT:' OPTION; do
+	case $OPTION in
+	h)
+		usage
+		exit 1
+		;;
+	T)
+		test_type="$OPTARG"
+		;;
+	?)
+		usage
+		exit
+		;;
+	esac
+done
 
-log_must run_uzfs_test
+shift $((OPTIND-1))
 
-log_must run_dmu_test
+if [ -z $test_type ]; then
+	usage
+	exit
+fi
 
-log_must $GTEST
-log_must $ZTEST
+run_pool_test()
+{
+	init_test
+	sleep 10
 
-echo "##################################"
-echo "All test cases passed"
-echo "##################################"
+	log_must test_stripe_pool
+	log_must test_mirror_pool
+	log_must test_raidz_pool
+
+	close_test
+}
+
+run_zvol_test()
+{
+	log_must run_uzfs_test
+	log_must run_dmu_test
+	log_must $GTEST
+	log_must $ZTEST
+}
+
+run_rebuild_test()
+{
+	K=1024
+	M=$(( 1024 * 1024 ))
+	G=$(( 1024 * 1024 * 1024 ))
+
+	log_must $UZFS_TEST -t 10 -a  $(( 50 * 1024 * 1024 )) -T 3 -n 10000
+	log_must $UZFS_TEST -t 10 -a  $(( 100 * 1024 * 1024 )) -T 3 -n 10000
+	log_must $UZFS_TEST -t 10 -a  $(( 1000 * 1024 * 1024 )) -T 3 -n 10000
+	log_must $UZFS_TEST -t 10 -T 4
+	log_must $UZFS_TEST -t 10 -T 5 -t 60 -n 3
+	log_must $UZFS_TEST -t 10 -T 5 -t 120 -n 3
+	log_must $UZFS_TEST -t 10 -T 5 -t 500 -n 3
+}
+
+
+test_func="run_${test_type}"
+type -t $test_func
+if [ $? -eq 0 ]; then
+	START=$(date +%s.%N)
+	$test_func
+	END=$(date +%s.%N)
+	DIFF=$(echo "scale=0;$END - $START" | bc)
+	echo "####################################"
+	echo "All cases passed for $test_type in ${DIFF%.*} seconds"
+	echo "####################################"
+else
+	usage
+	exit 1
+fi

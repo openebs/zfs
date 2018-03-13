@@ -108,7 +108,7 @@ typedef struct uzfs_zvol_blk_phy {
 	avl_node_t uzb_link;
 } uzfs_zvol_blk_phy_t;
 
-typedef int (uzfs_txg_diff_traverse_cb_t)(off_t offset, size_t len, uint64_t blkid,
-    void *arg);
+typedef int (uzfs_txg_diff_traverse_cb_t)(off_t offset, size_t len,
+    uint64_t blkid, void *arg);
 #endif
 #endif

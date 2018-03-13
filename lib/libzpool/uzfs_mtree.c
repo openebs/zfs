@@ -30,7 +30,7 @@
 #define	TXG_DIFF_SNAPNAME	"tsnap"
 
 typedef struct uzfs_txg_diff_cb_args {
-	uzfs_zvol_traverse_t *func;
+	uzfs_txg_diff_traverse_cb_t *func;
 	uint64_t start_txg;
 	uint64_t end_txg;
 	void *arg_data;
@@ -212,8 +212,8 @@ uzfs_txg_diff_tree_compare(const void *arg1, const void *arg2)
 }
 
 int
-uzfs_get_txg_diff_tree(zvol_state_t *zv, uint64_t start_txg, uint64_t end_txg,
-    uzfs_zvol_traverse_t *func, void *arg)
+uzfs_get_txg_diff(zvol_state_t *zv, uint64_t start_txg, uint64_t end_txg,
+    uzfs_txg_diff_traverse_cb_t *func, void *arg)
 {
 	int error;
 	char snapname[ZFS_MAX_DATASET_NAME_LEN];

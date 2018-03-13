@@ -30,7 +30,7 @@
 
 extern void populate_data(char *buf, uint64_t offset, int idx,
     uint64_t block_size);
-static int uzfs_test_txg_diff_traverse(off_t offset, size_t len,
+static int uzfs_test_txg_diff_traverse_cb(off_t offset, size_t len,
     uint64_t blkid, void *arg);
 static int del_from_txg_diff_tree(avl_tree_t *tree, uint64_t b_offset,
     uint64_t b_len);
@@ -150,7 +150,7 @@ uzfs_search_txg_diff_tree(avl_tree_t *tree, uint64_t offset, uint64_t *len)
 }
 
 static int
-uzfs_test_txg_diff_traverse(off_t offset, size_t len, uint64_t blkid, void *arg)
+uzfs_test_txg_diff_traverse_cb(off_t offset, size_t len, uint64_t blkid, void *arg)
 {
 	avl_tree_t *tree = (avl_tree_t *)arg;
 	add_to_txg_diff_tree(tree, offset, len);
@@ -228,8 +228,8 @@ uzfs_txg_diff_verifcation_test(void *arg)
 		txg_wait_synced(spa_get_dsl(spa), 0);
 		last_txg = spa_last_synced_txg(spa);
 
-		uzfs_get_txg_diff_tree(zvol, first_txg, last_txg,
-		    uzfs_test_txg_diff_traverse, (void *)modified_block_tree);
+		uzfs_get_txg_diff(zvol, first_txg, last_txg,
+		    uzfs_test_txg_diff_traverse_cb, (void *)modified_block_tree);
 
 		while ((blk_info = avl_destroy_nodes(write_io_tree,
 		    &cookie)) != NULL) {

@@ -95,26 +95,29 @@ init_test()
 	sleep 1
 }
 
+#
+# DO NOT use log_must* in this function otherwise we risk recursion.
+#
 close_test()
 {
-	log_must kill -SIGKILL $TGT_PID
-	log_must rm "$TMPDIR/test_disk1.img"
-	log_must rm "$TMPDIR/test_disk2.img"
-	log_must rm "$TMPDIR/test_disk3.img"
-	log_must rm "$TMPDIR/test_disk4.img"
-	log_must rm "$TMPDIR/test_disk5.img"
-	log_must rm "$TMPDIR/test_disk6.img"
-	log_must rm "$TMPDIR/test_disk7.img"
-	log_must rm "$TMPDIR/test_disk8.img"
-	log_must rm "$TMPDIR/test_spare1.img"
-	log_must rm "$TMPDIR/test_spare2.img"
-	log_must rm "$TMPDIR/test_spare3.img"
-	log_must rm "$TMPDIR/test_spare4.img"
-	log_must rm "$TMPDIR/test_spare5.img"
-	log_must rm "$TMPDIR/test_spare6.img"
-	log_must rm "$TMPDIR/test_spare7.img"
-	log_must rm "$TMPDIR/test_spare8.img"
-	log_must rm "$TMPDIR/test_log.img"
+	kill -SIGKILL $TGT_PID
+	rm "$TMPDIR/test_disk1.img"
+	rm "$TMPDIR/test_disk2.img"
+	rm "$TMPDIR/test_disk3.img"
+	rm "$TMPDIR/test_disk4.img"
+	rm "$TMPDIR/test_disk5.img"
+	rm "$TMPDIR/test_disk6.img"
+	rm "$TMPDIR/test_disk7.img"
+	rm "$TMPDIR/test_disk8.img"
+	rm "$TMPDIR/test_spare1.img"
+	rm "$TMPDIR/test_spare2.img"
+	rm "$TMPDIR/test_spare3.img"
+	rm "$TMPDIR/test_spare4.img"
+	rm "$TMPDIR/test_spare5.img"
+	rm "$TMPDIR/test_spare6.img"
+	rm "$TMPDIR/test_spare7.img"
+	rm "$TMPDIR/test_spare8.img"
+	rm "$TMPDIR/test_log.img"
 }
 
 dump_data()

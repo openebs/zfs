@@ -67,10 +67,10 @@ uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 	/*
 	 * TODO: error handling in case of UZFS_IO_TX_ASSIGN_FAIL
 	 */
-	if (zv->in_rebuilding_mode) {
-		if (!is_rebuild)
+	if (zv->zv_status && ZVOL_STATUS_REBUILDING) {
+		if (!is_rebuild) {
 			uzfs_add_to_incoming_io_tree(zv, offset, len);
-		if (is_rebuild) {
+		} else {
 			count = uzfs_search_incoming_io_tree(zv, offset,
 			    len, (void **)&chunk_io);
 chunk_io:
@@ -80,12 +80,21 @@ chunk_io:
 				len = node->len;
 				end = offset + len;
 				umem_free(node, sizeof (*node));
+
 				wrote = offset - orig_offset;
-				len_in_first_aligned_block = 0;
+
+				r_offset = (offset / blocksize) * blocksize;
+				len_in_first_aligned_block = (blocksize -
+				    (offset - r_offset));
+
+				if (len_in_first_aligned_block > len)
+					len_in_first_aligned_block = len;
+
+				zv->rebuild_data.rebuild_bytes += len;
 				count--;
-				zv->rebuild_bytes += len;
-			} else
+			} else {
 				goto exit_with_error;
+			}
 		}
 	}
 
@@ -138,11 +147,14 @@ chunk_io:
 		len -= bytes;
 	}
 exit_with_error:
-	if (zv->in_rebuilding_mode && is_rebuild && count)
+	if ((zv->zv_status && ZVOL_STATUS_REBUILDING) &&
+	    is_rebuild && count)
 		goto chunk_io;
 
-	if (chunk_io)
+	if (chunk_io) {
+		list_destroy(chunk_io);
 		umem_free(chunk_io, sizeof (*chunk_io));
+	}
 
 	zfs_range_unlock(rl);
 
@@ -255,14 +267,13 @@ uzfs_flush_data(zvol_state_t *zv)
 }
 
 void
-uzfs_set_rebuilding_mode(zvol_state_t *zv)
+uzfs_zvol_set_status(zvol_state_t *zv, zvol_status_t status)
 {
-	zv->in_rebuilding_mode = B_TRUE;
-	zv->rebuild_bytes = 0;
+	zv->zv_status = status;
 }
 
-void
-uzfs_unset_rebuilding_mode(zvol_state_t *zv)
+zvol_status_t
+uzfs_zvol_get_status(zvol_state_t *zv)
 {
-	zv->in_rebuilding_mode = B_FALSE;
+	return (zv->zv_status);
 }

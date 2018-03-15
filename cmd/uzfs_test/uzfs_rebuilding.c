@@ -170,7 +170,7 @@ replica_reader_thread(void *arg)
 }
 
 static int
-uzfs_test_txg_diff_traverse(off_t offset, size_t len,
+uzfs_test_txg_diff_traverse_cb(off_t offset, size_t len,
     uint64_t blkid, void *arg)
 {
 	uzfs_rebuild_data_t *r_data = (uzfs_rebuild_data_t *)arg;
@@ -208,8 +208,8 @@ fetch_modified_data(void *arg)
 
 	printf("fetching modified data\n");
 
-	err = uzfs_get_txg_diff_tree(repl_data->zvol, repl_data->start_txg,
-	    repl_data->end_txg, uzfs_test_txg_diff_traverse, r_data);
+	err = uzfs_get_txg_diff(repl_data->zvol, repl_data->start_txg,
+	    repl_data->end_txg, uzfs_test_txg_diff_traverse_cb, r_data);
 
 	if (err)
 		printf("error(%d)... while fetching modified data\n", err);
@@ -239,13 +239,11 @@ rebuild_replica_thread(void *arg)
 	int err = 0;
 	uint64_t diff_data = 0;
 
-	start_txg = spa_last_synced_txg(to_zvol->zv_spa);
 	start_txg = 0;
 	txg_wait_synced(spa_get_dsl(to_zvol->zv_spa), 0);
 
-	uzfs_set_rebuilding_mode(to_zvol);
+	uzfs_zvol_set_status(to_zvol, ZVOL_STATUS_REBUILDING);
 
-	end_txg = spa_last_synced_txg(from_zvol->zv_spa);
 	txg_wait_synced(spa_get_dsl(from_zvol->zv_spa), 0);
 	end_txg = spa_last_synced_txg(from_zvol->zv_spa);
 
@@ -284,27 +282,31 @@ rebuild_replica_thread(void *arg)
 			mutex_enter(&r_data.mtx);
 			continue;
 		}
+		mutex_exit(&r_data.mtx);
 
 		err = uzfs_write_data(to_zvol, node->buf, node->offset,
 		    node->len, NULL, B_TRUE);
 		if (err) {
 			printf("IO error during rebuilding offset:%lu,"
 			    "len:%lu\n", node->offset, node->len);
+			exit(2);
 		}
 		diff_data += node->len;
 
 		umem_free(node->buf, node->len);
 		umem_free(node, sizeof (*node));
+		mutex_enter(&r_data.mtx);
 	}
 
 	mutex_exit(&r_data.mtx);
 
 	printf("rebuilding finished.. written:%lu, actual written:%lu\n",
-	    diff_data, to_zvol->rebuild_bytes);
+	    diff_data, to_zvol->rebuild_data.rebuild_bytes);
 	umem_free(io_list, sizeof (*io_list));
 	mutex_destroy(&r_data.mtx);
 	cv_destroy(&r_data.cv);
-	uzfs_unset_rebuilding_mode(to_zvol);
+
+	uzfs_zvol_set_status(to_zvol, ZVOL_STATUS_HEALTHY);
 
 	mutex_enter(&r_info->mtx);
 	r_info->active = B_FALSE;
@@ -377,8 +379,12 @@ replica_writer_thread(void *arg)
 			if (err != 0)
 				printf("IO error at offset: %lu len: %lu\n",
 				    offset, (idx + 1) * block_size);
-		} else
+		} else {
 			mismatch_count += (idx + 1) * block_size;
+		}
+
+		if (err)
+			exit(2);
 
 		iops += (idx + 1);
 		now = gethrtime();
@@ -471,6 +477,84 @@ create_and_init_pool(void **spa, void **zvol)
 }
 
 void
+verify_overlaps(void *zv, uint64_t offset, uint64_t len, int num_args, ...)
+{
+	list_t *list, check_list;
+	va_list arg_list;
+	int count, num_chunks;
+	uzfs_io_chunk_list_t *node1, *node2;
+	uzfs_io_chunk_list_t *chunk_io;
+	int i;
+
+	num_chunks = num_args / 2;
+	count = uzfs_search_incoming_io_tree(zv, offset, len, (void **)&list);
+
+	if (count != num_chunks) {
+		printf("argument mismatch\n");
+		exit(1);
+	}
+
+	list_create(&check_list, sizeof (uzfs_io_chunk_list_t),
+	    offsetof(uzfs_io_chunk_list_t, link));
+
+	va_start(arg_list, num_args);
+	for (i = 0; i < num_args; i += 2) {
+		chunk_io = umem_alloc(sizeof (*chunk_io), UMEM_NOFAIL);
+		chunk_io->offset = va_arg(arg_list, int);
+		chunk_io->len = va_arg(arg_list, int);
+		list_insert_tail(&check_list, chunk_io);
+	}
+
+	va_end(arg_list);
+
+	while ((node1 = list_remove_head(list))) {
+		for (node2 = list_head(&check_list); node2 != NULL;
+		    node2 = list_next(&check_list, node2)) {
+			if (node2->offset == node1->offset &&
+			    node2->len == node1->len) {
+				list_remove(&check_list, node2);
+				umem_free(node2, sizeof (*node2));
+				break;
+			}
+		}
+		umem_free(node1, sizeof (*node1));
+	}
+
+	VERIFY(list_is_empty(list));
+	VERIFY(list_is_empty(&check_list));
+
+	list_destroy(list);
+	list_destroy(&check_list);
+	umem_free(list, sizeof (*list));
+}
+
+void
+uzfs_test_check_overlaps(void *zv)
+{
+	uzfs_add_to_incoming_io_tree(zv, 100, 150);
+	uzfs_add_to_incoming_io_tree(zv, 300, 450);
+	uzfs_add_to_incoming_io_tree(zv, 800, 100);
+
+	// offset == entry offset
+	verify_overlaps(zv, 100, 120, 0);
+	verify_overlaps(zv, 100, 150, 0);
+	verify_overlaps(zv, 100, 160, 2, 250, 10);
+	verify_overlaps(zv, 100, 800, 4, 250, 50, 750, 50);
+
+	// offset > entry offset
+	verify_overlaps(zv, 120, 130, 0);
+	verify_overlaps(zv, 120, 100, 0);
+	verify_overlaps(zv, 120, 150, 2, 250, 20);
+	verify_overlaps(zv, 120, 300, 2, 250, 50);
+
+	// offset < entry offset
+	verify_overlaps(zv, 50, 60, 2, 50, 50);
+	verify_overlaps(zv, 50, 100, 2, 50, 50);
+	verify_overlaps(zv, 50, 220, 4, 50, 50, 250, 20);
+	verify_overlaps(zv, 50, 1000, 8, 50, 50, 250, 50, 750, 50, 900, 150);
+}
+
+void
 uzfs_rebuild_test(void *arg)
 {
 	uzfs_test_info_t *test_info = (uzfs_test_info_t *)arg;
@@ -480,7 +564,7 @@ uzfs_rebuild_test(void *arg)
 	kthread_t *writer, *reader;
 	worker_args_t writer_args, **reader_args;
 	int reader_count;
-	int n = 0;
+	int n = 0, check = 0;
 
 	printf("starting %s\n", test_info->name);
 
@@ -555,6 +639,13 @@ uzfs_rebuild_test(void *arg)
 
 		cv_destroy(&cv);
 		mutex_destroy(&mtx);
+
+		/*
+		 * This is a small test only to verify most possibilities
+		 * of overlapping IO
+		 */
+		if (!check++)
+			uzfs_test_check_overlaps(zvol1);
 
 		uzfs_close_dataset(zvol1);
 		uzfs_close_dataset(zvol2);

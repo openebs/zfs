@@ -29,6 +29,7 @@
  */
 
 #include <sys/zfs_context.h>
+#include <sys/prctl.h>
 
 int taskq_now;
 taskq_t *system_taskq;
@@ -219,6 +220,8 @@ taskq_thread(void *arg)
 	taskq_ent_t *t;
 	boolean_t prealloc;
 
+	prctl(PR_SET_NAME, tq->tq_name, 0, 0, 0);
+
 	mutex_enter(&tq->tq_lock);
 	while (tq->tq_flags & TASKQ_ACTIVE) {
 		if ((t = tq->tq_task.tqent_next) == &tq->tq_task) {
@@ -359,8 +362,8 @@ taskq_cancel_id(taskq_t *tq, taskqid_t id)
 void
 system_taskq_init(void)
 {
-	system_taskq = taskq_create("system_taskq", 64, maxclsyspri, 4, 512,
-	    TASKQ_DYNAMIC | TASKQ_PREPOPULATE);
+	system_taskq = taskq_create("system_taskq", boot_ncpus, maxclsyspri,
+	    4, 512, TASKQ_DYNAMIC | TASKQ_PREPOPULATE);
 	system_delay_taskq = taskq_create("delay_taskq", 4, maxclsyspri, 4,
 	    512, TASKQ_DYNAMIC | TASKQ_PREPOPULATE);
 }

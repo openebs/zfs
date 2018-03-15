@@ -123,9 +123,9 @@ txg_init(dsl_pool_t *dp, uint64_t txg)
 	int c;
 	bzero(tx, sizeof (tx_state_t));
 
-	tx->tx_cpu = vmem_zalloc(max_ncpus * sizeof (tx_cpu_t), KM_SLEEP);
+	tx->tx_cpu = vmem_zalloc(boot_ncpus * sizeof (tx_cpu_t), KM_SLEEP);
 
-	for (c = 0; c < max_ncpus; c++) {
+	for (c = 0; c < boot_ncpus; c++) {
 		int i;
 
 		mutex_init(&tx->tx_cpu[c].tc_lock, NULL, MUTEX_DEFAULT, NULL);
@@ -170,7 +170,7 @@ txg_fini(dsl_pool_t *dp)
 	cv_destroy(&tx->tx_quiesce_done_cv);
 	cv_destroy(&tx->tx_exit_cv);
 
-	for (c = 0; c < max_ncpus; c++) {
+	for (c = 0; c < boot_ncpus; c++) {
 		int i;
 
 		mutex_destroy(&tx->tx_cpu[c].tc_open_lock);
@@ -184,7 +184,7 @@ txg_fini(dsl_pool_t *dp)
 	if (tx->tx_commit_cb_taskq != NULL)
 		taskq_destroy(tx->tx_commit_cb_taskq);
 
-	vmem_free(tx->tx_cpu, max_ncpus * sizeof (tx_cpu_t));
+	vmem_free(tx->tx_cpu, boot_ncpus * sizeof (tx_cpu_t));
 
 	bzero(tx, sizeof (tx_state_t));
 }
@@ -373,7 +373,7 @@ txg_quiesce(dsl_pool_t *dp, uint64_t txg)
 	/*
 	 * Grab all tc_open_locks so nobody else can get into this txg.
 	 */
-	for (c = 0; c < max_ncpus; c++)
+	for (c = 0; c < boot_ncpus; c++)
 		mutex_enter(&tx->tx_cpu[c].tc_open_lock);
 
 	ASSERT(txg == tx->tx_open_txg);
@@ -387,7 +387,7 @@ txg_quiesce(dsl_pool_t *dp, uint64_t txg)
 	 * Now that we've incremented tx_open_txg, we can let threads
 	 * enter the next transaction group.
 	 */
-	for (c = 0; c < max_ncpus; c++)
+	for (c = 0; c < boot_ncpus; c++)
 		mutex_exit(&tx->tx_cpu[c].tc_open_lock);
 
 	spa_txg_history_set(dp->dp_spa, txg, TXG_STATE_OPEN, tx_open_time);
@@ -396,7 +396,7 @@ txg_quiesce(dsl_pool_t *dp, uint64_t txg)
 	/*
 	 * Quiesce the transaction group by waiting for everyone to txg_exit().
 	 */
-	for (c = 0; c < max_ncpus; c++) {
+	for (c = 0; c < boot_ncpus; c++) {
 		tx_cpu_t *tc = &tx->tx_cpu[c];
 		mutex_enter(&tc->tc_lock);
 		while (tc->tc_count[g] != 0)
@@ -430,7 +430,7 @@ txg_dispatch_callbacks(dsl_pool_t *dp, uint64_t txg)
 	tx_state_t *tx = &dp->dp_tx;
 	list_t *cb_list;
 
-	for (c = 0; c < max_ncpus; c++) {
+	for (c = 0; c < boot_ncpus; c++) {
 		tx_cpu_t *tc = &tx->tx_cpu[c];
 		/*
 		 * No need to lock tx_cpu_t at this point, since this can
@@ -447,7 +447,7 @@ txg_dispatch_callbacks(dsl_pool_t *dp, uint64_t txg)
 			 * Commit callback taskq hasn't been created yet.
 			 */
 			tx->tx_commit_cb_taskq = taskq_create("tx_commit_cb",
-			    max_ncpus, defclsyspri, max_ncpus, max_ncpus * 2,
+			    boot_ncpus, defclsyspri, boot_ncpus, boot_ncpus * 2,
 			    TASKQ_PREPOPULATE | TASKQ_DYNAMIC);
 		}
 

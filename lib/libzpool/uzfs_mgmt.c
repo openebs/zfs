@@ -284,8 +284,8 @@ uzfs_open_dataset_init(spa_t *spa, const char *ds_name, zvol_state_t **z)
 
 	zfs_rlock_init(&zv->zv_range_lock);
 	zfs_rlock_init(&zv->zv_mrange_lock);
-	mutex_init(&zv->io_tree_mtx, NULL, MUTEX_DEFAULT, NULL);
-	uzfs_create_txg_diff_tree((void **)&zv->incoming_io_tree);
+	mutex_init(&zv->rebuild_data.io_tree_mtx, NULL, MUTEX_DEFAULT, NULL);
+	uzfs_create_txg_diff_tree((void **)&zv->rebuild_data.incoming_io_tree);
 
 	strlcpy(zv->zv_name, ds_name, MAXNAMELEN);
 
@@ -336,7 +336,9 @@ free_ret:
 	zv->zv_zilog = zil_open(os, zvol_get_data);
 	zv->zv_volblocksize = block_size;
 	zv->zv_volsize = vol_size;
-	zv->in_rebuilding_mode  = B_FALSE;
+
+	/* On boot, mark zvol status health */
+	zv->zv_status = ZVOL_STATUS_HEALTHY;
 
 	if (spa_writeable(dmu_objset_spa(os))) {
 //		if (zil_replay_disable)
@@ -451,8 +453,8 @@ uzfs_close_dataset(zvol_state_t *zv)
 	zil_close(zv->zv_zilog);
 	dnode_rele(zv->zv_dn, zv);
 	dmu_objset_disown(zv->zv_objset, zv);
-	mutex_destroy(&zv->io_tree_mtx);
-	uzfs_destroy_txg_diff_tree(zv->incoming_io_tree);
+	mutex_destroy(&zv->rebuild_data.io_tree_mtx);
+	uzfs_destroy_txg_diff_tree(zv->rebuild_data.incoming_io_tree);
 	zfs_rlock_destroy(&zv->zv_range_lock);
 	zfs_rlock_destroy(&zv->zv_mrange_lock);
 	kmem_free(zv, sizeof (zvol_state_t));

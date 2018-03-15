@@ -23,11 +23,11 @@
 #define	_UZFS_MTREE_H
 
 /*
- * API to get modified blocks between start_txg and end_txg
- * Note: API will alocate condensed tree and populate it witch
- *	modified block details (offset:lenth entries).
+ * API to get modified block details between start_txg and end_txg
+ * Note: Caller needs to pass a callback function which will be called
+ *	for each modified block with (offset, length and blockId)
  */
-extern int uzfs_get_txg_diff_tree(void *zv, uint64_t start_txg,
+extern int uzfs_get_txg_diff(void *zv, uint64_t start_txg,
     uint64_t end_txg, void *func, void *arg);
 
 /*

@@ -39,7 +39,7 @@
 	} while (0)
 
 typedef struct uzfs_txg_diff_cb_args {
-	uzfs_zvol_traverse_t *func;
+	uzfs_txg_diff_traverse_cb_t *func;
 	uint64_t start_txg;
 	uint64_t end_txg;
 	void *arg_data;
@@ -190,6 +190,14 @@ dump_txg_diff_tree(avl_tree_t *tree)
 	}
 }
 
+void
+dump_incoming_io_tree(zvol_state_t *zv)
+{
+	mutex_enter(&zv->rebuild_data.io_tree_mtx);
+	dump_txg_diff_tree(zv->rebuild_data.incoming_io_tree);
+	mutex_exit(&zv->rebuild_data.io_tree_mtx);
+}
+
 int
 uzfs_txg_diff_cb(spa_t *spa, zilog_t *zillog, const blkptr_t *bp,
     const zbookmark_phys_t *zb, const dnode_phys_t *dnp, void *arg)
@@ -221,8 +229,8 @@ uzfs_txg_diff_tree_compare(const void *arg1, const void *arg2)
 }
 
 int
-uzfs_get_txg_diff_tree(zvol_state_t *zv, uint64_t start_txg, uint64_t end_txg,
-    uzfs_zvol_traverse_t *func, void *arg)
+uzfs_get_txg_diff(zvol_state_t *zv, uint64_t start_txg, uint64_t end_txg,
+    uzfs_txg_diff_traverse_cb_t *func, void *arg)
 {
 	int error;
 	char snapname[ZFS_MAX_DATASET_NAME_LEN];
@@ -312,19 +320,26 @@ uzfs_add_to_incoming_io_tree(zvol_state_t *zv, uint64_t offset, uint64_t len)
 	 * Here: Handling of incoming_io_tree creation is for error case only.
 	 *	 It should be handled by replica or caller of uzfs_write_data
 	 */
-	if (!zv->incoming_io_tree)
-		uzfs_create_txg_diff_tree((void **)&zv->incoming_io_tree);
+	mutex_enter(&zv->rebuild_data.io_tree_mtx);
 
-	mutex_enter(&zv->io_tree_mtx);
-	add_to_txg_diff_tree(zv->incoming_io_tree, offset, len);
-	mutex_exit(&zv->io_tree_mtx);
+	if (!zv->rebuild_data.incoming_io_tree)
+		uzfs_create_txg_diff_tree((void **)
+		    &zv->rebuild_data.incoming_io_tree);
+
+	add_to_txg_diff_tree(zv->rebuild_data.incoming_io_tree, offset, len);
+	mutex_exit(&zv->rebuild_data.io_tree_mtx);
 }
 
+/*
+ * API to search non-overlapping segment for rebuilding io
+ * It will create linked list with non-overlapping segment
+ * entries (i.e offset and length)
+ */
 uint32_t
 uzfs_search_incoming_io_tree(zvol_state_t *zv, uint64_t offset, uint64_t len,
     list_t **list)
 {
-	avl_tree_t *tree = zv->incoming_io_tree;
+	avl_tree_t *tree = zv->rebuild_data.incoming_io_tree;
 	uint32_t count = 0;
 	uzfs_zvol_blk_phy_t *b_entry, *a_entry, *entry;
 	avl_index_t where;
@@ -340,7 +355,7 @@ uzfs_search_incoming_io_tree(zvol_state_t *zv, uint64_t offset, uint64_t len,
 	list_create(chunk_list, sizeof (uzfs_io_chunk_list_t),
 	    offsetof(uzfs_io_chunk_list_t, link));
 
-	mutex_enter(&zv->io_tree_mtx);
+	mutex_enter(&zv->rebuild_data.io_tree_mtx);
 
 again:
 	tofind.offset = offset;
@@ -378,10 +393,12 @@ again:
 		a_end = offset + len;
 
 		// If b_entry is not overlapping with search_entry
+		// like (b_entry->offset, b_end, offset, a_end)
 		if (b_end <= offset)
 			goto after;
 
 		// If b_entry ends after search_entry
+		// like (b_entry->offset, offset, a_end, b_end)
 		if (a_end <= b_end) {
 			goto done;
 		}
@@ -390,12 +407,11 @@ again:
 		 * If search_entry ends before b_entry then change
 		 * search_entry's offset to before_entry's end and
 		 * length to length - (overlapping length)
+		 * like.. (b_entry->offset, offset, b_end, a_end)
 		 */
-		if (a_end > b_end) {
-			len = len - (b_end - offset);
-			offset = b_end;
-			goto again;
-		}
+		len = len - (b_end - offset);
+		offset = b_end;
+		goto again;
 	}
 
 after:
@@ -407,6 +423,7 @@ after:
 		/*
 		 * if search_entry ends <= a_entry's offset then add
 		 * search_entry to io_chunk_list
+		 * like (offset, b_end, a_entry->offset, a_end)
 		 */
 		if (b_end <= a_entry->offset) {
 			ADD_TO_IO_CHUNK_LIST(chunk_list, offset, len, node,
@@ -418,6 +435,7 @@ after:
 		 * If search_entry end <= a_entry end, then change
 		 * search_entry's length to ( len -  overlapping length) and
 		 * add it to io_chunk_list
+		 * like (offset, a_entry->offset, b_end, a_end)
 		 */
 		if (b_end <= a_end) {
 			ADD_TO_IO_CHUNK_LIST(chunk_list, offset,
@@ -427,29 +445,27 @@ after:
 
 		/*
 		 * if search_entry end > a_entry end, then divide search entry
-		 * in three parts.
+		 * in three parts. like, (offset, a_entry->offset, a_end, b_end)
 		 * for example,
 		 * 	search_entry = offset : 400, len : 100 and
 		 *	a_entry = offset : 450, len : 20
-		 * then, divide searchi entry to , A (off:400, len:50),
+		 * then, divide search entry to , A (off:400, len:50),
 		 * B (off:450, len:20) and C (offset:470, len:30).
 		 *	A entry : add this entry to chunk list
 		 *	B entry : ignore this entry, as it overlaps with
 		 *	    search_entry
 		 *	C entry : search aggain for overlapping whith this entry
 		 */
-		if (b_end > a_end) {
-			ADD_TO_IO_CHUNK_LIST(chunk_list, offset,
-			    a_entry->offset - offset, node, count);
-			len = b_end - a_end;
-			offset = a_end;
-			goto again;
-		}
+		ADD_TO_IO_CHUNK_LIST(chunk_list, offset,
+		    a_entry->offset - offset, node, count);
+		len = b_end - a_end;
+		offset = a_end;
+		goto again;
 	}
 
 	ADD_TO_IO_CHUNK_LIST(chunk_list, offset, len, node, count);
 done:
-	mutex_exit(&zv->io_tree_mtx);
+	mutex_exit(&zv->rebuild_data.io_tree_mtx);
 	*list = chunk_list;
 	return (count);
 }

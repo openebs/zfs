@@ -98,6 +98,7 @@ AC_CONFIG_FILES([
 	lib/libzfs/Makefile
 	lib/libzfs_core/Makefile
 	lib/libshare/Makefile
+	lib/fio/Makefile
 	cmd/Makefile
 	cmd/uzfs_test/Makefile
 	cmd/zdb/Makefile

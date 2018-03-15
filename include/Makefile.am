@@ -23,6 +23,7 @@ USER_H = \
 	$(top_srcdir)/include/libzfs_impl.h \
 	$(top_srcdir)/include/uzfs_io.h \
 	$(top_srcdir)/include/uzfs_mgmt.h \
+	$(top_srcdir)/include/zrepl_prot.h \
 	$(top_srcdir)/include/zrepl_mgmt.h \
 	$(top_srcdir)/include/uzfs_test.h \
 	$(top_srcdir)/include/rte_ring.h \

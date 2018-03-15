@@ -1,0 +1,24 @@
+[global]
+ioengine=replica.so
+thread=1
+group_reporting=1
+direct=1
+verify=0
+time_based=1
+ramp_time=0
+runtime=30
+iodepth=128
+rw=randrw
+bs=4k
+filesize=100m
+fallocate=none
+numjobs=1
+# Uncomment following lines to connect directly to replica without handshake
+#address=127.0.0.1
+#port=3232
+
+[vol1]
+filename=tpool/vol1
+
+[vol2]
+filename=tpool/vol2

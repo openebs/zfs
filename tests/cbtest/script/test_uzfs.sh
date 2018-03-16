@@ -633,9 +633,9 @@ setup_uzfs_test()
 greater()
 {
 	if [ $1 -le $2 ]; then
-		return 1
+		return 0
 	fi
-	return 0
+	return 1
 }
 
 run_uzfs_test()
@@ -653,7 +653,7 @@ run_uzfs_test()
 	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -s -T 2 > $TMPDIR/uzfs_test.out
 	ios2=$(cat /tmp/uzfs_test.out  | grep "Total write IOs" | awk '{print $4}')
 
-	log_must greater $ios1 $ios2
+	log_must_not greater $ios1 $ios2
 
 	log_must setup_uzfs_test nolog 4096 standard
 	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -T 2
@@ -669,7 +669,7 @@ run_uzfs_test()
 	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -s -l -T 2 > $TMPDIR/uzfs_test.out
 	ios2=$(cat /tmp/uzfs_test.out  | grep "Total write IOs" | awk '{print $4}')
 
-	log_must greater $ios1 $ios2
+	log_must_not greater $ios1 $ios2
 
 	log_must setup_uzfs_test log 4096 standard
 	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -l -T 2
@@ -684,7 +684,7 @@ run_uzfs_test()
 	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -s -i 8192 -b 65536 -T 2 > $TMPDIR/uzfs_test.out
 	ios2=$(cat /tmp/uzfs_test.out  | grep "Total write IOs" | awk '{print $4}')
 
-	log_must greater $ios1 $ios2
+	log_must_not greater $ios1 $ios2
 
 	log_must setup_uzfs_test nolog 65536 standard
 	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -i 8192 -b 65536 -T 2
@@ -700,7 +700,7 @@ run_uzfs_test()
 	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -s -l -i 8192 -b 65536 -T 2 > $TMPDIR/uzfs_test.out
 	ios2=$(cat /tmp/uzfs_test.out  | grep "Total write IOs" | awk '{print $4}')
 
-	log_must greater $ios1 $ios2
+	log_must_not greater $ios1 $ios2
 
 	log_must setup_uzfs_test log 65536 standard
 	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -l -i 8192 -b 65536 -T 2

@@ -111,10 +111,12 @@ uzfs_zinfo_lookup(const char *name)
 			break;
 		}
 	}
-
-	/* Take refcount */
-	uzfs_zinfo_take_refcnt(zv, true);
+	if (zv != NULL) {
+		/* Take refcount */
+		uzfs_zinfo_take_refcnt(zv, true);
+	}
 	(void) pthread_mutex_unlock(&zvol_list_mutex);
+
 	return (zv);
 }
 

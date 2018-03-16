@@ -84,6 +84,7 @@ AC_DEFUN([ZFS_AC_CONFIG], [
 	AM_CONDITIONAL([CONFIG_QAT],
 	    [test "$ZFS_CONFIG" = kernel -o "$ZFS_CONFIG" = all] &&
 	    [test "x$qatsrc" != x ])
+	AM_CONDITIONAL([CONFIG_FIO], [test x$FIO_SRCDIR != x ])
 ])
 
 dnl #

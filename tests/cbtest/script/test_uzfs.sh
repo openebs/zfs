@@ -24,6 +24,7 @@ ZPOOL="$SRC_PATH/cmd/zpool/zpool"
 ZFS="$SRC_PATH/cmd/zfs/zfs"
 ZDB="$SRC_PATH/cmd/zdb/zdb"
 TGT="$SRC_PATH/cmd/zrepl/zrepl"
+TGT_IP="127.0.0.1"
 GTEST="$SRC_PATH/tests/cbtest/gtest/test_uzfs"
 ZTEST="$SRC_PATH/cmd/ztest/ztest"
 UZFS_TEST="$SRC_PATH/cmd/uzfs_test/uzfs_test"
@@ -91,31 +92,36 @@ init_test()
 	log_must truncate -s 2G "$TMPDIR/test_spare8.img"
 	log_must truncate -s 2G "$TMPDIR/test_log.img"
 
-	$TGT -v $SRCPOOL/$SRCVOL &
+	# XXX Remove redirection to /dev/null when debug messages are removed
+	# from zrepl
+	$TGT $TGT_IP >/dev/null &
 	TGT_PID=$!
 	sleep 1
 }
 
+#
+# DO NOT use log_must* in this function otherwise we risk recursion.
+#
 close_test()
 {
-	log_must kill -SIGKILL $TGT_PID
-	log_must rm "$TMPDIR/test_disk1.img"
-	log_must rm "$TMPDIR/test_disk2.img"
-	log_must rm "$TMPDIR/test_disk3.img"
-	log_must rm "$TMPDIR/test_disk4.img"
-	log_must rm "$TMPDIR/test_disk5.img"
-	log_must rm "$TMPDIR/test_disk6.img"
-	log_must rm "$TMPDIR/test_disk7.img"
-	log_must rm "$TMPDIR/test_disk8.img"
-	log_must rm "$TMPDIR/test_spare1.img"
-	log_must rm "$TMPDIR/test_spare2.img"
-	log_must rm "$TMPDIR/test_spare3.img"
-	log_must rm "$TMPDIR/test_spare4.img"
-	log_must rm "$TMPDIR/test_spare5.img"
-	log_must rm "$TMPDIR/test_spare6.img"
-	log_must rm "$TMPDIR/test_spare7.img"
-	log_must rm "$TMPDIR/test_spare8.img"
-	log_must rm "$TMPDIR/test_log.img"
+	kill -SIGKILL $TGT_PID
+	rm "$TMPDIR/test_disk1.img"
+	rm "$TMPDIR/test_disk2.img"
+	rm "$TMPDIR/test_disk3.img"
+	rm "$TMPDIR/test_disk4.img"
+	rm "$TMPDIR/test_disk5.img"
+	rm "$TMPDIR/test_disk6.img"
+	rm "$TMPDIR/test_disk7.img"
+	rm "$TMPDIR/test_disk8.img"
+	rm "$TMPDIR/test_spare1.img"
+	rm "$TMPDIR/test_spare2.img"
+	rm "$TMPDIR/test_spare3.img"
+	rm "$TMPDIR/test_spare4.img"
+	rm "$TMPDIR/test_spare5.img"
+	rm "$TMPDIR/test_spare6.img"
+	rm "$TMPDIR/test_spare7.img"
+	rm "$TMPDIR/test_spare8.img"
+	rm "$TMPDIR/test_log.img"
 }
 
 dump_data()
@@ -556,6 +562,50 @@ test_raidz_pool()
 	return 0
 }
 
+test_fio()
+{
+	log_must $ZPOOL create -f $SRCPOOL \
+	    -o cachefile="$TMPDIR/zpool_$SRCPOOL.cache" \
+	    "$TMPDIR/test_disk1.img"
+	log_must $ZFS create -sV $VOLSIZE $SRCPOOL/vol1
+	log_must $ZFS create -sV $VOLSIZE $SRCPOOL/vol2
+
+	cat >$TMPDIR/test.fio <<EOF
+[global]
+ioengine=replica.so
+thread=1
+group_reporting=1
+direct=1
+verify=md5
+ramp_time=0
+iodepth=128
+rw=randrw
+bs=4k
+filesize=100m
+fallocate=none
+time_based=1
+runtime=15
+numjobs=1
+[vol1]
+filename=$SRCPOOL/vol1
+[vol2]
+filename=$SRCPOOL/vol2
+EOF
+
+	# run the fio
+	LD_LIBRARY_PATH=$SRC_PATH/lib/fio/.libs $FIO_SRCDIR/fio $TMPDIR/test.fio
+	[ $? -eq 0 ] || log_fail "Fio test run failed"
+
+	# test pool destroy
+	# XXX Bug: we must destroy volumes before pool. If not then EBUSY
+	log_must $ZFS destroy -r $SRCPOOL/vol1
+	log_must $ZFS destroy -r $SRCPOOL/vol2
+	log_must destroy_pool $SRCPOOL
+	log_must rm $TMPDIR/test.fio
+
+	return 0
+}
+
 setup_uzfs_test()
 {
 	$TGT &
@@ -695,6 +745,11 @@ sleep 10
 log_must test_stripe_pool
 log_must test_mirror_pool
 log_must test_raidz_pool
+if [ -n "$FIO_SRCDIR" ]; then
+	log_must test_fio
+else
+	echo "Skipping FIO tests - FIO_SRCDIR not defined"
+fi
 
 close_test
 

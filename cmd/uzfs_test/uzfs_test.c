@@ -267,10 +267,13 @@ setup_unit_test(void)
 void
 unit_test_create_pool_ds(void)
 {
-	void *spa1, *spa2, *spa3, *spa4, *spa;
-	void *zv1 = NULL; void *zv3 = NULL;
-	void *zv2 = NULL; void *zv4 = NULL;
-	void *zv5 = NULL; void *zv = NULL;
+	spa_t *spa1, *spa2, *spa3, *spa4, *spa;
+	zvol_state_t *zv1 = NULL;
+	zvol_state_t *zv3 = NULL;
+	zvol_state_t *zv2 = NULL;
+	zvol_state_t *zv4 = NULL;
+	zvol_state_t *zv5 = NULL;
+	zvol_state_t *zv = NULL;
 	int err, err1, err2, err3, err4, err5;
 
 	err1 = uzfs_create_pool(pool, "/tmp/uztest.xyz", &spa1);
@@ -509,7 +512,7 @@ static void process_options(int argc, char **argv)
 }
 
 void
-open_pool(void **spa)
+open_pool(spa_t **spa)
 {
 	int err;
 	err = uzfs_open_pool(pool, spa);
@@ -520,7 +523,7 @@ open_pool(void **spa)
 }
 
 void
-open_ds(void *spa, void **zv)
+open_ds(spa_t *spa, zvol_state_t **zv)
 {
 	int err;
 	err = uzfs_open_dataset(spa, ds, zv);
@@ -533,7 +536,8 @@ open_ds(void *spa, void **zv)
 void
 unit_test_fn(void *arg)
 {
-	void *spa, *zv;
+	spa_t *spa;
+	zvol_state_t *zv;
 	kthread_t *reader1;
 	kthread_t *writer[3];
 	char name[MAXNAMELEN];

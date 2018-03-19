@@ -140,7 +140,8 @@ done:
 void
 replay_fn(void *arg)
 {
-	void *spa, *zv;
+	spa_t *spa;
+	zvol_state_t *zv;
 	char name[MAXNAMELEN];
 	zvol_info_t *zinfo = NULL;
 

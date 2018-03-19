@@ -22,6 +22,8 @@
 #ifndef	_UZFS_TEST_H
 #define	_UZFS_TEST_H
 
+#include <sys/spa.h>
+#include <sys/uzfs_zvol.h>
 
 extern int silent;
 extern uint64_t io_block_size;
@@ -46,8 +48,8 @@ extern unsigned long zfs_arc_min;
 extern void replay_fn(void *arg);
 extern void setup_unit_test(void);
 extern void unit_test_create_pool_ds(void);
-extern void open_pool(void **);
-extern void open_ds(void *, void **);
+extern void open_pool(spa_t **);
+extern void open_ds(spa_t *, zvol_state_t **);
 
 typedef struct worker_args {
 	void *zv;

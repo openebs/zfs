@@ -35,8 +35,7 @@ uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 	objset_t *os = zv->zv_objset;
 	rl_t *rl, *mrl;
 	int ret = 0, error;
-	uint64_t r_offset, r_len;
-	uint64_t r_moffset, r_mlen;
+	uint64_t r_offset;
 	metaobj_blk_offset_t metablk;
 	uint64_t metadatasize = zv->zv_volmetadatasize;
 	uint64_t len_in_first_aligned_block = 0;
@@ -44,21 +43,14 @@ uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 	sync = (dmu_objset_syncprop(os) == ZFS_SYNC_ALWAYS) ? 1 : 0;
 	if (zv->zv_volmetablocksize == 0)
 		metadata = NULL;
-	/*
-	 * Taking lock on entire block at ZFS layer.
-	 * Handling the case where readlen is smaller than blocksize.
-	 * This can also be avoided later for better performance.
-	 */
-	r_offset = P2ALIGN_TYPED(offset, blocksize, uint64_t);
-	r_len = P2ALIGN_TYPED(((offset - r_offset) + len + blocksize - 1),
-	    blocksize, uint64_t);
 
+	r_offset = P2ALIGN_TYPED(offset, blocksize, uint64_t);
 	len_in_first_aligned_block = (blocksize - (offset - r_offset));
 
 	if (len_in_first_aligned_block > len)
 		len_in_first_aligned_block = len;
 
-	rl = zfs_range_lock(&zv->zv_range_lock, r_offset, r_len, RL_WRITER);
+	rl = zfs_range_lock(&zv->zv_range_lock, offset, len, RL_WRITER);
 
 	while (offset < end && offset < volsize) {
 		if (len_in_first_aligned_block != 0) {
@@ -78,8 +70,6 @@ uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 			/* This assumes metavolblocksize same as volblocksize */
 			get_metaobj_block_details(&metablk, zv, offset);
 
-			r_moffset = metablk.r_offset;
-			r_mlen = metablk.r_len;
 			dmu_tx_hold_write(tx, ZVOL_META_OBJ, metablk.m_offset,
 			    metadatasize);
 		}
@@ -93,8 +83,8 @@ uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 		dmu_write(os, ZVOL_OBJ, offset, bytes, buf + wrote, tx);
 
 		if (metadata != NULL) {
-			mrl = zfs_range_lock(&zv->zv_mrange_lock, r_moffset,
-			    r_mlen, RL_WRITER);
+			mrl = zfs_range_lock(&zv->zv_mrange_lock,
+			    metablk.m_offset, metadatasize, RL_WRITER);
 			dmu_write(os, ZVOL_META_OBJ, metablk.m_offset,
 			    metadatasize, metadata, tx);
 			zfs_range_unlock(mrl);
@@ -131,7 +121,7 @@ uzfs_read_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 	objset_t *os = zv->zv_objset;
 	rl_t *rl, *mrl;
 	int ret = 0;
-	uint64_t r_offset, r_len, r_moffset, r_mlen;
+	uint64_t r_offset;
 	uint64_t metadatasize = zv->zv_volmetadatasize;
 	void *mdata = NULL;
 	uint64_t mread = 0;
@@ -149,15 +139,13 @@ uzfs_read_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 	}
 
 	r_offset = P2ALIGN_TYPED(offset, blocksize, uint64_t);
-	r_len = P2ALIGN_TYPED(((offset - r_offset) + len + blocksize - 1),
-	    blocksize, uint64_t);
 
 	len_in_first_aligned_block = (blocksize - (offset - r_offset));
 
 	if (len_in_first_aligned_block > len)
 		len_in_first_aligned_block = len;
 
-	rl = zfs_range_lock(&zv->zv_range_lock, r_offset, r_len, RL_READER);
+	rl = zfs_range_lock(&zv->zv_range_lock, offset, len, RL_READER);
 
 	while ((offset < end) && (offset < volsize)) {
 		if (len_in_first_aligned_block != 0) {
@@ -180,11 +168,8 @@ uzfs_read_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 			/* This assumes metavolblocksize same as volblocksize */
 			get_metaobj_block_details(&metablk, zv, offset);
 
-			r_moffset = metablk.r_offset;
-			r_mlen = metablk.r_len;
-
-			mrl = zfs_range_lock(&zv->zv_mrange_lock, r_moffset,
-			    r_mlen, RL_READER);
+			mrl = zfs_range_lock(&zv->zv_mrange_lock,
+			    metablk.m_offset, metadatasize, RL_READER);
 			error = dmu_read(os, ZVOL_META_OBJ, metablk.m_offset,
 			    metadatasize, mdata + mread, 0);
 			if (error) {

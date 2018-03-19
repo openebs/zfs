@@ -659,8 +659,6 @@ run_uzfs_test()
 	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -T 2
 
 
-
-
 	log_must setup_uzfs_test log 4096 disabled
 	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -l -T 2 > $TMPDIR/uzfs_test.out
 	ios1=$(cat /tmp/uzfs_test.out  | grep "Total write IOs" | awk '{print $4}')
@@ -673,7 +671,6 @@ run_uzfs_test()
 
 	log_must setup_uzfs_test log 4096 standard
 	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -l -T 2
-
 
 
 	log_must setup_uzfs_test nolog 65536 disabled
@@ -690,8 +687,6 @@ run_uzfs_test()
 	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -i 8192 -b 65536 -T 2
 
 
-
-
 	log_must setup_uzfs_test log 65536 disabled
 	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -l -i 8192 -b 65536 -T 2 > $TMPDIR/uzfs_test.out
 	ios1=$(cat /tmp/uzfs_test.out  | grep "Total write IOs" | awk '{print $4}')
@@ -704,6 +699,7 @@ run_uzfs_test()
 
 	log_must setup_uzfs_test log 65536 standard
 	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -l -i 8192 -b 65536 -T 2
+
 
 	K=1024
 	M=$(( 1024 * 1024 ))

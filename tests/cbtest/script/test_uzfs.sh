@@ -599,6 +599,10 @@ filename=$SRCPOOL/vol2
 EOF
 
 	# run the fio
+	echo "Running $FIO_SRCDIR/fio with lib path $SRC_PATH/lib/fio/.libs"
+	echo " and following configuration:"
+	cat $TMPDIR/test.fio
+	echo
 	LD_LIBRARY_PATH=$SRC_PATH/lib/fio/.libs $FIO_SRCDIR/fio $TMPDIR/test.fio
 	[ $? -eq 0 ] || log_fail "Fio test run failed"
 

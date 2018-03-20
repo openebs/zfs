@@ -249,11 +249,12 @@ static int write_handshake(struct thread_data *td, int fd, const char *volname)
 	zvol_io_hdr_t hdr;
 	int volname_size = strlen(volname) + 1;
 
+	hdr.version = REPLICA_VERSION;
 	hdr.opcode = ZVOL_OPCODE_HANDSHAKE;
-	hdr.len = volname_size;
+	hdr.status = 0;
 	hdr.io_seq = 0;
 	hdr.offset = 0;
-	hdr.q_ptr = NULL;
+	hdr.len = volname_size;
 
 	rc = write_to_socket(fd, &hdr, sizeof (hdr), 1);
 	if (rc != 0) {
@@ -272,10 +273,17 @@ static int write_handshake(struct thread_data *td, int fd, const char *volname)
 static int read_handshake(struct thread_data *td, int fd, mgmt_ack_t *mgmt_ack,
     const char *volname)
 {
+	uint16_t vers;
 	ssize_t rc;
 	zvol_io_hdr_t hdr;
 
-	rc = read_from_socket(fd, &hdr, sizeof (hdr));
+	rc = read_from_socket(fd, &hdr, sizeof (vers));
+	if (hdr.version != REPLICA_VERSION) {
+		log_err("repl: Incompatible replica version %d\n", hdr.version);
+		return (-1);
+	}
+	rc = read_from_socket(fd, ((char *)&hdr) + sizeof (vers),
+	    sizeof (hdr) - sizeof (vers));
 	if (rc != 0) {
 		td_verror(td, rc, "read");
 		return (-1);
@@ -573,7 +581,6 @@ static int fio_repl_queue(struct thread_data *td, struct io_u *io_u)
 	hdr.io_seq = io_ent->io_num;
 	hdr.offset = io_u->offset;
 	hdr.len = io_u->xfer_buflen;
-	hdr.q_ptr = NULL;
 	hdr.status = 0;
 
 	if (io_u->ddir == DDIR_WRITE) {

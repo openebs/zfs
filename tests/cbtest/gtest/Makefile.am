@@ -16,4 +16,5 @@ test_uzfs_LDADD = \
 	$(top_builddir)/lib/libzfs/libzfs.la \
 	$(top_builddir)/lib/libzfs_core/libzfs_core.la
 
+test_uzfs_CXXFLAGS = -std=c++11
 test_uzfs_LDFLAGS = -pthread -lgtest -lgtest_main

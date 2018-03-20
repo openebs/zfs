@@ -32,45 +32,65 @@ extern "C" {
 /*
  * Over the wire spec for replica protocol.
  *
- * TODO: All structures should be defined with "packed" attribute to avoid
- * ambiguous padding added by compiler.
+ * We don't expect replica protocol to be used between nodes with different
+ * architecture nevertheless we try to be precise in defining size of members
+ * and all number values are supposed to be little endian.
+ *
+ * Version can be negotiated on mgmt conn. Target sends handshake message with
+ * version number. If replica does not support the version, then it replies
+ * with "version mismatch" error, puts supported version in version field
+ * and closes the connection.
  */
 
+#define	REPLICA_VERSION	1
 #define	MAX_NAME_LEN	256
-#define	MAX_IP_LEN	56
+#define	MAX_IP_LEN	64
 #define	TARGET_PORT	6060
 
-typedef enum zvol_op_code_e {
-	ZVOL_OPCODE_HANDSHAKE = 1,
+enum zvol_op_code {
+	ZVOL_OPCODE_HANDSHAKE = 0,
 	ZVOL_OPCODE_READ,
 	ZVOL_OPCODE_WRITE,
 	ZVOL_OPCODE_UNMAP,
 	ZVOL_OPCODE_SYNC,
 	ZVOL_OPCODE_SNAP_CREATE,
 	ZVOL_OPCODE_SNAP_ROLLBACK,
-} zvol_op_code_t;
+} __attribute__((packed));
 
-typedef enum zvol_op_status_e {
-	ZVOL_OP_STATUS_OK = 1,
+typedef enum zvol_op_code zvol_op_code_t;
+
+enum zvol_op_status {
+	ZVOL_OP_STATUS_OK = 0,
 	ZVOL_OP_STATUS_FAILED,
-} zvol_op_status_t;
+	ZVOL_OP_STATUS_VERSION_MISMATCH,
+} __attribute__((packed));
 
-typedef struct zvol_io_hdr_s {
+typedef enum zvol_op_status zvol_op_status_t;
+
+/*
+ * Future protocol versions need to respect that the first field must be
+ * 2-byte version number. The rest of struct is version dependent.
+ * Version number is regarded only in handshake message. For rest of the ops
+ * the version number from handshake message is assumed.
+ */
+struct zvol_io_hdr {
+	uint16_t	version;
 	zvol_op_code_t	opcode;
+	zvol_op_status_t status;
 	uint64_t	io_seq;
 	uint64_t	offset;
 	uint64_t	len;
-	// XXX (void *) must be removed from over-the-wire data
-	void		*q_ptr;
-	zvol_op_status_t status;
-} zvol_io_hdr_t;
+} __attribute__((packed));
 
-typedef struct mgmt_ack_s {
-	char	volname[MAX_NAME_LEN];
+typedef struct zvol_io_hdr zvol_io_hdr_t;
+
+struct mgmt_ack {
+	uint16_t port;
 	char	ip[MAX_IP_LEN];
-	// XXX this should be uint16_t type
-	int	port;
-} mgmt_ack_t;
+	char	volname[MAX_NAME_LEN];
+} __attribute__((packed));
+
+typedef struct mgmt_ack mgmt_ack_t;
 
 #ifdef	__cplusplus
 }

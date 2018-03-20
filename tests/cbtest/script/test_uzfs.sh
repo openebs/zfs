@@ -104,7 +104,10 @@ init_test()
 #
 close_test()
 {
-	kill -SIGKILL $TGT_PID
+	if [ $TGT_PID -ne -1 ]; then
+		kill -SIGKILL $TGT_PID
+	fi
+
 	rm "$TMPDIR/test_disk1.img"
 	rm "$TMPDIR/test_disk2.img"
 	rm "$TMPDIR/test_disk3.img"
@@ -564,6 +567,9 @@ test_raidz_pool()
 
 test_fio()
 {
+	init_test
+	sleep 10
+
 	log_must $ZPOOL create -f $SRCPOOL \
 	    -o cachefile="$TMPDIR/zpool_$SRCPOOL.cache" \
 	    "$TMPDIR/test_disk1.img"
@@ -602,6 +608,8 @@ EOF
 	log_must $ZFS destroy -r $SRCPOOL/vol2
 	log_must destroy_pool $SRCPOOL
 	log_must rm $TMPDIR/test.fio
+
+	close_test
 
 	return 0
 }
@@ -700,8 +708,6 @@ run_uzfs_test()
 	log_must setup_uzfs_test log 65536 standard
 	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -l -i 8192 -b 65536 -T 2
 
-	log_must setup_uzfs_test log 65536 sync
-	log_must $UZFS_TEST -s -l -i 8192 -b 65536 -T 2
 
 	K=1024
 	M=$(( 1024 * 1024 ))
@@ -712,7 +718,6 @@ run_uzfs_test()
 	log_must $UZFS_TEST -t 10 -a  $(( 1000 * 1024 * 1024 )) -T 3 -n 10000
 	log_must $UZFS_TEST -t 10 -T 4
 
-	log_must $UZFS_TEST -t 10 -T 0
 	log_must $UZFS_TEST -t 10 -T 0 -n 10
 
 #	log_must . $UZFS_TEST_SYNC_SH
@@ -827,7 +832,7 @@ if [ $? -eq 0 ]; then
 	$test_func
 	END=$(date +%s.%N)
 	DIFF=$(echo "scale=0;$END - $START" | bc)
-	echo "####################################"
+	echo -e "\n####################################"
 	echo "All cases passed for $test_type in ${DIFF%.*} seconds"
 	echo "####################################"
 else

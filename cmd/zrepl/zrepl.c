@@ -4,13 +4,13 @@
 
 #include <syslog.h>
 #include <libuzfs.h>
+#include <libzfs.h>
 #include <uzfs_mgmt.h>
 #include <zrepl_mgmt.h>
 #include <uzfs_io.h>
 #include <sys/epoll.h>
 #include <sys/types.h>
 #include <ifaddrs.h>
-
 
 #define	true 1
 #define	false 0
@@ -21,10 +21,61 @@ char *mgmt_port = "12000";
 
 extern unsigned long zfs_arc_max;
 extern unsigned long zfs_arc_min;
-
+extern int zfs_autoimport_disable;
 __thread char  tinfo[20] =  {0};
 
 static void uzfs_zvol_io_ack_sender(void *arg);
+
+static void uzfs_zvol_io_ack_sender(void *arg);
+
+kthread_t	*conn_accpt_thrd;
+kthread_t	*uzfs_mgmt_thread;
+char		*target_addr = NULL;
+char 		*pool_name = NULL;
+struct 		in_addr addr = {0};
+int zrepl_import(int argc, char **argv);
+int zrepl_start(int argc, char **argv);
+
+typedef struct zrepl_command {
+	const char *cmd_name;
+	int (*func)(int, char **);
+} zrepl_cmd_t;
+
+static zrepl_cmd_t cmd_table[] = {
+	{"import",	zrepl_import},
+	{"start",	zrepl_start},
+	{NULL},
+};
+
+#define	NCMDS   (sizeof (cmd_table) / sizeof (zrepl_cmd_t))
+
+int
+find_command(const char *cmd_name, int *index)
+{
+	for (int i = 0; i < NCMDS; i++) {
+		if (cmd_table[i].cmd_name == NULL)
+			continue;
+		if (strcmp(cmd_name, cmd_table[i].cmd_name) == 0) {
+			*index = i;
+			return (0);
+		}
+	}
+	return (1);
+}
+
+void
+help(void)
+{
+	/*
+	 * XXX need to do better here
+	 */
+
+	printf("zrepl command args ... \nwhere 'command' is one of:\n\n");
+	printf("\t import <pool_name> [-t ip address)]\n");
+	printf("\t start [-t ip address)]\n");
+
+
+}
 
 static int
 create_and_bind(const char *port, int bind_needed)
@@ -514,31 +565,6 @@ uzfs_zvol_mgmt_do_handshake(zvol_io_hdr_t *hdr, int sfd, char *name)
 }
 
 /*
- * TODO: IMHO, this should be a through away API.
- * Side Car has to find a more smart way to pass
- * ISCSI Controller IP address.
- */
-static int
-get_controller_ip_address(char *buf, int len)
-{
-	size_t nbytes;
-
-	FILE *fp = fopen("/var/openebs/controllers.conf", "r");
-	if (fp == NULL) {
-		printf("Error opening file\n");
-		return (-1);
-	}
-
-	nbytes = fread(buf, sizeof (char), len, fp);
-
-	if (nbytes <= 0) {
-		printf("Read error\n");
-		return (-1);
-	}
-	return (0);
-}
-
-/*
  * One thread per replica, which will be
  * responsible for initial handshake and
  * exchanging info like IP add, port etc.
@@ -547,25 +573,15 @@ static void
 uzfs_zvol_mgmt_thread(void *arg)
 {
 	const char *target_addr = arg;
-	char ip_buf[256];
 	int rc;
 	struct sockaddr_in istgt_addr;
 	zvol_io_hdr_t hdr = {0, };
 	char *buf;
 	int sfd = -1;
 
-
 	sfd = create_and_bind(mgmt_port, false);
 	if (sfd == -1) {
 		goto exit;
-	}
-
-	if (target_addr == NULL) {
-		if (get_controller_ip_address(ip_buf, sizeof (ip_buf)) != 0) {
-			printf("parsing IP address did not work\n");
-			goto exit;
-		}
-		target_addr = ip_buf;
 	}
 
 	printf("Controller IP address is: %s\n", target_addr);
@@ -923,22 +939,122 @@ uzfs_zrepl_close_log(void)
 	closelog();
 }
 
-static void
-uzfs_zrepl_walk_pool_directory(void)
+int
+zrepl_import(int argc, char **argv)
 {
-	spa_t	*spa = NULL;
-	spa_t	*sp = NULL;
-	int	rc = 0;
+	int c;
+	nvlist_t	*config = NULL;
+	importargs_t	importargs = {0};
+	int		error;
+	spa_t		*spa;
+	nvlist_t	*props = NULL;
 
-	mutex_enter(&spa_namespace_lock);
-	while ((spa = spa_next(spa)) != NULL) {
-		(void) printf(">>>>>>>\t%s\n", spa_name(spa));
-		rc = spa_open(spa_name(spa), &sp, spa);
-		if (rc == 0) {
-			spa_close(spa, spa);
+	argc -= optind;
+	argv += optind;
+
+	if (argc < 1) {
+		help();
+		return (1);
+	}
+
+	pool_name = argv[1];
+
+	while ((c = getopt(argc, argv, "t:")) != -1) {
+		switch (c) {
+		case 't':
+			if (inet_aton(optarg, &addr) == 0) {
+				fprintf(stderr,
+				    "Invalid target address\n");
+				help();
+				return (1);
+			}
+			target_addr = optarg;
+			break;
+		default:
+			help();
+			return (1);
 		}
 	}
-	mutex_exit(&spa_namespace_lock);
+
+	if (target_addr == NULL) {
+		help();
+		return (1);
+	}
+
+	fprintf(stdout, "import pool %s target addr %s\n", pool_name,
+	    target_addr);
+	libzfs_handle_t *hdl = libzfs_init();
+
+	importargs.scan = B_TRUE;
+	importargs.cachefile = NULL;
+
+	if ((error = zpool_tryimport(hdl, pool_name, &config, &importargs))
+	    != 0) {
+		fprintf(stderr, "cannot import pool:%s, %s\n", pool_name,
+		    libzfs_error_description(hdl));
+		libzfs_fini(hdl);
+		return (1);
+	}
+
+	if ((error = spa_import(pool_name, config, props, ZFS_IMPORT_NORMAL))
+	    != 0) {
+		fprintf(stderr, "failed import %s\n", strerror(error));
+		return (1);
+	}
+
+	libzfs_fini(hdl);
+
+	if ((error = uzfs_open_pool(pool_name, &spa)) != 0) {
+		fprintf(stderr, "spa open failed %s\n ", strerror(error));
+		return (1);
+	}
+
+	return (0);
+}
+
+int
+zrepl_start(int argc, char **argv)
+{
+
+	int c;
+
+	while ((c = getopt(argc, argv, "t:")) != -1) {
+		switch (c) {
+		case 't':
+			if (inet_aton(optarg, &addr) == 0) {
+				fprintf(stderr, "Invalid target address\n");
+				help();
+				return (1);
+			}
+			target_addr = optarg;
+			break;
+		default:
+			help();
+			return (1);
+		}
+	}
+
+	if (target_addr == NULL) {
+		help();
+		return (1);
+	}
+
+	return (0);
+}
+
+void
+zrepl_svc_run(void)
+{
+
+	conn_accpt_thrd = zk_thread_create(NULL, 0,
+	    (thread_func_t)uzfs_zvol_io_conn_acceptor, NULL, 0, NULL, TS_RUN,
+	    0, PTHREAD_CREATE_DETACHED);
+	VERIFY3P(conn_accpt_thrd, !=, NULL);
+
+	uzfs_mgmt_thread = zk_thread_create(NULL, 0,
+	    (thread_func_t)uzfs_zvol_mgmt_thread, target_addr, 0, NULL,
+	    TS_RUN, 0, PTHREAD_CREATE_DETACHED);
+	VERIFY3P(uzfs_mgmt_thread, !=, NULL);
 }
 
 /*
@@ -947,14 +1063,33 @@ uzfs_zrepl_walk_pool_directory(void)
 int
 main(int argc, char **argv)
 {
-	int 		rc;
-	kthread_t	*conn_accpt_thrd;
-	kthread_t	*uzfs_mgmt_thread;
-	char		*target_addr = NULL;
+	int	rc;
+	int	i = 0;
+	const char	*cmd_name = NULL;
+
+	if (argc < 2) {
+		help();
+		return (1);
+	}
+
+	cmd_name = argv[1];
+
+	if ((rc = find_command(cmd_name, &i)) != 0) {
+		help();
+		return (1);
+	}
 
 	pthread_t slf = pthread_self();
 	snprintf(tinfo, sizeof (tinfo), "m#%d.%d",
 	    (int)(((uint64_t *)slf)[0]), getpid());
+
+	if (getenv("CONFIG_LOAD_ENABLE") == NULL) {
+		printf("enabled auto import (reading of zpool.cache)\n");
+		zfs_autoimport_disable = 0;
+	} else {
+		printf("not reading zpool.cache files\n");
+	}
+
 
 	rc = uzfs_init();
 	uzfs_zrepl_open_log();
@@ -966,11 +1101,8 @@ main(int argc, char **argv)
 	rc = pthread_mutex_init(&zvol_list_mutex, NULL);
 	if (rc != 0) {
 		ZREPL_ERRLOG("zvol_global mutex_init() failed\n");
-		return (-1);
+		goto initialize_error;
 	}
-
-	uzfs_zrepl_walk_pool_directory();
-	sleep(5);
 
 	/* Ignore SIGPIPE signal */
 	signal(SIGPIPE, SIG_IGN);
@@ -981,21 +1113,9 @@ main(int argc, char **argv)
 		goto initialize_error;
 	}
 
-	if (argc > 1)
-		target_addr = argv[1];
-
-	conn_accpt_thrd = zk_thread_create(NULL, 0,
-	    (thread_func_t)uzfs_zvol_io_conn_acceptor,
-	    NULL, 0, NULL, TS_RUN, 0,
-	    PTHREAD_CREATE_DETACHED);
-	VERIFY3P(conn_accpt_thrd, !=, NULL);
-
-	uzfs_mgmt_thread = zk_thread_create(NULL, 0,
-	    (thread_func_t)uzfs_zvol_mgmt_thread,
-	    target_addr, 0, NULL, TS_RUN, 0,
-	    PTHREAD_CREATE_DETACHED);
-	VERIFY3P(uzfs_mgmt_thread, !=, NULL);
-
+	if ((rc = cmd_table[i].func(argc, argv)) != 0)
+		goto initialize_error;
+	zrepl_svc_run();
 	while (1) {
 		sleep(5);
 	}

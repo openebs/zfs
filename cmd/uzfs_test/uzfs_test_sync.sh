@@ -1,7 +1,7 @@
 #!/bin/bash
 for i in {1..10}
 do
-	log_must setup_uzfs_test nolog 4096 nosync
+	log_must setup_uzfs_test nolog 4096 standard
 	sudo $UZFS_TEST -S -w -T 1 > $PWD/$1/uzfs_sync_data
 	if [ $? != 0 ]; then
 		exit 1;
@@ -14,7 +14,7 @@ do
 done
 for i in {1..10}
 do
-	log_must setup_uzfs_test log 4096 nosync
+	log_must setup_uzfs_test log 4096 standard
 	sudo $UZFS_TEST -S -l -T 1 -w > $PWD/$1/uzfs_sync_data
 	if [ $? != 0 ]; then
 		exit 1;
@@ -27,7 +27,7 @@ do
 done
 for i in {1..10}
 do
-	log_must setup_uzfs_test nolog 4096 sync
+	log_must setup_uzfs_test nolog 4096 always
 	sudo $UZFS_TEST -S -s -T 1 -w > $PWD/$1/uzfs_sync_data
 	if [ $? != 0 ]; then
 		exit 1;
@@ -40,7 +40,7 @@ do
 done
 for i in {1..10}
 do
-	log_must setup_uzfs_test log 4096 sync
+	log_must setup_uzfs_test log 4096 always
 	sudo $UZFS_TEST -S -l -s -T 1 -w > $PWD/$1/uzfs_sync_data
 	if [ $? != 0 ]; then
 		exit 1;
@@ -54,7 +54,7 @@ done
 
 for i in {1..10}
 do
-	log_must setup_uzfs_test nolog 65536 nosync
+	log_must setup_uzfs_test nolog 65536 standard
 	sudo $UZFS_TEST -S -i 8192 -b 65536 -T 1 -w > $PWD/$1/uzfs_sync_data
 	if [ $? != 0 ]; then
 		exit 1;
@@ -67,7 +67,7 @@ do
 done
 for i in {1..10}
 do
-	log_must setup_uzfs_test log 65536 nosync
+	log_must setup_uzfs_test log 65536 standard
 	sudo $UZFS_TEST -S -i 8192 -b 65536 -l -T 1 -w > $PWD/$1/uzfs_sync_data
 	if [ $? != 0 ]; then
 		exit 1;
@@ -80,7 +80,7 @@ do
 done
 for i in {1..10}
 do
-	log_must setup_uzfs_test nolog 65536 sync
+	log_must setup_uzfs_test nolog 65536 always
 	sudo $UZFS_TEST -S -s -i 8192 -b 65536 -T 1 -w > $PWD/$1/uzfs_sync_data
 	if [ $? != 0 ]; then
 		exit 1;
@@ -93,7 +93,7 @@ do
 done
 for i in {1..10}
 do
-	log_must setup_uzfs_test log 65536 sync
+	log_must setup_uzfs_test log 65536 always
 	sudo $UZFS_TEST -S -i 8192 -b 65536 -l -s -T 1 -w > $PWD/$1/uzfs_sync_data
 	if [ $? != 0 ]; then
 		exit 1;

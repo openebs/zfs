@@ -98,12 +98,13 @@ reader_thread(void *arg)
 	worker_args_t *warg = (worker_args_t *)arg;
 	char *buf[15];
 	int idx, j, err;
-	uint64_t blk_offset, offset, vol_blocks, iops = 0, data_iops = 0;
+	uint64_t blk_offset, offset, vol_blocks, ios = 0, data_ios = 0;
 	hrtime_t end, now;
 	void *zv = warg->zv;
 	kmutex_t *mtx = warg->mtx;
 	kcondvar_t *cv = warg->cv;
 	int *threads_done = warg->threads_done;
+	uint64_t *total_ios = warg->total_ios;
 	uint64_t vol_size = warg->active_size;
 	uint64_t block_size = warg->io_block_size;
 	uint64_t len = 0;
@@ -136,10 +137,10 @@ reader_thread(void *arg)
 		verify_data(buf[idx], offset, idx, block_size);
 
 		if (buf[idx][0] != 0)
-			data_iops += (idx + 1);
+			data_ios += (idx + 1);
 		if (len != 0)
 			kmem_free(io_num, len);
-		iops += (idx + 1);
+		ios += (idx + 1);
 
 		now = gethrtime();
 		if (now > end)
@@ -148,10 +149,12 @@ reader_thread(void *arg)
 	for (j = 0; j < 15; j++)
 		umem_free(buf[j], sizeof (char) * (j + 1) * block_size);
 	if (silent == 0)
-		printf("Stopping read.. ios done: %lu data iops: %lu\n", iops,
-		    data_iops);
+		printf("Stopping read.. ios done: %lu data ios: %lu\n", ios,
+		    data_ios);
 
 	mutex_enter(mtx);
+	if (total_ios != NULL)
+		*total_ios += data_ios;
 	*threads_done = *threads_done + 1;
 	cv_signal(cv);
 	mutex_exit(mtx);
@@ -180,12 +183,13 @@ writer_thread(void *arg)
 	worker_args_t *warg = (worker_args_t *)arg;
 	char *buf[15];
 	int idx, j, err;
-	uint64_t blk_offset, offset, vol_blocks, iops = 0;
+	uint64_t blk_offset, offset, vol_blocks, ios = 0;
 	hrtime_t end, now;
 	void *zv = warg->zv;
 	kmutex_t *mtx = warg->mtx;
 	kcondvar_t *cv = warg->cv;
 	int *threads_done = warg->threads_done;
+	uint64_t *total_ios = warg->total_ios;
 	uint64_t vol_size = warg->active_size;
 	uint64_t block_size = warg->io_block_size;
 	static uint64_t io_num = 0;
@@ -218,7 +222,7 @@ writer_thread(void *arg)
 		if (err != 0)
 			printf("IO error at offset: %lu len: %lu\n", offset,
 			    (idx + 1) * block_size);
-		iops += (idx + 1);
+		ios += (idx + 1);
 		now = gethrtime();
 
 		if (now > end)
@@ -227,9 +231,11 @@ writer_thread(void *arg)
 	for (j = 0; j < 15; j++)
 		umem_free(buf[j], sizeof (char) * (j + 1) * block_size);
 	if (silent == 0)
-		printf("Stopping write.. ios done: %lu\n", iops);
+		printf("Stopping write.. ios done: %lu\n", ios);
 
 	mutex_enter(mtx);
+	if (total_ios != NULL)
+		*total_ios += ios;
 	*threads_done = *threads_done + 1;
 	cv_signal(cv);
 	mutex_exit(mtx);
@@ -263,10 +269,13 @@ setup_unit_test(void)
 void
 unit_test_create_pool_ds(void)
 {
-	void *spa1, *spa2, *spa3, *spa4, *spa;
-	void *zv1 = NULL; void *zv3 = NULL;
-	void *zv2 = NULL; void *zv4 = NULL;
-	void *zv5 = NULL; void *zv = NULL;
+	spa_t *spa1, *spa2, *spa3, *spa4, *spa;
+	zvol_state_t *zv1 = NULL;
+	zvol_state_t *zv3 = NULL;
+	zvol_state_t *zv2 = NULL;
+	zvol_state_t *zv4 = NULL;
+	zvol_state_t *zv5 = NULL;
+	zvol_state_t *zv = NULL;
 	int err, err1, err2, err3, err4, err5;
 
 	err1 = uzfs_create_pool(pool, "/tmp/uztest.xyz", &spa1);
@@ -505,7 +514,7 @@ static void process_options(int argc, char **argv)
 }
 
 void
-open_pool(void **spa)
+open_pool(spa_t **spa)
 {
 	int err;
 	err = uzfs_open_pool(pool, spa);
@@ -516,7 +525,7 @@ open_pool(void **spa)
 }
 
 void
-open_ds(void *spa, void **zv)
+open_ds(spa_t *spa, zvol_state_t **zv)
 {
 	int err;
 	err = uzfs_open_dataset(spa, ds, zv);
@@ -529,7 +538,8 @@ open_ds(void *spa, void **zv)
 void
 unit_test_fn(void *arg)
 {
-	void *spa, *zv;
+	spa_t *spa;
+	zvol_state_t *zv;
 	kthread_t *reader1;
 	kthread_t *writer[3];
 	char name[MAXNAMELEN];
@@ -538,6 +548,7 @@ unit_test_fn(void *arg)
 	kcondvar_t cv;
 	int threads_done = 0;
 	int num_threads = 0;
+	uint64_t total_ios = 0;
 	zvol_info_t *zinfo = NULL;
 	worker_args_t reader1_args, writer_args[3];
 
@@ -559,6 +570,7 @@ unit_test_fn(void *arg)
 
 	reader1_args.zv = zv;
 	reader1_args.threads_done = &threads_done;
+	reader1_args.total_ios = NULL;
 	reader1_args.mtx = &mtx;
 	reader1_args.cv = &cv;
 	reader1_args.io_block_size = io_block_size;
@@ -571,6 +583,7 @@ unit_test_fn(void *arg)
 	for (i = 0; i < 3; i++) {
 		writer_args[i].zv = zv;
 		writer_args[i].threads_done = &threads_done;
+		writer_args[i].total_ios = &total_ios;
 		writer_args[i].mtx = &mtx;
 		writer_args[i].cv = &cv;
 		writer_args[i].io_block_size = io_block_size;
@@ -586,6 +599,9 @@ unit_test_fn(void *arg)
 	while (threads_done != num_threads)
 		cv_wait(&cv, &mtx);
 	mutex_exit(&mtx);
+
+	if (silent == 0)
+		printf("Total write IOs: %lu\n", total_ios);
 
 	cv_destroy(&cv);
 	mutex_destroy(&mtx);

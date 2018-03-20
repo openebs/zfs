@@ -114,7 +114,8 @@ uzfs_zvol_zap_operation(void *arg)
 	uzfs_test_info_t *test_info = (uzfs_test_info_t *)arg;
 	int i = 0;
 	hrtime_t end, now;
-	void *spa, *zvol;
+	spa_t *spa;
+	zvol_state_t *zvol;
 	uzfs_zap_kv_t **kv_array;
 	int zap_count;
 	uint64_t txg1, txg2, txg3, txg4;

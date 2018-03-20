@@ -58,12 +58,20 @@ typedef struct zvol_rebuild_data {
 } zvol_rebuild_data_t;
 
 /*
- * zvol state
+ * zvol rebuild related state
+ */
+typedef enum zvol_rebuild_status {
+	ZVOL_REBUILDING_INIT,		/* rebuilding initiated on zvol */
+	ZVOL_REBUILDING_IN_PROGRESS,	/* zvol is rebuilding */
+	ZVOL_REBUILDING_DONE		/* done with rebuilding */
+} zvol_rebuild_status_t;
+
+/*
+ * zvol status
  */
 typedef enum zvol_status {
 	ZVOL_STATUS_HEALTHY,		/* zvol has latest data */
-	ZVOL_STATUS_DEGRADED,		/* zvol is missing some data */
-	ZVOL_STATUS_REBUILDING		/* zvol is in rebuilding state */
+	ZVOL_STATUS_DEGRADED		/* zvol is missing some data */
 } zvol_status_t;
 
 /*
@@ -87,6 +95,7 @@ struct zvol_state {
 	 * This should not be greater than volblocksize
 	 */
 	uint64_t zv_metavolblocksize;
+	zvol_rebuild_status_t zv_rebuild_status; /* zvol rebuilding status */
 	zvol_status_t zv_status;	/* zvol status */
 	zvol_rebuild_data_t rebuild_data;
 };

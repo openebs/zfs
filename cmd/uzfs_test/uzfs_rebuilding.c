@@ -242,11 +242,12 @@ rebuild_replica_thread(void *arg)
 	start_txg = 0;
 	txg_wait_synced(spa_get_dsl(to_zvol->zv_spa), 0);
 
-	uzfs_zvol_set_status(to_zvol, ZVOL_STATUS_REBUILDING);
+	uzfs_zvol_set_rebuild_status(to_zvol, ZVOL_REBUILDING_INIT);
 
 	txg_wait_synced(spa_get_dsl(from_zvol->zv_spa), 0);
 	end_txg = spa_last_synced_txg(from_zvol->zv_spa);
 
+	uzfs_zvol_set_rebuild_status(to_zvol, ZVOL_REBUILDING_IN_PROGRESS);
 
 	mutex_enter(&r_info->mtx);
 	cv_signal(&r_info->cv);
@@ -306,6 +307,12 @@ rebuild_replica_thread(void *arg)
 	mutex_destroy(&r_data.mtx);
 	cv_destroy(&r_data.cv);
 
+	uzfs_zvol_set_rebuild_status(to_zvol, ZVOL_REBUILDING_DONE);
+
+	/*
+	 * We finished rebuilding data in degraded zvol so set status to
+	 * ZVOL_STATUS_HEALTHY
+	 */
 	uzfs_zvol_set_status(to_zvol, ZVOL_STATUS_HEALTHY);
 
 	mutex_enter(&r_info->mtx);
@@ -323,7 +330,8 @@ replica_writer_thread(void *arg)
 	char *buf[15];
 	int idx, j, err;
 	uint64_t blk_offset, offset, vol_blocks, iops = 0;
-	hrtime_t end, now, replica_down_time, replica_start_time;
+	hrtime_t end, now, replica_rebuild_start_time;
+	hrtime_t replica_down_time, replica_start_time;
 	boolean_t replica_active = B_TRUE;
 	kmutex_t *mtx = warg->mtx;
 	kcondvar_t *cv = warg->cv;
@@ -342,11 +350,20 @@ replica_writer_thread(void *arg)
 
 	now = gethrtime();
 	end = now + (hrtime_t)(total_time_in_sec * (hrtime_t)(NANOSEC));
+
+	/*
+	 * If test duration is 100 seconds, then
+	 * replica_down_time : 33 seconds
+	 * replica_start_time : 66 seconds
+	 * rebuild_start_time : 77 seconds
+	 */
 	replica_start_time = now + (hrtime_t)(total_time_in_sec *
-	    (hrtime_t)(NANOSEC)) - (hrtime_t)(total_time_in_sec/8 *
+	    (hrtime_t)(NANOSEC)) - (hrtime_t)(total_time_in_sec/3 *
 	    (hrtime_t)(NANOSEC));
-	replica_down_time = now + (hrtime_t)(total_time_in_sec/4 *
+	replica_down_time = now + (hrtime_t)(total_time_in_sec/3 *
 	    (hrtime_t)(NANOSEC));
+	replica_rebuild_start_time = replica_start_time +
+	    (hrtime_t)(total_time_in_sec/9 * (hrtime_t)(NANOSEC));
 
 	rebuild_info.to_zvol = zvol2;
 	rebuild_info.from_zvol = zvol1;
@@ -390,24 +407,24 @@ replica_writer_thread(void *arg)
 		now = gethrtime();
 		if (now > replica_down_time && now < replica_start_time) {
 			replica_active = B_FALSE;
-		} else if (now > replica_start_time) {
+		} else if (now > replica_start_time && !replica_active) {
+			uzfs_zvol_set_status(zvol2, ZVOL_STATUS_DEGRADED);
 			replica_active = B_TRUE;
-			if (!rebuilding_started) {
-				mutex_enter(&rebuild_info.mtx);
+		} else if (now > replica_rebuild_start_time &&
+		    !rebuilding_started) {
+			mutex_enter(&rebuild_info.mtx);
+			rebuilding_thread = zk_thread_create(NULL, 0,
+			    (thread_func_t)rebuild_replica_thread,
+			    &rebuild_info, 0, NULL, TS_RUN, 0,
+			    PTHREAD_CREATE_DETACHED);
 
-				rebuilding_thread = zk_thread_create(NULL, 0,
-				    (thread_func_t)rebuild_replica_thread,
-				    &rebuild_info, 0, NULL, TS_RUN, 0,
-				    PTHREAD_CREATE_DETACHED);
-
-				while (!rebuilding_started) {
-					cv_wait(&rebuild_info.cv,
-					    &rebuild_info.mtx);
-					rebuilding_started = B_TRUE;
-					mutex_exit(&rebuild_info.mtx);
-				}
-				printf("rebuilding started\n");
+			while (!rebuilding_started) {
+				cv_wait(&rebuild_info.cv,
+				    &rebuild_info.mtx);
+				rebuilding_started = B_TRUE;
+				mutex_exit(&rebuild_info.mtx);
 			}
+			printf("rebuilding started\n");
 		}
 
 		if (now > end)
@@ -444,7 +461,8 @@ create_and_init_pool(void **spa, void **zvol)
 	int err;
 	char *pool_name, *file_name, *zvol_name;
 	uint32_t index;
-	void *t_spa, *t_zvol;
+	spa_t *t_spa;
+	zvol_state_t *t_zvol;
 
 	index = atomic_inc_32_nv(&f_index);
 	pool_name = kmem_asprintf("%s%d", POOL_NAME, index);
@@ -581,6 +599,10 @@ uzfs_rebuild_test(void *arg)
 		writer_args.cv = &cv;
 		writer_args.io_block_size = io_block_size;
 		writer_args.active_size = active_size;
+
+		/* for test purpose only */
+		uzfs_zvol_set_status(zvol1, ZVOL_STATUS_HEALTHY);
+		uzfs_zvol_set_status(zvol2, ZVOL_STATUS_HEALTHY);
 
 		writer = zk_thread_create(NULL, 0,
 		    (thread_func_t)replica_writer_thread, &writer_args, 0, NULL,

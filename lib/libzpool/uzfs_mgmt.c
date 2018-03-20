@@ -26,6 +26,8 @@
 #include <uzfs.h>
 #include <uzfs_mtree.h>
 #include <zrepl_mgmt.h>
+#include <uzfs_mgmt.h>
+#include <uzfs_io.h>
 
 static int uzfs_fd_rand = -1;
 
@@ -264,7 +266,7 @@ uzfs_objset_create_cb(objset_t *new_os, void *arg, cred_t *cr, dmu_tx_t *tx)
 
 /* owns objset with name 'ds_name' in pool 'spa'. Sets 'sync' property */
 int
-uzfs_open_dataset_init(spa_t *spa, const char *ds_name, zvol_state_t **z)
+uzfs_open_dataset_init(const char *ds_name, zvol_state_t **z)
 {
 	zvol_state_t *zv = NULL;
 	int error = -1;
@@ -273,15 +275,19 @@ uzfs_open_dataset_init(spa_t *spa, const char *ds_name, zvol_state_t **z)
 	uint64_t block_size, vol_size;
 	uint64_t meta_vol_block_size;
 	uint64_t meta_data_size;
-
-	if (spa == NULL)
-		goto ret;
+	spa_t *spa = NULL;
 
 	zv = kmem_zalloc(sizeof (zvol_state_t), KM_SLEEP);
 	if (zv == NULL)
 		goto ret;
-	zv->zv_spa = spa;
 
+	error = spa_open(ds_name, &spa, zv);
+	if (error != 0) {
+		kmem_free(zv, sizeof (zvol_state_t));
+		goto ret;
+	}
+
+	zv->zv_spa = spa;
 	zfs_rlock_init(&zv->zv_range_lock);
 	zfs_rlock_init(&zv->zv_mrange_lock);
 	mutex_init(&zv->rebuild_data.io_tree_mtx, NULL, MUTEX_DEFAULT, NULL);
@@ -326,6 +332,7 @@ uzfs_open_dataset_init(spa_t *spa, const char *ds_name, zvol_state_t **z)
 disown_free:
 		dmu_objset_disown(zv->zv_objset, zv);
 free_ret:
+		spa_close(spa, zv);
 		zfs_rlock_destroy(&zv->zv_range_lock);
 		zfs_rlock_destroy(&zv->zv_mrange_lock);
 		kmem_free(zv, sizeof (zvol_state_t));
@@ -338,7 +345,7 @@ free_ret:
 	zv->zv_volsize = vol_size;
 
 	/* On boot, mark zvol status health */
-	zv->zv_status = ZVOL_STATUS_HEALTHY;
+	uzfs_zvol_set_status(zv, ZVOL_STATUS_DEGRADED);
 
 	if (spa_writeable(dmu_objset_spa(os))) {
 //		if (zil_replay_disable)
@@ -363,7 +370,7 @@ uzfs_open_dataset(spa_t *spa, const char *ds_name, zvol_state_t **z)
 		return (error);
 	(void) snprintf(name, sizeof (name), "%s/%s", spa_name(spa), ds_name);
 
-	error = uzfs_open_dataset_init(spa, name, z);
+	error = uzfs_open_dataset_init(name, z);
 	return (error);
 }
 
@@ -411,19 +418,12 @@ uzfs_zvol_create_cb(const char *ds_name, void *arg)
 {
 
 	zvol_state_t	*zv = NULL;
-	spa_t		*spa;
 	int 		error = -1;
 
 	printf("ds_name %s\n", ds_name);
-	error = spa_open(ds_name, &spa, "UZINFO");
-	if (error != 0) {
-		(void) spa_destroy((char *)ds_name);
-		return (error);
-	}
 
-	error = uzfs_open_dataset_init(spa, ds_name, &zv);
+	error = uzfs_open_dataset_init(ds_name, &zv);
 	if (error) {
-		spa_close(spa, "UZINFO");
 		printf("Failed to open dataset: %s\n", ds_name);
 		return (error);
 	}
@@ -432,6 +432,7 @@ uzfs_zvol_create_cb(const char *ds_name, void *arg)
 		printf("Failed in uzfs_zinfo_init\n");
 		return (error);
 	}
+
 	return (0);
 }
 
@@ -457,6 +458,7 @@ uzfs_close_dataset(zvol_state_t *zv)
 	uzfs_destroy_txg_diff_tree(zv->rebuild_data.incoming_io_tree);
 	zfs_rlock_destroy(&zv->zv_range_lock);
 	zfs_rlock_destroy(&zv->zv_mrange_lock);
+	spa_close(zv->zv_spa, zv);
 	kmem_free(zv, sizeof (zvol_state_t));
 }
 

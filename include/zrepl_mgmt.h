@@ -1,12 +1,40 @@
+/*
+ * CDDL HEADER START
+ *
+ * The contents of this file are subject to the terms of the
+ * Common Development and Distribution License (the "License").
+ * You may not use this file except in compliance with the License.
+ *
+ * You can obtain a copy of the license at usr/src/OPENSOLARIS.LICENSE
+ * or http://www.opensolaris.org/os/licensing.
+ * See the License for the specific language governing permissions
+ * and limitations under the License.
+ *
+ * When distributing Covered Code, include this CDDL HEADER in each
+ * file and include the License file at usr/src/OPENSOLARIS.LICENSE.
+ * If applicable, add the following below this CDDL HEADER, with the
+ * fields enclosed by brackets "[]" replaced with your own identifying
+ * information: Portions Copyright [yyyy] [name of copyright owner]
+ *
+ * CDDL HEADER END
+ */
+/*
+ * Copyright (c) 2018 Cloudbyte. All rights reserved.
+ */
 
 #ifndef	ZREPL_MGMT_H
 #define	ZREPL_MGMT_H
+
 #include <pthread.h>
 #include <sys/queue.h>
+#include "zrepl_prot.h"
+
+#ifdef	__cplusplus
+extern "C" {
+#endif
 
 #define	uZFS_ZVOL_WORKERS_MAX 128
 #define	uZFS_ZVOL_WORKERS_DEFAULT 6
-#define	MAX_IP_LEN 56
 
 extern pthread_mutex_t zvol_list_mutex;
 struct zvol_io_cmd_s;
@@ -61,30 +89,6 @@ typedef struct zvol_info_s {
 	int 		write_req_ack_cnt;
 } zvol_info_t;
 
-typedef enum zvol_op_code_e {
-	ZVOL_OPCODE_HANDSHAKE = 1,
-	ZVOL_OPCODE_READ,
-	ZVOL_OPCODE_WRITE,
-	ZVOL_OPCODE_UNMAP,
-	ZVOL_OPCODE_SYNC,
-	ZVOL_OPCODE_SNAP_CREATE,
-	ZVOL_OPCODE_SNAP_ROLLBACK,
-} zvol_op_code_t;
-
-typedef enum zvol_op_status_e {
-	ZVOL_OP_STATUS_OK = 1,
-	ZVOL_OP_STATUS_FAILED,
-} zvol_op_status_t;
-
-typedef struct zvol_io_hdr_s {
-	zvol_op_code_t		opcode;
-	uint64_t		io_seq;
-	uint64_t		offset;
-	uint64_t		len;
-	void			*q_ptr;
-	zvol_op_status_t 	status;
-} zvol_io_hdr_t;
-
 typedef struct zvol_io_cmd_s {
 	STAILQ_ENTRY(zvol_io_cmd_s) cmd_link;
 	zvol_io_hdr_t 	hdr;
@@ -92,12 +96,6 @@ typedef struct zvol_io_cmd_s {
 	void		*buf;
 	int		conn;
 } zvol_io_cmd_t;
-
-typedef struct mgmt_ack_s {
-	char		volname[MAXNAMELEN];
-	char		ip[MAX_IP_LEN];
-	int		port;
-} mgmt_ack_t;
 
 extern int uzfs_zinfo_init(void *zv, const char *ds_name);
 extern zvol_info_t *uzfs_zinfo_lookup(const char *name);
@@ -127,5 +125,9 @@ extern int uzfs_zinfo_destroy(const char *ds_name);
 		syslog(LOG_NOTICE, "%-18.18s:%4d: %-20.20s: "		\
 		    fmt, __func__, __LINE__, tinfo, ##__VA_ARGS__);	\
 	} while (0)
+
+#ifdef	__cplusplus
+}
+#endif
 
 #endif /* ZREPL_MGMT_H */

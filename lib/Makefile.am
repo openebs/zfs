@@ -5,3 +5,7 @@ SUBDIRS = libspl libavl libefi libshare libunicode libicp
 # These four libraries, which are installed as the final build product,
 # incorporate the six convenience libraries given above.
 SUBDIRS += libuutil libnvpair libzpool libzfs_core libzfs
+
+if CONFIG_FIO
+SUBDIRS += fio
+endif

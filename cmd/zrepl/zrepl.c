@@ -436,23 +436,26 @@ uzfs_zvol_mgmt_do_handshake(zvol_io_hdr_t *hdr, int sfd, char *name)
 	char 		*p = NULL;
 
 	printf("Volume: %s sent for enq\n", name);
-	hdr->len = sizeof (mgmt_ack_t);
 	zinfo = uzfs_zinfo_lookup(name);
-	if (zinfo != NULL) {
-		hdr->status = ZVOL_OP_STATUS_OK;
-	} else {
+	/*
+	 * XXX if anything in this function fails we should not send any
+	 * payload at all - just a header with failed status.
+	 */
+	if (zinfo == NULL) {
 		hdr->status = ZVOL_OP_STATUS_FAILED;
+	} else {
+		hdr->status = ZVOL_OP_STATUS_OK;
 	}
+	hdr->len = sizeof (mgmt_ack_t);
 
 	bzero(&mgmt_ack, sizeof (mgmt_ack));
 	strncpy(mgmt_ack.volname, name, strlen(name));
 	mgmt_ack.port = atoi(accpt_port);
 	rc = uzfs_zvol_get_ip(mgmt_ack.ip);
-	printf("IP address: %s\n", mgmt_ack.ip);
 	if (rc == -1) {
+		hdr->status = ZVOL_OP_STATUS_FAILED;
 		ZREPL_ERRLOG("Unable to get IP"
 		    " with err:%d\n", errno);
-		goto exit;
 	}
 
 	packet = kmem_alloc((sizeof (mgmt_ack_t) + sizeof (*hdr)) *
@@ -466,11 +469,10 @@ uzfs_zvol_mgmt_do_handshake(zvol_io_hdr_t *hdr, int sfd, char *name)
 		    " with err:%d\n", errno);
 		rc = -1;
 	}
-exit:
-	if (packet != NULL) {
+	if (packet != NULL)
 		free(packet);
-	}
-	uzfs_zinfo_drop_refcnt(zinfo, false);
+	if (zinfo != NULL)
+		uzfs_zinfo_drop_refcnt(zinfo, false);
 	return (rc);
 }
 
@@ -479,27 +481,24 @@ exit:
  * Side Car has to find a more smart way to pass
  * ISCSI Controller IP address.
  */
-static char *
-get_controller_ip_address(void)
+static int
+get_controller_ip_address(char *buf, int len)
 {
 	size_t nbytes;
-	char *buf = NULL;
 
 	FILE *fp = fopen("/var/openebs/controllers.conf", "r");
 	if (fp == NULL) {
 		printf("Error opening file\n");
-		return (buf);
+		return (-1);
 	}
 
-	buf = kmem_alloc(1024, KM_SLEEP);
-	nbytes = fread(buf, sizeof (char), 1024, fp);
+	nbytes = fread(buf, sizeof (char), len, fp);
 
 	if (nbytes <= 0) {
 		printf("Read error\n");
-		return (buf);
+		return (-1);
 	}
-	printf("buffer value is %s", buf);
-	return (buf);
+	return (0);
 }
 
 /*
@@ -510,12 +509,12 @@ get_controller_ip_address(void)
 static void
 uzfs_zvol_mgmt_thread(void *arg)
 {
-
+	const char *target_addr = arg;
+	char buf[256];
 	int sfd, rc, count;
 	struct sockaddr_in istgt_addr;
 	zvol_io_hdr_t hdr = {0, };
 	char *name = NULL;
-	char *buf = NULL;
 
 
 	sfd = create_and_bind(mgmt_port, false);
@@ -523,18 +522,19 @@ uzfs_zvol_mgmt_thread(void *arg)
 		goto exit;
 	}
 
-	buf = get_controller_ip_address();
-	if (buf == NULL) {
-		printf("parsing IP address did not work\n");
-		goto exit;
+	if (target_addr == NULL) {
+		if (get_controller_ip_address(buf, sizeof (buf)) != 0) {
+			printf("parsing IP address did not work\n");
+			goto exit;
+		}
+		target_addr = buf;
 	}
 
-	printf("Controller IP address is: %s", buf);
+	printf("Controller IP address is: %s\n", target_addr);
 	bzero((char *)&istgt_addr, sizeof (istgt_addr));
 	istgt_addr.sin_family = AF_INET;
-	istgt_addr.sin_addr.s_addr = inet_addr(buf);
-	istgt_addr.sin_port = htons(6060);
-	free(buf);
+	istgt_addr.sin_addr.s_addr = inet_addr(target_addr);
+	istgt_addr.sin_port = htons(TARGET_PORT);
 retry:
 	rc = connect(sfd, (struct sockaddr *)&istgt_addr, sizeof (istgt_addr));
 	if ((rc == -1) && ((errno == EINTR) || (errno == ECONNREFUSED) ||
@@ -1056,12 +1056,12 @@ uzfs_zrepl_walk_pool_directory(void)
  * Main function for replica.
  */
 int
-main(void)
+main(int argc, char **argv)
 {
 	int 		rc;
-	kthread_t 	*conn_accpt_thrd;
-	kthread_t 	*uzfs_mgmt_thread;
-
+	kthread_t	*conn_accpt_thrd;
+	kthread_t	*uzfs_mgmt_thread;
+	char		*target_addr = NULL;
 
 	pthread_t slf = pthread_self();
 	snprintf(tinfo, sizeof (tinfo), "m#%d.%d",
@@ -1092,6 +1092,9 @@ main(void)
 		goto initialize_error;
 	}
 
+	if (argc > 1)
+		target_addr = argv[1];
+
 	conn_accpt_thrd = zk_thread_create(NULL, 0,
 	    (thread_func_t)uzfs_zvol_io_conn_acceptor,
 	    NULL, 0, NULL, TS_RUN, 0,
@@ -1100,7 +1103,7 @@ main(void)
 
 	uzfs_mgmt_thread = zk_thread_create(NULL, 0,
 	    (thread_func_t)uzfs_zvol_mgmt_thread,
-	    NULL, 0, NULL, TS_RUN, 0,
+	    target_addr, 0, NULL, TS_RUN, 0,
 	    PTHREAD_CREATE_DETACHED);
 	VERIFY3P(uzfs_mgmt_thread, !=, NULL);
 

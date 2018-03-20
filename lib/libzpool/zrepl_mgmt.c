@@ -1,9 +1,10 @@
 #include <syslog.h>
 #include <sys/zil.h>
-#include <zrepl_mgmt.h>
 #include <sys/zfs_rlock.h>
 #include <sys/uzfs_zvol.h>
 #include <sys/dnode.h>
+#include <zrepl_mgmt.h>
+#include <uzfs_mgmt.h>
 
 #define	true 1
 #define	false 0
@@ -111,10 +112,12 @@ uzfs_zinfo_lookup(const char *name)
 			break;
 		}
 	}
-
-	/* Take refcount */
-	uzfs_zinfo_take_refcnt(zv, true);
+	if (zv != NULL) {
+		/* Take refcount */
+		uzfs_zinfo_take_refcnt(zv, true);
+	}
 	(void) pthread_mutex_unlock(&zvol_list_mutex);
+
 	return (zv);
 }
 
@@ -152,13 +155,7 @@ uzfs_zinfo_destroy(const char *name)
 		    zinfo->name[namelen] == '@'))) {
 			zv = zinfo->zv;
 			uzfs_remove_zinfo_list(zinfo);
-			zil_close(zv->zv_zilog);
-			zfs_rlock_destroy(&zv->zv_range_lock);
-			zfs_rlock_destroy(&zv->zv_mrange_lock);
-			dnode_rele(zv->zv_dn, zv);
-			dmu_objset_disown(zv->zv_objset, zv);
-			spa_close(zv->zv_spa, "UZINFO");
-			kmem_free(zv, sizeof (zvol_state_t));
+			uzfs_close_dataset(zv);
 			break;
 		}
 	}

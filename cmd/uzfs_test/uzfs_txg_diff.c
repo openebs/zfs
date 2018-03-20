@@ -167,7 +167,9 @@ uzfs_txg_diff_verifcation_test(void *arg)
 	hrtime_t end, now;
 	uint64_t blk_offset, offset, vol_blocks;
 	uint64_t io_num = 0;
-	void *spa, *zvol, *cookie = NULL;
+	spa_t *spa;
+	zvol_state_t *zvol;
+	void *cookie = NULL;
 	char *buf;
 	int max_io, count, i = 0;
 	avl_tree_t *write_io_tree;

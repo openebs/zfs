@@ -20,21 +20,23 @@
  */
 
 #ifndef	_UZFS_MGMT_H
-
 #define	_UZFS_MGMT_H
 
+#include <sys/spa.h>
+#include <sys/uzfs_zvol.h>
+
 extern int uzfs_init(void);
-extern int uzfs_create_pool(char *name, char *path, void **spa);
-extern int uzfs_open_pool(char *name, void **spa);
-extern int uzfs_vdev_add(void *spa, char *path, int ashift, int log);
-extern int uzfs_create_dataset(void *spa, char *ds, uint64_t vol_size,
-    uint64_t block_size, void **zv);
-extern int uzfs_open_dataset(void *spa, char *ds, void **zv);
+extern int uzfs_create_pool(char *name, char *path, spa_t **spa);
+extern int uzfs_open_pool(char *name, spa_t **spa);
+extern int uzfs_vdev_add(spa_t *spa, char *path, int ashift, int log);
+extern int uzfs_create_dataset(spa_t *spa, char *ds, uint64_t vol_size,
+    uint64_t block_size, zvol_state_t **zv);
+extern int uzfs_open_dataset(spa_t *spa, const char *ds, zvol_state_t **zv);
 extern int uzfs_zvol_create_cb(const char *ds_name, void *n);
 extern int uzfs_zvol_destroy_cb(const char *ds_name, void *n);
-extern uint64_t uzfs_synced_txg(void *zv);
-extern void uzfs_close_dataset(void *zv);
-extern void uzfs_close_pool(void *spa);
+extern uint64_t uzfs_synced_txg(zvol_state_t *zv);
+extern void uzfs_close_dataset(zvol_state_t *zv);
+extern void uzfs_close_pool(spa_t *spa);
 extern void uzfs_fini(void);
 extern uint64_t uzfs_random(uint64_t);
 

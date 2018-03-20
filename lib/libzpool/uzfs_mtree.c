@@ -29,6 +29,13 @@
 
 #define	TXG_DIFF_SNAPNAME	"tsnap"
 
+/*
+ * TXG_SNAPLEN = snapname length + dataset name len +
+ *     max hrtime_t print size
+ */
+#define	TXG_SNAPLEN	sizeof (TXG_DIFF_SNAPNAME) + 	\
+    ZFS_MAX_DATASET_NAME_LEN + 21
+
 #define	ADD_TO_IO_CHUNK_LIST(list, e_offset, e_len, node, count)	\
 	do {	\
 		node = umem_alloc(sizeof (*node), UMEM_NOFAIL);		\
@@ -233,7 +240,7 @@ uzfs_get_txg_diff(zvol_state_t *zv, uint64_t start_txg, uint64_t end_txg,
     uzfs_txg_diff_traverse_cb_t *func, void *arg)
 {
 	int error;
-	char snapname[ZFS_MAX_DATASET_NAME_LEN];
+	char snapname[TXG_SNAPLEN];
 	uzfs_txg_diff_cb_args_t diff_blk;
 	hrtime_t now;
 	dsl_pool_t *dp;

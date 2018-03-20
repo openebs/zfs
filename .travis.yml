@@ -16,13 +16,15 @@ env:
       ZFS_BUILD_TAGS=0
     - ZFS_TEST_TAGS=txg_diff_test
       ZFS_BUILD_TAGS=0
+    - ZFS_TEST_TAGS=fio_test
+      ZFS_BUILD_TAGS=0
     - ZFS_BUILD_TAGS=1
 before_install:
-  # sudo apt-get -qq update
+    # sudo apt-get -qq update
     - sudo apt-get install --yes -qq build-essential autoconf libtool gawk alien fakeroot linux-headers-$(uname -r) libaio-dev
     - sudo apt-get install --yes -qq zlib1g-dev uuid-dev libattr1-dev libblkid-dev libselinux-dev libudev-dev libssl-dev
     - sudo apt-get install --yes -qq lcov libjemalloc-dev
-  # packages for tests
+    # packages for tests
     - sudo apt-get install --yes -qq parted lsscsi ksh attr acl nfs-kernel-server fio
     - sudo apt-get install --yes -qq libgtest-dev cmake
 install:
@@ -32,6 +34,12 @@ install:
     - sudo make
     - sudo cp *.a /usr/lib
     - popd
+    - cd ..
+    # we need fio repo to build zfs replica fio engine
+    - git clone https://github.com/axboe/fio
+    - cd fio
+    - ./configure
+    - make
     - cd ..
     - git clone https://github.com/openebs/spl
     - cd spl
@@ -47,7 +55,7 @@ install:
     - cd ../zfs
     - sh autogen.sh
     - if [ $ZFS_BUILD_TAGS = 0 ]; then
-        ./configure --enable-code-coverage=yes --enable-debug --enable-uzfs=yes --with-jemalloc || travis_terminate 1;
+        ./configure --enable-code-coverage=yes --enable-debug --enable-uzfs=yes --with-jemalloc --with-fio=$PWD/../fio || travis_terminate 1;
         make;
       else
         ./configure --enable-code-coverage=yes --enable-debug || travis_terminate 1;
@@ -60,6 +68,7 @@ script:
     # run ztest and test supported zio backends
     - if [ $ZFS_BUILD_TAGS = 0 ]; then
         sudo mkdir /etc/zfs;
+        export FIO_SRCDIR=$PWD/../fio;
         travis_wait 60 sudo bash ./tests/cbtest/script/test_uzfs.sh -T $ZFS_TEST_TAGS || travis_terminate 1;
       else
         sudo /sbin/modprobe zfs;

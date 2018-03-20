@@ -24,6 +24,7 @@ ZPOOL="$SRC_PATH/cmd/zpool/zpool"
 ZFS="$SRC_PATH/cmd/zfs/zfs"
 ZDB="$SRC_PATH/cmd/zdb/zdb"
 TGT="$SRC_PATH/cmd/zrepl/zrepl"
+TGT_IP="127.0.0.1"
 GTEST="$SRC_PATH/tests/cbtest/gtest/test_uzfs"
 ZTEST="$SRC_PATH/cmd/ztest/ztest"
 UZFS_TEST="$SRC_PATH/cmd/uzfs_test/uzfs_test"
@@ -33,7 +34,8 @@ TMPDIR="/tmp"
 VOLSIZE="1G"
 UZFS_TEST_POOL="testp"
 UZFS_TEST_VOL="ds0"
-UZFS_TEST_VOLSIZE="1G"
+UZFS_TEST_VOLSIZE="128M"
+UZFS_TEST_VOLSIZE_IN_NUM=134217728
 SRCPOOL="src_pool"
 SRCVOL="src_vol"
 DSTPOOL="dst_pool"
@@ -90,31 +92,36 @@ init_test()
 	log_must truncate -s 2G "$TMPDIR/test_spare8.img"
 	log_must truncate -s 2G "$TMPDIR/test_log.img"
 
-	$TGT -v $SRCPOOL/$SRCVOL &
+	# XXX Remove redirection to /dev/null when debug messages are removed
+	# from zrepl
+	$TGT $TGT_IP >/dev/null &
 	TGT_PID=$!
 	sleep 1
 }
 
+#
+# DO NOT use log_must* in this function otherwise we risk recursion.
+#
 close_test()
 {
-	log_must kill -SIGKILL $TGT_PID
-	log_must rm "$TMPDIR/test_disk1.img"
-	log_must rm "$TMPDIR/test_disk2.img"
-	log_must rm "$TMPDIR/test_disk3.img"
-	log_must rm "$TMPDIR/test_disk4.img"
-	log_must rm "$TMPDIR/test_disk5.img"
-	log_must rm "$TMPDIR/test_disk6.img"
-	log_must rm "$TMPDIR/test_disk7.img"
-	log_must rm "$TMPDIR/test_disk8.img"
-	log_must rm "$TMPDIR/test_spare1.img"
-	log_must rm "$TMPDIR/test_spare2.img"
-	log_must rm "$TMPDIR/test_spare3.img"
-	log_must rm "$TMPDIR/test_spare4.img"
-	log_must rm "$TMPDIR/test_spare5.img"
-	log_must rm "$TMPDIR/test_spare6.img"
-	log_must rm "$TMPDIR/test_spare7.img"
-	log_must rm "$TMPDIR/test_spare8.img"
-	log_must rm "$TMPDIR/test_log.img"
+	kill -SIGKILL $TGT_PID
+	rm "$TMPDIR/test_disk1.img"
+	rm "$TMPDIR/test_disk2.img"
+	rm "$TMPDIR/test_disk3.img"
+	rm "$TMPDIR/test_disk4.img"
+	rm "$TMPDIR/test_disk5.img"
+	rm "$TMPDIR/test_disk6.img"
+	rm "$TMPDIR/test_disk7.img"
+	rm "$TMPDIR/test_disk8.img"
+	rm "$TMPDIR/test_spare1.img"
+	rm "$TMPDIR/test_spare2.img"
+	rm "$TMPDIR/test_spare3.img"
+	rm "$TMPDIR/test_spare4.img"
+	rm "$TMPDIR/test_spare5.img"
+	rm "$TMPDIR/test_spare6.img"
+	rm "$TMPDIR/test_spare7.img"
+	rm "$TMPDIR/test_spare8.img"
+	rm "$TMPDIR/test_log.img"
 }
 
 dump_data()
@@ -555,6 +562,50 @@ test_raidz_pool()
 	return 0
 }
 
+test_fio()
+{
+	log_must $ZPOOL create -f $SRCPOOL \
+	    -o cachefile="$TMPDIR/zpool_$SRCPOOL.cache" \
+	    "$TMPDIR/test_disk1.img"
+	log_must $ZFS create -sV $VOLSIZE $SRCPOOL/vol1
+	log_must $ZFS create -sV $VOLSIZE $SRCPOOL/vol2
+
+	cat >$TMPDIR/test.fio <<EOF
+[global]
+ioengine=replica.so
+thread=1
+group_reporting=1
+direct=1
+verify=md5
+ramp_time=0
+iodepth=128
+rw=randrw
+bs=4k
+filesize=100m
+fallocate=none
+time_based=1
+runtime=15
+numjobs=1
+[vol1]
+filename=$SRCPOOL/vol1
+[vol2]
+filename=$SRCPOOL/vol2
+EOF
+
+	# run the fio
+	LD_LIBRARY_PATH=$SRC_PATH/lib/fio/.libs $FIO_SRCDIR/fio $TMPDIR/test.fio
+	[ $? -eq 0 ] || log_fail "Fio test run failed"
+
+	# test pool destroy
+	# XXX Bug: we must destroy volumes before pool. If not then EBUSY
+	log_must $ZFS destroy -r $SRCPOOL/vol1
+	log_must $ZFS destroy -r $SRCPOOL/vol2
+	log_must destroy_pool $SRCPOOL
+	log_must rm $TMPDIR/test.fio
+
+	return 0
+}
+
 setup_uzfs_test()
 {
 	$TGT &
@@ -573,13 +624,18 @@ setup_uzfs_test()
 	log_must $ZFS create -V $UZFS_TEST_VOLSIZE \
 	    $UZFS_TEST_POOL/$UZFS_TEST_VOL -b $2
 
-	if [ "$3" == "sync" ]; then
-		log_must $ZFS set sync=always $UZFS_TEST_POOL/$UZFS_TEST_VOL
-	else
-		log_must $ZFS set sync=standard $UZFS_TEST_POOL/$UZFS_TEST_VOL
-	fi
+	log_must $ZFS set sync=$3 $UZFS_TEST_POOL/$UZFS_TEST_VOL
+
 	log_must kill -SIGKILL $TGT_PID2
 	return 0
+}
+
+greater()
+{
+	if [ $1 -le $2 ]; then
+		return 0
+	fi
+	return 1
 }
 
 run_uzfs_test()
@@ -589,29 +645,72 @@ run_uzfs_test()
 	log_must truncate -s 2G "$TMPDIR/uztest.1a"
 	log_must truncate -s 2G "$TMPDIR/uztest.log"
 
-	log_must setup_uzfs_test nolog 4096 nosync
-	log_must $UZFS_TEST -T 2
+	log_must setup_uzfs_test nolog 4096 disabled
+	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -T 2 > $TMPDIR/uzfs_test.out
+	ios1=$(cat /tmp/uzfs_test.out  | grep "Total write IOs" | awk '{print $4}')
 
-	log_must setup_uzfs_test nolog 4096 sync
-	log_must $UZFS_TEST -s -T 2
+	log_must setup_uzfs_test nolog 4096 always
+	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -s -T 2 > $TMPDIR/uzfs_test.out
+	ios2=$(cat /tmp/uzfs_test.out  | grep "Total write IOs" | awk '{print $4}')
 
-	log_must setup_uzfs_test log 4096 nosync
-	log_must $UZFS_TEST -l -T 2
+	log_must_not greater $ios1 $ios2
 
-	log_must setup_uzfs_test log 4096 sync
-	log_must $UZFS_TEST -s -l -T 2
+	log_must setup_uzfs_test nolog 4096 standard
+	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -T 2
 
-	log_must setup_uzfs_test nolog 65536 nosync
-	log_must $UZFS_TEST -i 8192 -b 65536 -T 2
 
-	log_must setup_uzfs_test nolog 65536 sync
-	log_must $UZFS_TEST -s -i 8192 -b 65536 -T 2
+	log_must setup_uzfs_test log 4096 disabled
+	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -l -T 2 > $TMPDIR/uzfs_test.out
+	ios1=$(cat /tmp/uzfs_test.out  | grep "Total write IOs" | awk '{print $4}')
 
-	log_must setup_uzfs_test log 65536 nosync
-	log_must $UZFS_TEST -l -i 8192 -b 65536 -T 2
+	log_must setup_uzfs_test log 4096 always
+	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -s -l -T 2 > $TMPDIR/uzfs_test.out
+	ios2=$(cat /tmp/uzfs_test.out  | grep "Total write IOs" | awk '{print $4}')
+
+	log_must_not greater $ios1 $ios2
+
+	log_must setup_uzfs_test log 4096 standard
+	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -l -T 2
+
+
+	log_must setup_uzfs_test nolog 65536 disabled
+	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -i 8192 -b 65536 -T 2 > $TMPDIR/uzfs_test.out
+	ios1=$(cat /tmp/uzfs_test.out  | grep "Total write IOs" | awk '{print $4}')
+
+	log_must setup_uzfs_test nolog 65536 always
+	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -s -i 8192 -b 65536 -T 2 > $TMPDIR/uzfs_test.out
+	ios2=$(cat /tmp/uzfs_test.out  | grep "Total write IOs" | awk '{print $4}')
+
+	log_must_not greater $ios1 $ios2
+
+	log_must setup_uzfs_test nolog 65536 standard
+	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -i 8192 -b 65536 -T 2
+
+
+	log_must setup_uzfs_test log 65536 disabled
+	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -l -i 8192 -b 65536 -T 2 > $TMPDIR/uzfs_test.out
+	ios1=$(cat /tmp/uzfs_test.out  | grep "Total write IOs" | awk '{print $4}')
+
+	log_must setup_uzfs_test log 65536 always
+	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -s -l -i 8192 -b 65536 -T 2 > $TMPDIR/uzfs_test.out
+	ios2=$(cat /tmp/uzfs_test.out  | grep "Total write IOs" | awk '{print $4}')
+
+	log_must_not greater $ios1 $ios2
+
+	log_must setup_uzfs_test log 65536 standard
+	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -l -i 8192 -b 65536 -T 2
 
 	log_must setup_uzfs_test log 65536 sync
 	log_must $UZFS_TEST -s -l -i 8192 -b 65536 -T 2
+
+	K=1024
+	M=$(( 1024 * 1024 ))
+	G=$(( 1024 * 1024 * 1024 ))
+
+	log_must $UZFS_TEST -t 10 -a  $(( 50 * 1024 * 1024 )) -T 3 -n 10000
+	log_must $UZFS_TEST -t 10 -a  $(( 100 * 1024 * 1024 )) -T 3 -n 10000
+	log_must $UZFS_TEST -t 10 -a  $(( 1000 * 1024 * 1024 )) -T 3 -n 10000
+	log_must $UZFS_TEST -t 10 -T 4
 
 	log_must $UZFS_TEST -t 10 -T 0
 	log_must $UZFS_TEST -t 10 -T 0 -n 10
@@ -650,6 +749,7 @@ test_type :
 	- zvol_test (zvol sync test, read/write and replay tests)
 	- rebuild_test (zvol rebuild related tests)
 	- txg_diff_test (txg diff API test)
+	- fio_test
 EOF
 }
 
@@ -675,6 +775,11 @@ if [ -z $test_type ]; then
 	usage
 	exit
 fi
+
+run_fio_test()
+{
+	log_must test_fio
+}
 
 run_pool_test()
 {

@@ -83,7 +83,7 @@ spa_config_load(void)
 	struct _buf *file;
 	uint64_t fsize;
 
-#ifdef _KERNEL
+#if defined(_KERNEL) || defined(_UZFS)
 	if (zfs_autoimport_disable)
 		return;
 #endif

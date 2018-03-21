@@ -28,9 +28,9 @@
 int
 verify_fn(void *zv, char *buf, int block_size)
 {
-	int err;
+	int err, i;
 	uint64_t mdlen;
-	void *md = NULL;
+	uint64_t *md = NULL;
 	uint64_t io_num = 0;
 
 	if (metaverify != 0) {
@@ -55,11 +55,14 @@ verify_fn(void *zv, char *buf, int block_size)
 		printf("d:r:%d %d m:r:%lu %lu l:%lu\n", buf[0], verify, io_num,
 		    metaverify, mdlen);
 
-	if ((buf[0] == verify) && (err == 0) && (mdlen == 8) &&
-	    (io_num == metaverify))
-		return (0);
-	else
+	if (buf[0] != verify)
 		return (1);
+
+	if (md != NULL)
+		for (i = 0; i < mdlen; i += 8)
+			if (md[i/8] != io_num)
+				return (1);
+	return (0);
 }
 
 void
@@ -95,7 +98,7 @@ write_fn(void *zv, char *buf, int block_size)
 	txg2 = uzfs_synced_txg(zv);
 
 	if (txg1 == txg2) {
-		printf("%d %lu\n", buf[0], io_num);
+		printf("uzfs_sync_data: %d %lu\n", buf[0], io_num);
 		exit(0);
 	}
 }
@@ -154,9 +157,9 @@ replay_fn(void *arg)
 		}
 
 		open_pool(&spa);
-		if (create == 1) {
+		if (create == 1)
 			open_ds(spa, &zv);
-		} else {
+		else {
 			zinfo = uzfs_zinfo_lookup(ds);
 			zv = zinfo->zv;
 		}

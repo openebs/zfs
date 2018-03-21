@@ -45,6 +45,7 @@ typedef struct metaobj_blk_offset {
 	uint64_t r_offset;
 	uint64_t r_len;
 	uint64_t m_offset;
+	uint64_t m_len;
 } metaobj_blk_offset_t;
 
 /*
@@ -88,8 +89,11 @@ extern void zvol_log_write(zvol_state_t *zv, dmu_tx_t *tx, uint64_t offset,
  * returns through 'm' (offset, len) of the block containing metadata of data
  * at 'offset' of lun and length of meta vol block size
  */
-void get_metaobj_block_details(metaobj_blk_offset_t *m, zvol_state_t *zv,
-    uint64_t offset);
+void get_zv_metaobj_block_details(metaobj_blk_offset_t *m, zvol_state_t *zv,
+    uint64_t offset, uint64_t len);
+
+void get_metaobj_block_details(metaobj_blk_offset_t *m, uint64_t blocksize,
+    uint64_t metablocksize, uint64_t metadatasize, uint64_t offset, uint64_t l);
 
 /*
  * returns len of metadata for data at 'offset' of lun and length 'len'

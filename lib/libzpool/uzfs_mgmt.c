@@ -387,7 +387,7 @@ uzfs_create_dataset(spa_t *spa, char *ds_name, uint64_t vol_size,
 	properties.vol_size = vol_size;
 	properties.block_size = block_size;
 	properties.meta_block_size = block_size;
-	properties.meta_vol_block_size = block_size;
+	properties.meta_vol_block_size = 512;
 
 	error = dmu_objset_create(name, DMU_OST_ZVOL, 0,
 	    uzfs_objset_create_cb, &properties);

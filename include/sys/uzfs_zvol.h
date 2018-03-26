@@ -53,9 +53,7 @@ typedef struct metaobj_blk_offset {
  */
 typedef struct zvol_rebuild_data {
 	/* mutex to synchronize io tree operation */
-	kmutex_t io_tree_mtx;
 	uint64_t rebuild_bytes;
-	avl_tree_t *incoming_io_tree;   /* incoming io tree */
 } zvol_rebuild_data_t;
 
 /*
@@ -149,11 +147,12 @@ typedef struct uzfs_zvol_blk_phy {
 typedef struct uzfs_io_chunk_list {
 	uint64_t offset;
 	uint64_t len;
+	uint64_t io_number;
 	char *buf;
 	list_node_t link;
 } uzfs_io_chunk_list_t;
 
-typedef int (uzfs_txg_diff_traverse_cb_t)(off_t offset, size_t len,
-    uint64_t blkid, void *arg);
+typedef int (uzfs_get_io_diff_cb_t)(off_t offset, size_t len,
+    void *io_number, void *arg);
 #endif
 #endif

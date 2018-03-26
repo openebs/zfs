@@ -21,7 +21,7 @@
 
 #include <sys/dmu_objset.h>
 #include <sys/uzfs_zvol.h>
-#include <uzfs_mtree.h>
+#include <uzfs_rebuilding.h>
 
 #define	GET_NEXT_CHUNK(chunk_io, offset, len, end)		\
 	do {							\
@@ -99,15 +99,12 @@ uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 
 	rl = zfs_range_lock(&zv->zv_range_lock, offset, len, RL_WRITER);
 
-	if (!is_rebuild && (zv->zv_status & ZVOL_STATUS_DEGRADED))
-		uzfs_add_to_incoming_io_tree(zv, offset, len);
-
-	if (zv->zv_rebuild_status & ZVOL_REBUILDING_IN_PROGRESS) {
-		if (is_rebuild) {
-			count = uzfs_search_incoming_io_tree(zv, offset,
-			    len, (void **)&chunk_io);
-			if (!count)
-				goto exit_with_error;
+	if ((zv->zv_status & ZVOL_REBUILDING_IN_PROGRESS) &&
+	    is_rebuild) {
+		count = uzfs_search_nonoverlapping_io(zv, offset,
+		    len, metadata, (void **)&chunk_io);
+		if (!count)
+			goto exit_with_error;
 chunk_io:
 			GET_NEXT_CHUNK(chunk_io, offset, len, end);
 			wrote = offset - orig_offset;
@@ -117,7 +114,6 @@ chunk_io:
 
 			zv->rebuild_data.rebuild_bytes += len;
 			count--;
-		}
 	} else {
 		VERIFY(is_rebuild == 0);
 	}
@@ -309,4 +305,53 @@ zvol_rebuild_status_t
 uzfs_zvol_get_rebuild_status(zvol_state_t *zv)
 {
 	return (zv->zv_rebuild_status);
+}
+
+/*
+ * This assumes snapshot, so, no need of range lock
+ */
+int
+uzfs_read_metadata(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
+    uint64_t *r)
+{
+	uint64_t blocksize = zv->zv_volmetablocksize;
+	uint64_t len_in_first_aligned_block, bytes, read = 0;
+	uint64_t end = offset + len;
+	uint64_t metaobjectsize = P2ALIGN(zv->zv_volsize,
+	    zv->zv_metavolblocksize);
+	uint64_t r_offset = P2ALIGN(offset, blocksize);
+	int ret = 0;
+
+	len_in_first_aligned_block = (blocksize - (offset - r_offset));
+
+	if (len_in_first_aligned_block > len)
+		len_in_first_aligned_block = len;
+
+	while ((offset < end) && (offset < metaobjectsize)) {
+		if (len_in_first_aligned_block != 0) {
+			bytes = len_in_first_aligned_block;
+			len_in_first_aligned_block = 0;
+		} else {
+			bytes = (len < blocksize) ? len : blocksize;
+		}
+
+		if (bytes > (metaobjectsize - offset))
+			bytes = metaobjectsize - offset;
+
+		ret = dmu_read(zv->zv_objset, ZVOL_META_OBJ, offset, bytes,
+		    buf + read, 0);
+		if (ret) {
+			ret = UZFS_IO_READ_FAIL;
+			break;
+		}
+
+		offset += bytes;
+		read += bytes;
+		len -= bytes;
+	}
+
+	if (r)
+		*r = read;
+
+	return (ret);
 }

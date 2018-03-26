@@ -71,8 +71,6 @@ typedef struct uzfs_test_info {
 
 void uzfs_zvol_zap_operation(void *arg);
 void unit_test_fn(void *arg);
-void uzfs_txg_diff_tree_test(void *arg);
-void uzfs_txg_diff_verifcation_test(void *arg);
 void zrepl_utest(void *arg);
 void uzfs_rebuild_test(void *arg);
 #endif

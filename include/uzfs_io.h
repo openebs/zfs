@@ -56,4 +56,9 @@ extern int uzfs_zvol_get_rebuild_status(void *zv);
 extern void uzfs_zvol_set_status(void *zv, int status);
 extern int uzfs_zvol_get_status(void *zv);
 
+/*
+ * API to read metadata
+ */
+extern int uzfs_read_metadata(void *zv, char *buf, uint64_t offset,
+    uint64_t len, uint64_t *r);
 #endif

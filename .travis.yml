@@ -14,8 +14,6 @@ env:
       ZFS_BUILD_TAGS=0
     - ZFS_TEST_TAGS=rebuild_test
       ZFS_BUILD_TAGS=0
-    - ZFS_TEST_TAGS=txg_diff_test
-      ZFS_BUILD_TAGS=0
     - ZFS_TEST_TAGS=fio_test
       ZFS_BUILD_TAGS=0
     - ZFS_TEST_TAGS=zrepl_test

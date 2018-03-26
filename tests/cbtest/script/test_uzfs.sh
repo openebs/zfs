@@ -665,7 +665,7 @@ run_zrepl_uzfs_test()
 	log_must $ZFS set sync=$3 $UZFS_TEST_POOL/$UZFS_TEST_VOL
 
 	log_must_not $UZFS_TEST
-	log_must $UZFS_TEST -T 6
+	log_must $UZFS_TEST -T 4
 	sleep 5
 	log_must kill -SIGKILL $TGT_PID2
 
@@ -686,15 +686,15 @@ run_uzfs_test()
 {
 	log_must_not $UZFS_TEST
 
-	log_must $UZFS_TEST -t 30 -c -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -T 8
-	#log_must $UZFS_TEST -t 30 -c -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -s -T 8
-	log_must $UZFS_TEST -t 30 -c -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -l -T 8
-	#log_must $UZFS_TEST -t 30 -c -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -s -l -T 8
+	log_must $UZFS_TEST -t 30 -c -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -T 6
+	#log_must $UZFS_TEST -t 30 -c -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -s -T 6
+	log_must $UZFS_TEST -t 30 -c -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -l -T 6
+	#log_must $UZFS_TEST -t 30 -c -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -s -l -T 6
 
-	log_must $UZFS_TEST -t 30 -c -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -i 8192 -b 65536 -T 8
-	#log_must $UZFS_TEST -t 30 -c -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -s -i 8192 -b 65536 -T 8
-	log_must $UZFS_TEST -t 30 -c -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -l -i 8192 -b 65536 -T 8
-	#log_must $UZFS_TEST -t 30 -c -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -s -l -i 8192 -b 65536 -T 8
+	log_must $UZFS_TEST -t 30 -c -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -i 8192 -b 65536 -T 6
+	#log_must $UZFS_TEST -t 30 -c -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -s -i 8192 -b 65536 -T 6
+	log_must $UZFS_TEST -t 30 -c -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -l -i 8192 -b 65536 -T 6
+	#log_must $UZFS_TEST -t 30 -c -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -s -l -i 8192 -b 65536 -T 6
 
 	log_must truncate -s 2G "$TMPDIR/uztest.1a"
 	log_must truncate -s 2G "$TMPDIR/uztest.log"
@@ -754,17 +754,6 @@ run_uzfs_test()
 	log_must setup_uzfs_test log 65536 standard
 	log_must $UZFS_TEST -t 30 -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -l -i 8192 -b 65536 -T 2
 
-	log_must $UZFS_TEST -T 7
-
-	K=1024
-	M=$(( 1024 * 1024 ))
-	G=$(( 1024 * 1024 * 1024 ))
-
-	log_must $UZFS_TEST -t 10 -a  $(( 50 * 1024 * 1024 )) -T 3 -n 10000
-	log_must $UZFS_TEST -t 10 -a  $(( 100 * 1024 * 1024 )) -T 3 -n 10000
-	log_must $UZFS_TEST -t 10 -a  $(( 1000 * 1024 * 1024 )) -T 3 -n 10000
-	log_must $UZFS_TEST -t 10 -T 4
-
 	log_must $UZFS_TEST -t 10 -T 0 -n 10
 
 	log_must . $UZFS_TEST_SYNC_SH
@@ -800,7 +789,6 @@ test_type :
 	- pool_test (verify pool create/destroy functionality)
 	- zvol_test (zvol sync test, read/write and replay tests)
 	- rebuild_test (zvol rebuild related tests)
-	- txg_diff_test (txg diff API test)
 	- fio_test
 	- zrepl_test
 EOF
@@ -861,21 +849,9 @@ run_zvol_test()
 
 run_rebuild_test()
 {
-	log_must $UZFS_TEST -T 5 -t 60 -n 3
-	log_must $UZFS_TEST -T 5 -t 120 -n 3
+	log_must $UZFS_TEST -T 3 -t 60 -n 3
+	log_must $UZFS_TEST -T 3 -t 120 -n 3
 
-}
-
-run_txg_diff_test()
-{
-	K=1024
-	M=$(( 1024 * 1024 ))
-	G=$(( 1024 * 1024 * 1024 ))
-
-	log_must $UZFS_TEST -a  $(( 100 * $M )) -T 3 -n 10000
-	log_must $UZFS_TEST -a  $(( 1 * $G)) -T 3 -n 10000
-
-	log_must $UZFS_TEST -T 4
 }
 
 test_func="run_${test_type}"

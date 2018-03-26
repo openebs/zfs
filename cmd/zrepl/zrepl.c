@@ -509,7 +509,7 @@ uzfs_zvol_mgmt_do_handshake(zvol_io_hdr_t *hdr, int sfd, char *name)
 	}
 
 	if (zinfo != NULL) {
-		uzfs_zvol_get_last_committed_io_no(zinfo,
+		uzfs_zvol_get_last_committed_io_no(zinfo->zv,
 		    &hdr->checkpointed_io_seq);
 		uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
 	}

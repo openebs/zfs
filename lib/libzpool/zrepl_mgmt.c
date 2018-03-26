@@ -251,14 +251,14 @@ uzfs_zinfo_free(zvol_info_t *zinfo)
 }
 
 void
-uzfs_zvol_get_last_committed_io_no(zvol_info_t *zinfo, uint64_t *io_seq)
+uzfs_zvol_get_last_committed_io_no(zvol_state_t *zv, uint64_t *io_seq)
 {
 	uzfs_zap_kv_t zap;
 	zap.key = "io_seq";
 	zap.value = 0;
 	zap.size = sizeof (*io_seq);
 
-	uzfs_read_zap_entry(zinfo->zv, &zap);
+	uzfs_read_zap_entry(zv, &zap);
 	*io_seq = zap.value;
 }
 

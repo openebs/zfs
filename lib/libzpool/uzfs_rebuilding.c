@@ -27,8 +27,7 @@
 #include <sys/dsl_destroy.h>
 #include <sys/dmu_tx.h>
 #include <uzfs_io.h>
-
-#define	IO_DIFF_SNAPNAME	".io_snap"
+#include <uzfs_rebuilding.h>
 
 #define	ADD_TO_IO_CHUNK_LIST(list, e_offset, e_len, count)		\
 	do {    							\
@@ -63,7 +62,7 @@ iszero(blk_metadata_t *md)
 		do {							\
 			func(last_lun_offset, diff_count * 		\
 			    zv->zv_metavolblocksize, (blk_metadata_t *) \
-			    (buf + last_index), arg);			\
+			    (buf + last_index), zv->zv_objset, arg);	\
 			diff_count = 0;					\
 			last_index = 0;					\
 			last_md = NULL;					\
@@ -71,8 +70,66 @@ iszero(blk_metadata_t *md)
 		} while (0)
 
 int
+get_metadata_snapshot_info(zvol_state_t *zv, blk_metadata_t *md,
+    zvol_state_t **snap_zv)
+{
+	char *snap_name, *dataset;
+	int ret = 0;
+	zvol_state_t *s_zv;
+	objset_t *s_obj;
+
+	dataset = kmem_asprintf("%s@%s%lu", zv->zv_name,
+	    IO_DIFF_SNAPNAME, md->io_num);
+
+	ret = dmu_objset_own(dataset, DMU_OST_ANY, B_TRUE, snap_zv, &s_obj);
+	if (ret == ENOENT) {
+		snap_name = kmem_asprintf("%s%llu", IO_DIFF_SNAPNAME,
+		    md->io_num);
+
+		ret = dmu_objset_snapshot_one(zv->zv_name, snap_name);
+		if (ret) {
+			printf("Failed to create snapshot for %s\n",
+			    zv->zv_name);
+			strfree(dataset);
+			strfree(snap_name);
+			return (ret);
+		}
+
+		strfree(snap_name);
+		ret = dmu_objset_own(dataset, DMU_OST_ANY, B_TRUE, snap_zv,
+		    &s_obj);
+	}
+
+	if (ret != 0) {
+		strfree(dataset);
+		printf("Failed to own snapshot.. err(%d)\n", ret);
+		return (ret);
+	}
+
+	s_zv = umem_alloc(sizeof (*s_zv), KM_SLEEP);
+	memcpy(s_zv, zv, sizeof (zvol_state_t));
+	s_zv->zv_objset = s_obj;
+	*snap_zv = s_zv;
+
+	strfree(dataset);
+	return (ret);
+}
+
+void
+destroy_metadata_snapshot(zvol_state_t *zv, blk_metadata_t *md)
+{
+	char *dataset;
+
+	dataset = kmem_asprintf("%s@%s%lu", zv->zv_name,
+	    IO_DIFF_SNAPNAME, md->io_num);
+	(void) dsl_destroy_snapshot(dataset, B_FALSE);
+	strfree(dataset);
+}
+
+int
 uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *low,
-    uzfs_get_io_diff_cb_t *func, void *arg)
+    uzfs_get_io_diff_cb_t *func, off_t zvol_offset, size_t zvol_len,
+    void *arg)
 {
 	uint64_t blocksize = zv->zv_volmetablocksize;
 	uint64_t metadata_read_chunk_size = 10 * blocksize;
@@ -80,65 +137,44 @@ uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *low,
 	    zv->zv_volmetadatasize;
 	uint64_t metadatasize = zv->zv_volmetadatasize;
 	char *buf;
-	uint64_t lun_offset, len, i, read, offset;
+	uint64_t lun_offset, i, read;
+	uint64_t offset, len, end;
 	int ret = 0;
-	char *snap_name, *dataset;
-	hrtime_t now;
-	dsl_pool_t *dp;
-	dsl_dataset_t *ds_snap;
 	int diff_count = 0, last_index = 0;
 	uint64_t last_lun_offset = 0;
 	blk_metadata_t *last_md;
+	zvol_state_t *snap_zv;
+	metaobj_blk_offset_t snap_metablk;
 
-	if (!func)
+	if (!func || (zvol_offset + zvol_len) > zv->zv_volsize)
 		return (EINVAL);
 
-	now = gethrtime();
+	get_zv_metaobj_block_details(&snap_metablk, zv, zvol_offset, zvol_len);
+	offset = snap_metablk.m_offset;
+	end = snap_metablk.m_offset + snap_metablk.m_len;
+	if (end > metaobjectsize)
+		end = metaobjectsize;
 
-	snap_name = kmem_asprintf("%s%llu", IO_DIFF_SNAPNAME, now);
-
-	ret = dmu_objset_snapshot_one(zv->zv_name, snap_name);
-	if (ret) {
-		printf("failed to create snapshot for %s\n", zv->zv_name);
-		strfree(snap_name);
+	ret = get_metadata_snapshot_info(zv, low, &snap_zv);
+	if (ret != 0) {
+		printf("failed to get snapshot info for %s io_num:%lu\n",
+		    zv->zv_name, low->io_num);
 		return (ret);
 	}
-
-	strfree(snap_name);
-
-	dataset = kmem_asprintf("%s@%s%llu", zv->zv_name,
-	    IO_DIFF_SNAPNAME, now);
-
-	ret = dsl_pool_hold(dataset, FTAG, &dp);
-	if (ret) {
-		(void) dsl_destroy_snapshot(dataset, B_FALSE);
-		strfree(dataset);
-		return (ret);
-	}
-
-	ret = dsl_dataset_hold(dp, dataset, FTAG, &ds_snap);
-	if (ret) {
-		(void) dsl_destroy_snapshot(dataset, B_FALSE);
-		dsl_pool_rele(dp, FTAG);
-		strfree(dataset);
-		return (ret);
-	}
-
-	dsl_dataset_long_hold(ds_snap, FTAG);
 
 	metadata_read_chunk_size = (metadata_read_chunk_size / metadatasize) *
 	    metadatasize;
 	buf = umem_alloc(metadata_read_chunk_size, KM_SLEEP);
 	len = metadata_read_chunk_size;
 
-	for (offset = 0; offset < metaobjectsize; offset += len) {
+	for (; offset < end; offset += len) {
 		read = 0;
 		len = metadata_read_chunk_size;
 
-		if ((offset + len) > metaobjectsize)
-			len = (metaobjectsize - offset);
+		if ((offset + len) > end)
+			len = (end - offset);
 
-		ret = uzfs_read_metadata(zv, buf, offset, len, &read);
+		ret = uzfs_read_metadata(snap_zv, buf, offset, len, &read);
 
 		if (read != len || ret)
 			break;
@@ -159,12 +195,12 @@ uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *low,
 				    (buf + i), last_md) != 0) {
 					EXECUTE_DIFF_CALLBACK(last_lun_offset,
 					    diff_count, buf, last_index, arg,
-					    last_md, zv, func);
+					    last_md, snap_zv, func);
 				}
 			} else if (diff_count) {
 				EXECUTE_DIFF_CALLBACK(last_lun_offset,
 				    diff_count, buf, last_index, arg, last_md,
-				    zv, func);
+				    snap_zv, func);
 			}
 
 			lun_offset += zv->zv_metavolblocksize;
@@ -172,21 +208,21 @@ uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *low,
 
 		if (diff_count) {
 			EXECUTE_DIFF_CALLBACK(last_lun_offset, diff_count, buf,
-			    last_index, arg, last_md, zv, func);
+			    last_index, arg, last_md, snap_zv, func);
 		}
 	}
 
-	dsl_dataset_long_rele(ds_snap, FTAG);
-	dsl_dataset_rele(ds_snap, FTAG);
-	dsl_pool_rele(dp, FTAG);
+	dmu_objset_disown(snap_zv->zv_objset, &snap_zv);
+	umem_free(snap_zv, sizeof (*snap_zv));
 
 	/*
 	 * TODO: if we failed to destroy snapshot here then
 	 * this should be handled separately from application.
 	 */
-	(void) dsl_destroy_snapshot(dataset, B_FALSE);
+	if (end == metaobjectsize)
+		destroy_metadata_snapshot(zv, low);
+
 	umem_free(buf, metadata_read_chunk_size);
-	strfree(dataset);
 	return (ret);
 }
 

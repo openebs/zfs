@@ -153,6 +153,6 @@ typedef struct uzfs_io_chunk_list {
 } uzfs_io_chunk_list_t;
 
 typedef int (uzfs_get_io_diff_cb_t)(off_t offset, size_t len,
-    void *io_number, void *arg);
+    blk_metadata_t *metadata, objset_t *obj, void *arg);
 #endif
 #endif

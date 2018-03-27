@@ -181,7 +181,7 @@ replica_reader_thread(void *arg)
 
 static int
 uzfs_test_meta_diff_traverse_cb(off_t offset, size_t len,
-    blk_metadata_t *md, void *arg)
+    blk_metadata_t *md, objset_t *snap_obj, void *arg)
 {
 	uzfs_rebuild_data_t *r_data = (uzfs_rebuild_data_t *)arg;
 	uzfs_io_chunk_list_t *io;
@@ -193,8 +193,8 @@ uzfs_test_meta_diff_traverse_cb(off_t offset, size_t len,
 	io->io_number = md->io_num;
 	io->buf = umem_alloc(len, UMEM_NOFAIL);
 
-	err = uzfs_read_data(r_data->zvol, io->buf, offset, len,
-	    NULL, NULL);
+	err = dmu_read(snap_obj, ZVOL_OBJ, offset, len,
+	    io->buf, 0);
 
 	if (err) {
 		umem_free(io, sizeof (*io));
@@ -211,23 +211,68 @@ done:
 }
 
 void
+check_snapshot(zvol_state_t *zv, blk_metadata_t *md, boolean_t err)
+{
+	objset_t *s_obj;
+	char *dataset;
+	int ret = 0;
+
+	dataset = kmem_asprintf("%s@%s%lu", zv->zv_name,
+	    IO_DIFF_SNAPNAME, md->io_num);
+
+	ret = dmu_objset_own(dataset, DMU_OST_ANY, B_TRUE, zv, &s_obj);
+	if ((ret != 0 && err) ||
+	    (!err && ret == 0)) {
+		printf("ret:%d\n", ret);
+		printf("snapshot %s %s\n", dataset,
+		    (err) ? "should not be removed" : "should be removed");
+		exit(1);
+	}
+
+	if (ret == 0)
+		dmu_objset_disown(s_obj, zv);
+}
+
+void
 fetch_modified_data(void *arg)
 {
 	struct rebuilding_data *repl_data = arg;
 	uzfs_rebuild_data_t *r_data = repl_data->r_data;
 	int err;
-	blk_metadata_t io_number;
+	blk_metadata_t md;
+	off_t offset, end;
+	size_t len;
+	int max_count = 4;
 
 	printf("fetching modified data\n");
-	io_number.io_num = repl_data->base_io;
+	md.io_num = repl_data->base_io;
 
-	err = uzfs_get_io_diff(repl_data->zvol, &io_number,
-	    uzfs_test_meta_diff_traverse_cb, r_data);
+	len = r_data->zvol->zv_volsize / max_count;
+
+	for (offset = 0; offset < r_data->zvol->zv_volsize; ) {
+		end = offset + len;
+		if (end > r_data->zvol->zv_volsize)
+			len = r_data->zvol->zv_volsize - offset;
+
+		err = uzfs_get_io_diff(repl_data->zvol, &md,
+		    uzfs_test_meta_diff_traverse_cb, offset, len,
+		    r_data);
+		if (err)
+			break;
+
+		offset += len;
+		if (offset != r_data->zvol->zv_volsize)
+			check_snapshot(repl_data->zvol, &md, B_TRUE);
+		else
+			break;
+	}
 
 	if (err) {
 		printf("error(%d)... while fetching modified data\n", err);
 		exit(1);
 	}
+
+	check_snapshot(repl_data->zvol, &md, B_FALSE);
 
 	printf("finished fetching modified data\n");
 

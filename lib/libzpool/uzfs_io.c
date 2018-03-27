@@ -99,7 +99,8 @@ uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 
 	rl = zfs_range_lock(&zv->zv_range_lock, offset, len, RL_WRITER);
 
-	if ((zv->zv_status & ZVOL_REBUILDING_IN_PROGRESS) &&
+	if (zv->zv_status == ZVOL_STATUS_DEGRADED &&
+	    zv->zv_rebuild_status == ZVOL_REBUILDING_IN_PROGRESS &&
 	    is_rebuild) {
 		count = uzfs_search_nonoverlapping_io(zv, offset,
 		    len, metadata, (void **)&chunk_io);
@@ -162,7 +163,8 @@ chunk_io:
 	}
 
 exit_with_error:
-	if ((zv->zv_rebuild_status & ZVOL_REBUILDING_IN_PROGRESS) &&
+	if (zv->zv_status == ZVOL_STATUS_DEGRADED &&
+	    zv->zv_rebuild_status == ZVOL_REBUILDING_IN_PROGRESS &&
 	    is_rebuild && count && !ret)
 		goto chunk_io;
 

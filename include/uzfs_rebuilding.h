@@ -22,6 +22,8 @@
 #ifndef	_UZFS_REBUILDING_H
 #define	_UZFS_REBUILDING_H
 
+#define	IO_DIFF_SNAPNAME	".io_snap"
+
 /*
  * API to compare metadata
  * return :
@@ -29,12 +31,13 @@
  *	 0 : if first == second
  *	 1 : if first > second
  */
-int compare_blk_metadata(void *first_md, void *second_md);
+int compare_blk_metadata(blk_metadata_t *first_md, blk_metadata_t *second_md);
 
 /*
  * API to access data whose metadata is higer than base_metadata
  */
-int uzfs_get_io_diff(void *zv, void *base_metadata, void *cb_func, void *arg);
+int uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *base_metadata,
+    uzfs_get_io_diff_cb_t *cb_func, off_t offset, size_t len, void *arg);
 
 /*
  * uzfs_search_nonoverlapping_io will check on_disk metadata with w_metadata and
@@ -44,5 +47,5 @@ int uzfs_get_io_diff(void *zv, void *base_metadata, void *cb_func, void *arg);
  * added to list.
  */
 int uzfs_search_nonoverlapping_io(zvol_state_t *zv, uint64_t offset,
-    uint64_t len, void *w_metadata, void **list);
+    uint64_t len, blk_metadata_t *w_metadata, void **list);
 #endif

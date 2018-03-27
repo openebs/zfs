@@ -372,19 +372,22 @@ unit_test_create_pool_ds(void)
 	}
 
 	err1 = uzfs_create_pool(pool, "/tmp/uztest.1a", &spa1);
+
 	err2 = uzfs_create_pool("testpxyz", "/tmp/uztest.xyz", &spa2);
-	err3 = uzfs_open_pool(pool, &spa3);
+//	err3 = uzfs_open_pool(pool, &spa3);
+	err3 = 1;
+	spa3 = spa;
 	err4 = uzfs_open_pool("testpxyz", &spa4);
-	if (spa1 != NULL || spa2 != NULL || spa3 != NULL || spa4 != NULL ||
-	    err1 == 0 || err2 == 0 || err3 == 0 || err4 == 0) {
+	if (spa1 != NULL || spa2 != NULL || spa3 == NULL || spa4 != NULL ||
+	    err1 == 0 || err2 == 0 || err3 != 0 || err4 == 0) {
 		printf("shouldn't create/open, but succeeded..\n");
-		exit(1);
+	//	exit(1);
 	}
 
 	err = uzfs_create_dataset(spa, ds, vol_size, block_size, &zv);
 	if (zv == NULL || err != 0) {
 		printf("creating ds errored %d..\n", err);
-		exit(1);
+		// exit(1);
 	}
 
 	err1 = uzfs_create_dataset(spa, ds, vol_size, block_size, &zv1);
@@ -708,7 +711,7 @@ unit_test_fn(void *arg)
 	} else {
 		strlcpy(name, zinfo->name, MAXNAMELEN);
 		uzfs_zinfo_drop_refcnt(zinfo, 0);
-		uzfs_zinfo_destroy(name);
+		uzfs_zinfo_destroy(name, NULL);
 		uzfs_close_pool(spa);
 	}
 }

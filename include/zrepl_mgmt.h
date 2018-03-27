@@ -29,6 +29,7 @@
 #include <sys/queue.h>
 #include <uzfs_io.h>
 #include "zrepl_prot.h"
+#include <sys/zfs_context.h>
 
 #ifdef	__cplusplus
 extern "C" {
@@ -37,7 +38,7 @@ extern "C" {
 #define	uZFS_ZVOL_WORKERS_MAX 128
 #define	uZFS_ZVOL_WORKERS_DEFAULT 6
 
-extern pthread_mutex_t zvol_list_mutex;
+extern kmutex_t zvol_list_mutex;
 struct zvol_io_cmd_s;
 
 typedef enum zvol_info_state_e {
@@ -105,7 +106,7 @@ extern zvol_info_t *uzfs_zinfo_lookup(const char *name);
 extern void uzfs_zinfo_drop_refcnt(zvol_info_t *zinfo, int locked);
 extern void uzfs_zinfo_take_refcnt(zvol_info_t *zinfo, int locked);
 extern void uzfs_zinfo_replay_zil_all(void);
-extern int uzfs_zinfo_destroy(const char *ds_name);
+extern int uzfs_zinfo_destroy(const char *ds_name, spa_t *spa);
 extern void uzfs_zinfo_update_io_seq_for_all_volumes(void);
 void uzfs_zvol_get_last_committed_io_no(zvol_state_t *zv,
     uint64_t *io_seq);

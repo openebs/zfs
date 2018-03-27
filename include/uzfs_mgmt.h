@@ -21,7 +21,9 @@
 
 #ifndef	_UZFS_MGMT_H
 #define	_UZFS_MGMT_H
-
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include <sys/spa.h>
 #include <sys/uzfs_zvol.h>
 
@@ -42,4 +44,11 @@ extern void uzfs_close_pool(spa_t *spa);
 extern void uzfs_fini(void);
 extern uint64_t uzfs_random(uint64_t);
 
+
+void uzfs_spa_init(spa_t *spa);
+void uzfs_spa_fini(spa_t *spa);
+int uzfs_pool_create(const char *name, char *path, spa_t **spa);
+#ifdef __cplusplus
+}
+#endif
 #endif

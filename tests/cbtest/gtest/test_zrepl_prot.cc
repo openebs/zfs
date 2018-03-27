@@ -43,7 +43,7 @@ using namespace GtestUtils;
 pid_t start_zrepl() {
 	std::string zrepl_path = getCmdPath("zrepl");
 	pid_t pid;
-	int i;
+	int i = 0;
 
 	pid = fork();
 	if (pid == 0) {

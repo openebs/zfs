@@ -198,7 +198,7 @@ replay_fn(void *arg)
 	} else {
 		strlcpy(name, zinfo->name, MAXNAMELEN);
 		uzfs_zinfo_drop_refcnt(zinfo, 0);
-		uzfs_zinfo_destroy(name);
+		uzfs_zinfo_destroy(name, NULL);
 		uzfs_close_pool(spa);
 	}
 

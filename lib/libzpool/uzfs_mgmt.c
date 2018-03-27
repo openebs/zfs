@@ -27,9 +27,9 @@
 #include <zrepl_mgmt.h>
 #include <uzfs_mgmt.h>
 #include <uzfs_io.h>
-
+#include <uzfs_zap.h>
 static int uzfs_fd_rand = -1;
-
+kmutex_t zvol_list_mutex;
 /*
  * Pool tasks that need to be done during pool open and close
  */
@@ -108,6 +108,7 @@ int
 uzfs_init(void)
 {
 	int err = 0;
+
 	kernel_init(FREAD | FWRITE);
 	uzfs_fd_rand = open("/dev/urandom", O_RDONLY);
 	if (uzfs_fd_rand == -1)
@@ -121,13 +122,13 @@ uzfs_init(void)
 void
 uzfs_close_pool(spa_t *spa)
 {
-	int i;
-	for (i = (UZFS_POOL_MAX_TASKS - 1); i >= 0; i--) {
-		if (uzfs_spa(spa)->tasks_initialized[i] == B_TRUE) {
-			uzfs_spa(spa)->tasks_initialized[i] = B_FALSE;
-			uzfs_pool_tasks[i].close_func(spa);
-		}
-	}
+
+//	for (int i = (UZFS_POOL_MAX_TASKS - 1); i >= 0; i--) {
+//		if (uzfs_spa(spa)->tasks_initialized[i] == B_TRUE) {
+//			uzfs_spa(spa)->tasks_initialized[i] = B_FALSE;
+//			uzfs_pool_tasks[i].close_func(spa);
+//		}
+//	}
 	spa_close(spa, "UZFS_SPA_TAG");
 }
 
@@ -138,28 +139,27 @@ int
 uzfs_open_pool(char *name, spa_t **s)
 {
 	spa_t *spa = NULL;
-	int i;
 	int err = spa_open(name, &spa, "UZFS_SPA_TAG");
 	if (err != 0) {
 		spa = NULL;
 		goto ret;
 	}
 
-	if (spa->spa_us != NULL) {
-		spa_close(spa, "UZFS_SPA_TAG");
-		spa = NULL;
-		err = EEXIST;
-		goto ret;
-	}
-	for (i = 0; i < UZFS_POOL_MAX_TASKS; i++) {
-		err = uzfs_pool_tasks[i].open_func(spa);
-		if (err != 0) {
-			uzfs_close_pool(spa);
-			spa = NULL;
-			goto ret;
-		}
-		uzfs_spa(spa)->tasks_initialized[i] = B_TRUE;
-	}
+//	if (spa->spa_us != NULL) {
+//		spa_close(spa, "UZFS_SPA_TAG");
+//		spa = NULL;
+//		err = EEXIST;
+//		goto ret;
+//	}
+//	for (i = 0; i < UZFS_POOL_MAX_TASKS; i++) {
+//		err = uzfs_pool_tasks[i].open_func(spa);
+//		if (err != 0) {
+//			uzfs_close_pool(spa);
+//			spa = NULL;
+//			goto ret;
+//		}
+//		uzfs_spa(spa)->tasks_initialized[i] = B_TRUE;
+//	}
 ret:
 	*s = spa;
 	return (err);
@@ -456,10 +456,11 @@ uzfs_zvol_create_cb(const char *ds_name, void *arg)
 int
 uzfs_zvol_destroy_cb(const char *ds_name, void *arg)
 {
-
-	printf("deleting ds_name %s\n", ds_name);
-
-	uzfs_zinfo_destroy(ds_name);
+	if (ds_name)
+		printf("deleting ds_name %s\n", ds_name);
+	else
+		printf("deleting all dsnames on pool!\n ");
+	uzfs_zinfo_destroy(ds_name, arg);
 	return (0);
 }
 
@@ -481,4 +482,62 @@ uzfs_fini(void)
 	kernel_fini();
 	if (uzfs_fd_rand != -1)
 		close(uzfs_fd_rand);
+}
+
+/*
+ * uzfs_spa_init and fini functions should be called during spa init and
+ * de-init phases
+ */
+void
+uzfs_spa_init(spa_t *spa)
+{
+	uzfs_spa_t *us = NULL;
+	if (spa->spa_mode & FWRITE) {
+		us = (uzfs_spa_t *)kmem_zalloc(sizeof (uzfs_spa_t), KM_SLEEP);
+		mutex_init(&us->mtx, NULL, MUTEX_DEFAULT, NULL);
+		cv_init(&us->cv, NULL, CV_DEFAULT, NULL);
+		mutex_enter(&us->mtx);
+		us->update_txg_tid = zk_thread_create(NULL, 0,
+		    (thread_func_t)uzfs_update_txg_zap_thread, spa, 0, NULL,
+		    TS_RUN, 0, PTHREAD_CREATE_DETACHED);
+		mutex_exit(&us->mtx);
+	}
+
+	spa->spa_us = us;
+}
+
+void
+uzfs_spa_fini(spa_t *spa)
+{
+	struct timespec ts;
+	if (spa->spa_us == NULL)
+		return;
+
+	uzfs_spa_t *us = spa->spa_us;
+
+	mutex_enter(&us->mtx);
+	us->close_pool = 1;
+	cv_signal(&us->cv);
+	mutex_exit(&us->mtx);
+
+	ts.tv_sec = 0;
+	ts.tv_nsec = 100000000;
+
+	while (us->update_txg_tid != NULL)
+		nanosleep(&ts, NULL);
+
+	mutex_destroy(&us->mtx);
+	cv_destroy(&us->cv);
+	spa->spa_us = NULL;
+	kmem_free(us, sizeof (uzfs_spa_t));
+}
+
+int
+uzfs_pool_create(const char *name, char *path, spa_t **s)
+{
+	nvlist_t *nvroot;
+
+	if ((nvroot = make_root(path, 12, 0)) == NULL)
+		return (1);
+	return (spa_create(name, nvroot, NULL, NULL));
 }

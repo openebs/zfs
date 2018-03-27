@@ -35,6 +35,9 @@ typedef struct metadata_desc {
 	blk_metadata_t	metadata;
 } metadata_desc_t;
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 /*
  * writes metadata 'md' to zil records
  * is_rebuild: if IO is from target then it should be set to FALSE
@@ -74,4 +77,7 @@ extern zvol_status_t uzfs_zvol_get_status(zvol_state_t *zv);
  */
 extern int uzfs_read_metadata(zvol_state_t *zv, char *buf, uint64_t offset,
     uint64_t len, uint64_t *r);
+#ifdef __cplusplus
+}
+#endif
 #endif

@@ -27,10 +27,10 @@ TGT="$SRC_PATH/cmd/zrepl/zrepl start -t 127.0.0.1"
 TGT_IP="127.0.0.1"
 GTEST_UZFS="$SRC_PATH/tests/cbtest/gtest/test_uzfs"
 GTEST_ZREPL_PROT="$SRC_PATH/tests/cbtest/gtest/test_zrepl_prot"
+GTEST_EXPORT="$SRC_PATH/tests/cbtest/gtest/test_export"
 ZTEST="$SRC_PATH/cmd/ztest/ztest"
 UZFS_TEST="$SRC_PATH/cmd/uzfs_test/uzfs_test"
 UZFS_TEST_SYNC_SH="$SRC_PATH/cmd/uzfs_test/uzfs_test_sync.sh"
-DMU_IO_TEST="cmd/dmu_io_test/dmu_io_test"
 TMPDIR="/tmp"
 VOLSIZE="1G"
 UZFS_TEST_POOL="testp"
@@ -43,7 +43,6 @@ DSTPOOL="dst_pool"
 DSTVOL="dst_vol"
 TGT_PID="-1"
 TGT_PID2="-1"
-
 log_fail()
 {
 	echo "failed => [$@]"
@@ -622,9 +621,8 @@ EOF
 setup_uzfs_test()
 {
 	$TGT &
-	sleep 10
 	TGT_PID2=$!
-
+	sleep 10
 	export_pool $UZFS_TEST_POOL
 
 	if [ "$1" == "log" ]; then
@@ -769,11 +767,9 @@ run_uzfs_test()
 run_dmu_test()
 {
 	log_must truncate -s 100MB /tmp/disk;
-	log_must $DMU_IO_TEST tpool/vol /tmp/disk;
 	log_must sudo mknod /dev/fake-dev b 7 200;
 	log_must sudo chmod 666 /dev/fake-dev;
 	log_must sudo losetup /dev/fake-dev /tmp/disk;
-	log_must $DMU_IO_TEST tpool/vol /dev/fake-dev;
 	log_must sudo losetup -d /dev/fake-dev;
 	log_must sudo rm /dev/fake-dev;
 	log_must rm /tmp/disk;
@@ -846,6 +842,7 @@ run_zvol_test()
 	log_must run_uzfs_test
 	log_must run_dmu_test
 	log_must $GTEST_UZFS
+	log must $GTEST_EXPORT
 	log_must $GTEST_ZREPL_PROT
 	log_must $ZTEST
 }

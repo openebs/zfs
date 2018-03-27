@@ -132,9 +132,11 @@ void
 uzfs_update_txg_zap_thread(void *s)
 {
 	spa_t *spa = (spa_t *)s;
+	uzfs_spa_t *us = spa->spa_us;
 	uint64_t txg = spa_last_synced_txg(spa);
-
-	mutex_enter(&(uzfs_spa(spa)->mtx));
+	mutex_enter(&us->mtx);
+	if (uzfs_spa(spa)->close_pool == 1)
+		goto exit;
 	cv_timedwait(&(uzfs_spa(spa)->cv), &(uzfs_spa(spa)->mtx),
 	    ddi_get_lbolt() + txg_update_interval_time);
 
@@ -149,6 +151,7 @@ uzfs_update_txg_zap_thread(void *s)
 		cv_timedwait(&(uzfs_spa(spa)->cv), &(uzfs_spa(spa)->mtx),
 		    ddi_get_lbolt() + txg_update_interval_time);
 	}
+exit:
 	mutex_exit(&(uzfs_spa(spa)->mtx));
 	uzfs_spa(spa)->update_txg_tid = NULL;
 	zk_thread_exit();

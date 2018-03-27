@@ -73,6 +73,8 @@ pthread_mutex_t kstat_module_lock = PTHREAD_MUTEX_INITIALIZER;
 pthread_key_t kthread_key;
 int kthread_nr = 0;
 
+extern kmutex_t zvol_list_mutex;
+
 void
 thread_init(void)
 {
@@ -1520,7 +1522,7 @@ kernel_init(int mode)
 	random_init();
 	kstat_nvl = fnvlist_alloc();
 	VERIFY0(uname(&hw_utsname));
-
+	mutex_init(&zvol_list_mutex, NULL, MUTEX_DEFAULT, NULL);
 	thread_init();
 	system_taskq_init();
 	icp_init();
@@ -1542,6 +1544,7 @@ kernel_fini(void)
 	thread_fini();
 	random_fini();
 	fnvlist_free(kstat_nvl);
+	mutex_destroy(&zvol_list_mutex);
 }
 
 uid_t

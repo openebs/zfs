@@ -78,6 +78,7 @@
 #include <sys/dsl_destroy.h>
 #include <sys/zvol.h>
 #include <uzfs_mgmt.h>
+#include <uzfs.h>
 #ifdef	_KERNEL
 #include <sys/fm/protocol.h>
 #include <sys/fm/util.h>
@@ -3482,6 +3483,7 @@ spa_open_common(const char *pool, spa_t **spapp, void *tag, nvlist_t *nvpolicy,
 			*spapp = NULL;
 			return (error);
 		}
+
 	}
 
 	spa_open_ref(spa, tag);
@@ -3509,6 +3511,7 @@ spa_open_common(const char *pool, spa_t **spapp, void *tag, nvlist_t *nvpolicy,
 #ifdef _KERNEL
 		zvol_create_minors(spa, spa_name(spa), B_TRUE);
 #else
+		uzfs_spa_init(spa);
 		dmu_objset_find(spa_name(spa), uzfs_zvol_create_cb, NULL,
 		    DS_FIND_CHILDREN);
 #endif
@@ -4569,7 +4572,8 @@ spa_export_common(char *pool, int new_state, nvlist_t **oldconfig,
 #ifndef _KERNEL
 	if ((new_state == POOL_STATE_DESTROYED) ||
 	    (new_state == POOL_STATE_EXPORTED)) {
-		uzfs_zvol_destroy_cb(spa_name(spa), NULL);
+		uzfs_zvol_destroy_cb(NULL,  spa);
+		uzfs_spa_fini(spa);
 	}
 #endif
 	mutex_enter(&spa_namespace_lock);
@@ -7099,6 +7103,9 @@ spa_evict_all(void)
 		if (spa->spa_state != POOL_STATE_UNINITIALIZED) {
 			spa_unload(spa);
 			spa_deactivate(spa);
+#ifdef _UZFS
+			uzfs_spa_fini(spa);
+#endif
 		}
 		spa_remove(spa);
 	}

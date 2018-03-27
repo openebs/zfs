@@ -1225,11 +1225,6 @@ main(int argc, char **argv)
 		return (-1);
 	}
 
-	rc = pthread_mutex_init(&zvol_list_mutex, NULL);
-	if (rc != 0) {
-		ZREPL_ERRLOG("zvol_global mutex_init() failed\n");
-		goto initialize_error;
-	}
 
 	/* Ignore SIGPIPE signal */
 	signal(SIGPIPE, SIG_IGN);

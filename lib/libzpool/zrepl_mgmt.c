@@ -1,4 +1,3 @@
-
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <syslog.h>
@@ -16,9 +15,13 @@
 __thread char  tinfo[20] =  {0};
 clockid_t clockid;
 
-pthread_mutex_t zvol_list_mutex;
 SLIST_HEAD(, zvol_info_s) zvol_list;
 SLIST_HEAD(, zvol_info_s) stale_zv_list;
+
+#define	SLIST_FOREACH_SAFE(var, head, field, tvar)			\
+	for ((var) = SLIST_FIRST((head));				\
+	    (var) && ((tvar) = SLIST_NEXT((var), field), 1);		\
+	    (var) = (tvar))
 
 static int uzfs_zinfo_free(zvol_info_t *zinfo);
 
@@ -75,7 +78,7 @@ void
 uzfs_zinfo_drop_refcnt(zvol_info_t *zinfo, int locked)
 {
 	if (!locked) {
-		(void) pthread_mutex_lock(&zvol_list_mutex);
+		(void) mutex_enter(&zvol_list_mutex);
 	}
 
 	zinfo->refcnt--;
@@ -84,7 +87,7 @@ uzfs_zinfo_drop_refcnt(zvol_info_t *zinfo, int locked)
 	}
 
 	if (!locked) {
-		(void) pthread_mutex_unlock(&zvol_list_mutex);
+		(void) mutex_exit(&zvol_list_mutex);
 	}
 }
 
@@ -95,11 +98,11 @@ void
 uzfs_zinfo_take_refcnt(zvol_info_t *zinfo, int locked)
 {
 	if (!locked) {
-		(void) pthread_mutex_lock(&zvol_list_mutex);
+		(void) mutex_enter(&zvol_list_mutex);
 	}
 	zinfo->refcnt++;
 	if (!locked) {
-		(void) pthread_mutex_unlock(&zvol_list_mutex);
+		(void) mutex_exit(&zvol_list_mutex);
 	}
 }
 
@@ -108,10 +111,10 @@ uzfs_insert_zinfo_list(zvol_info_t *zinfo)
 {
 
 	/* Base refcount is taken here */
-	(void) pthread_mutex_lock(&zvol_list_mutex);
+	(void) mutex_enter(&zvol_list_mutex);
 	uzfs_zinfo_take_refcnt(zinfo, B_TRUE);
 	SLIST_INSERT_HEAD(&zvol_list, zinfo, zinfo_next);
-	(void) pthread_mutex_unlock(&zvol_list_mutex);
+	(void) mutex_exit(&zvol_list_mutex);
 }
 
 static void
@@ -138,7 +141,7 @@ uzfs_zinfo_lookup(const char *name)
 	zvol_info_t *zv = NULL;
 	int namelen = ((name) ? strlen(name) : 0);
 
-	(void) pthread_mutex_lock(&zvol_list_mutex);
+	(void) mutex_enter(&zvol_list_mutex);
 	SLIST_FOREACH(zv, &zvol_list, zinfo_next) {
 		/*
 		 * TODO: Come up with better approach.
@@ -163,7 +166,7 @@ uzfs_zinfo_lookup(const char *name)
 		/* Take refcount */
 		uzfs_zinfo_take_refcnt(zv, B_TRUE);
 	}
-	(void) pthread_mutex_unlock(&zvol_list_mutex);
+	(void) mutex_exit(&zvol_list_mutex);
 
 	return (zv);
 }
@@ -187,26 +190,42 @@ uzfs_zinfo_destroy_mutex(zvol_info_t *zinfo)
 }
 
 int
-uzfs_zinfo_destroy(const char *name)
+uzfs_zinfo_destroy(const char *name, spa_t *spa)
 {
 
 	zvol_info_t	*zinfo = NULL;
+	zvol_info_t    *zt = NULL;
 	int namelen = ((name) ? strlen(name) : 0);
 	zvol_state_t  *zv;
 
-	(void) pthread_mutex_lock(&zvol_list_mutex);
-	SLIST_FOREACH(zinfo, &zvol_list, zinfo_next) {
-		if (name == NULL || strcmp(zinfo->name, name) == 0 ||
-		    (strncmp(zinfo->name, name, namelen) == 0 &&
-		    (zinfo->name[namelen] == '/' ||
-		    zinfo->name[namelen] == '@'))) {
-			zv = zinfo->zv;
-			uzfs_remove_zinfo_list(zinfo);
-			uzfs_close_dataset(zv);
-			break;
+	mutex_enter(&zvol_list_mutex);
+
+	/*  clear out all zvols for this spa_t */
+	if (name == NULL) {
+		SLIST_FOREACH_SAFE(zinfo, &zvol_list, zinfo_next, zt) {
+			if (strncmp(spa_name(spa),
+			    zinfo->name, strlen(spa_name(spa))) == 0) {
+				zv = zinfo->zv;
+				uzfs_remove_zinfo_list(zinfo);
+				uzfs_close_dataset(zv);
+			}
+		}
+	} else {
+
+		SLIST_FOREACH_SAFE(zinfo, &zvol_list, zinfo_next, zt) {
+			if (name == NULL || strcmp(zinfo->name, name) == 0 ||
+			    (strncmp(zinfo->name, name, namelen) == 0 &&
+			    (zinfo->name[namelen] == '/' ||
+			    zinfo->name[namelen] == '@'))) {
+				zv = zinfo->zv;
+				uzfs_remove_zinfo_list(zinfo);
+				uzfs_close_dataset(zv);
+				break;
+			}
 		}
 	}
-	(void) pthread_mutex_unlock(&zvol_list_mutex);
+
+	(void) mutex_exit(&zvol_list_mutex);
 
 	printf("uzfs_zinfo_destroy path\n");
 	return (0);
@@ -280,12 +299,12 @@ void
 uzfs_zinfo_update_io_seq_for_all_volumes(void)
 {
 	zvol_info_t *zinfo;
-	(void) pthread_mutex_lock(&zvol_list_mutex);
+	(void) mutex_enter(&zvol_list_mutex);
 	SLIST_FOREACH(zinfo, &zvol_list, zinfo_next) {
 		if (uzfs_zvol_get_status(zinfo->zv) == ZVOL_STATUS_HEALTHY) {
 			uzfs_zvol_store_last_committed_io_no(zinfo->zv,
 			    zinfo->checkpointed_io_seq);
 		}
 	}
-	(void) pthread_mutex_unlock(&zvol_list_mutex);
+	(void) mutex_exit(&zvol_list_mutex);
 }

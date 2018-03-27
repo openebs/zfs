@@ -44,6 +44,9 @@
 #include <sys/bpobj.h>
 #include <sys/zfeature.h>
 #include <zfeature_common.h>
+#ifndef _KERNEL
+#include <uzfs.h>
+#endif
 
 #ifdef	__cplusplus
 extern "C" {
@@ -290,7 +293,7 @@ struct spa {
 	taskq_t		*spa_upgrade_taskq;	/* taskq for upgrade jobs */
 
 #if !defined(_KERNEL)
-	void		*spa_us;		/* uzfs_pool structure */
+	uzfs_spa_t		*spa_us;	/* uzfs_pool structure */
 #endif
 };
 

@@ -419,7 +419,8 @@ static int fio_repl_open_file(struct thread_data *td, struct fio_file *f)
 
 	// use mgmt connection to get host:port if not explicitly specified
 	if (!port) {
-		get_data_endpoint(td, f->file_name, &port, host);
+		if (get_data_endpoint(td, f->file_name, &port, host) != 0)
+			return (1);
 	}
 
 	f->fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -585,6 +586,7 @@ static int fio_repl_queue(struct thread_data *td, struct io_u *io_u)
 
 	if (io_u->ddir == DDIR_WRITE) {
 		hdr.opcode = ZVOL_OPCODE_WRITE;
+		hdr.len += sizeof (struct zvol_io_rw_hdr);
 	} else if (io_u->ddir == DDIR_READ) {
 		hdr.opcode = ZVOL_OPCODE_READ;
 	} else {
@@ -600,6 +602,15 @@ static int fio_repl_queue(struct thread_data *td, struct io_u *io_u)
 	 * Send data in case of write.
 	 */
 	if (io_u->ddir == DDIR_WRITE) {
+		struct zvol_io_rw_hdr write_hdr;
+
+		write_hdr.io_num = hdr.io_seq;
+		write_hdr.len = io_u->xfer_buflen;
+		if (write_to_socket(io_u->file->fd, &write_hdr,
+		    sizeof (write_hdr), 1) != 0) {
+			io_u->error = errno;
+			goto end;
+		}
 		if (write_to_socket(io_u->file->fd, io_u->xfer_buf,
 		    io_u->xfer_buflen, 0) != 0) {
 			io_u->error = errno;
@@ -660,14 +671,47 @@ static io_list_entry_t *read_repl_reply(struct thread_data *td, int fd)
 		return (iter);
 	}
 
-	// read command payload if any
+	// read command payload if any (each chunk is preceeded by meta data)
 	if (hdr.opcode == ZVOL_OPCODE_READ) {
-		if (hdr.len != iter->io_u->xfer_buflen) {
-			log_err("repl: unexpected size of data in reply\n");
-			iter->io_u->error = EIO;
-			return (iter);
+		size_t nread = 0;
+		size_t data_offset = 0;
+		struct zvol_io_rw_hdr read_hdr;
+
+		while (nread < hdr.len) {
+			// read metadata header
+			if (hdr.len - nread < sizeof (read_hdr)) {
+				iter->io_u->error = EIO;
+				return (iter);
+			}
+			if (read_from_socket(fd, &read_hdr,
+			    sizeof (read_hdr)) != 0) {
+				iter->io_u->error = EIO;
+				return (iter);
+			}
+			nread += sizeof (read_hdr);
+
+			// read the data
+			if (hdr.len - nread < read_hdr.len) {
+				iter->io_u->error = EIO;
+				return (iter);
+			}
+			if (iter->io_u->xfer_buflen < data_offset +
+			    read_hdr.len) {
+				iter->io_u->error = EIO;
+				return (iter);
+			}
+			if (read_from_socket(fd,
+			    (char *)iter->io_u->xfer_buf + data_offset,
+			    read_hdr.len) != 0) {
+				iter->io_u->error = EIO;
+				return (iter);
+			}
+			nread += read_hdr.len;
+			data_offset += read_hdr.len;
 		}
-		if (read_from_socket(fd, iter->io_u->xfer_buf, hdr.len) != 0) {
+
+		if (data_offset != iter->io_u->xfer_buflen) {
+			log_err("repl: unexpected size of data in reply\n");
 			iter->io_u->error = EIO;
 			return (iter);
 		}

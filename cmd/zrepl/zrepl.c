@@ -228,6 +228,46 @@ uzfs_zvol_socket_write(int fd, char *buf, uint64_t nbytes)
 }
 
 /*
+ * We expect only one chunk of data with meta header in write request.
+ * Nevertheless the code is general to handle even more of them.
+ */
+static int
+uzfs_submit_writes(zvol_info_t *zinfo, zvol_io_cmd_t *zio_cmd)
+{
+	blk_metadata_t	metadata;
+	zvol_io_hdr_t 	*hdr = &zio_cmd->hdr;
+	struct zvol_io_rw_hdr *write_hdr;
+	char	*datap = (char *)zio_cmd->buf;
+	size_t	data_offset = hdr->offset;
+	size_t	remain = hdr->len;
+	int	rc = 0;
+
+	while (remain > 0) {
+		if (remain < sizeof (*write_hdr))
+			return (-1);
+
+		write_hdr = (struct zvol_io_rw_hdr *)datap;
+		metadata.io_num = write_hdr->io_num;
+
+		datap += sizeof (*write_hdr);
+		remain -= sizeof (*write_hdr);
+		if (remain < write_hdr->len)
+			return (-1);
+
+		rc = uzfs_write_data(zinfo->zv, datap, data_offset,
+		    write_hdr->len, &metadata, B_FALSE);
+		if (rc != 0)
+			break;
+
+		datap += write_hdr->len;
+		remain -= write_hdr->len;
+		data_offset += write_hdr->len;
+	}
+
+	return (rc);
+}
+
+/*
  * zvol worker is responsible for actual work.
  * It execute read/write/sync command to uzfs.
  * It enqueue command to completion queue and
@@ -238,27 +278,34 @@ uzfs_zvol_worker(void *arg)
 {
 	zvol_io_cmd_t	*zio_cmd;
 	zvol_info_t	*zinfo;
+	zvol_state_t	*zvol_state;
 	zvol_io_hdr_t 	*hdr;
+	metadata_desc_t	**metadata_desc;
 	int		rc = 0;
 	int 		write = 0;
-
 
 	zio_cmd = (zvol_io_cmd_t *)arg;
 	hdr = &zio_cmd->hdr;
 	zinfo = zio_cmd->zv;
-	ASSERT(zinfo);
+	zvol_state = zinfo->zv;
+	/* If zvol hasn't passed rebuild phase we need the metadata */
+	if (ZVOL_IS_REBUILDED(zvol_state)) {
+		metadata_desc = NULL;
+		zio_cmd->metadata_desc = NULL;
+	} else {
+		metadata_desc = &zio_cmd->metadata_desc;
+	}
 	switch (hdr->opcode) {
 		case ZVOL_OPCODE_READ:
 			rc = uzfs_read_data(zinfo->zv,
 			    (char *)zio_cmd->buf,
-			    hdr->offset, hdr->len, NULL, NULL);
+			    hdr->offset, hdr->len,
+			    metadata_desc);
 			break;
 
 		case ZVOL_OPCODE_WRITE:
 			write = 1;
-			rc = uzfs_write_data(zinfo->zv,
-			    (char *)zio_cmd->buf,
-			    hdr->offset, hdr->len, NULL, B_FALSE);
+			rc = uzfs_submit_writes(zinfo, zio_cmd);
 			zinfo->checkpointed_io_seq =
 			    zio_cmd->hdr.checkpointed_io_seq;
 			break;
@@ -414,30 +461,28 @@ uzfs_zvol_io_receiver(void *arg)
 				goto exit;
 			}
 
+			(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
 			if (zinfo->is_io_ack_sender_created) {
 				ZREPL_ERRLOG("Multiple handshake on IO port "
 				    "for volume: %s\n", zinfo->name);
+				(void) pthread_mutex_unlock(
+				    &zinfo->zinfo_mutex);
 				uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
 				close(fd);
 				zinfo = NULL;
 				goto exit;
 			}
 
-			(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
-			if (!zinfo->is_io_ack_sender_created) {
-				thrd_arg = kmem_alloc(
-				    sizeof (thread_args_t), KM_SLEEP);
-				thrd_arg->fd = fd;
-				strlcpy(thrd_arg->zvol_name, zinfo->name,
-				    MAXNAMELEN);
-				thrd_info = zk_thread_create(NULL, 0,
-				    (thread_func_t)uzfs_zvol_io_ack_sender,
-				    (void *)thrd_arg, 0, NULL, TS_RUN, 0,
-				    PTHREAD_CREATE_DETACHED);
-				VERIFY3P(thrd_info, !=, NULL);
-				zinfo->is_io_ack_sender_created = 1;
-				zinfo->conn_closed = B_FALSE;
-			}
+			thrd_arg = kmem_alloc(sizeof (thread_args_t), KM_SLEEP);
+			thrd_arg->fd = fd;
+			strlcpy(thrd_arg->zvol_name, zinfo->name, MAXNAMELEN);
+			zinfo->conn_closed = B_FALSE;
+			zinfo->is_io_ack_sender_created = B_TRUE;
+			thrd_info = zk_thread_create(NULL, 0,
+			    (thread_func_t)uzfs_zvol_io_ack_sender,
+			    (void *)thrd_arg, 0, NULL, TS_RUN, 0,
+			    PTHREAD_CREATE_DETACHED);
+			VERIFY3P(thrd_info, !=, NULL);
 			(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 			continue;
 		}
@@ -450,11 +495,8 @@ uzfs_zvol_io_receiver(void *arg)
 	}
 exit:
 	if (zinfo != NULL) {
-
 		(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
 		zinfo->conn_closed = B_TRUE;
-		zinfo->is_io_ack_sender_created = 0;
-		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 		/*
 		 * Send signal to ack sender so that it can free
 		 * zio_cmd, close fd and exit.
@@ -464,6 +506,14 @@ exit:
 			rc = pthread_cond_signal(&zinfo->io_ack_cond);
 		}
 		(void) pthread_mutex_unlock(&zinfo->complete_queue_mutex);
+		/*
+		 * wait for ack thread to exit to avoid races with new
+		 * connections for the same zinfo
+		 */
+		while (zinfo->is_io_ack_sender_created) {
+			usleep(1000);
+		}
+		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 		uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
 	}
 
@@ -821,6 +871,63 @@ uzfs_zvol_timer_thread(void)
 }
 
 /*
+ * This func takes care of sending potentially multiple read blocks each
+ * prefixed by metainfo.
+ */
+static int
+uzfs_send_reads(int fd, zvol_io_cmd_t *zio_cmd)
+{
+	zvol_io_hdr_t 	*hdr = &zio_cmd->hdr;
+	struct zvol_io_rw_hdr read_hdr;
+	metadata_desc_t	*md;
+	size_t	rel_offset = 0;
+	int	rc = 0;
+
+	/* special case for missing metadata */
+	if (zio_cmd->metadata_desc == NULL) {
+		read_hdr.io_num = 0;
+		read_hdr.len = hdr->len;
+		rc = uzfs_zvol_socket_write(fd, (char *)&read_hdr,
+		    sizeof (read_hdr));
+		if (rc != 0)
+			return (rc);
+		rc = uzfs_zvol_socket_write(fd, zio_cmd->buf, hdr->len);
+		return (rc);
+	}
+
+	/*
+	 * TODO: Optimize performance by combining multiple writes to a single
+	 * system call either by copying all data to larger buffer or using
+	 * vector write.
+	 */
+	for (md = zio_cmd->metadata_desc; md != NULL; md = md->next) {
+		read_hdr.io_num = md->metadata.io_num;
+		read_hdr.len = md->len;
+		rc = uzfs_zvol_socket_write(fd, (char *)&read_hdr,
+		    sizeof (read_hdr));
+		if (rc != 0)
+			goto end;
+
+		rc = uzfs_zvol_socket_write(fd,
+		    (char *)zio_cmd->buf + rel_offset, md->len);
+		if (rc != 0)
+			goto end;
+		rel_offset += md->len;
+	}
+
+end:
+	md = zio_cmd->metadata_desc;
+	while (md != NULL) {
+		metadata_desc_t *md_tmp = md->next;
+		kmem_free(md, sizeof (*md));
+		md = md_tmp;
+	}
+	zio_cmd->metadata_desc = NULL;
+
+	return (rc);
+}
+
+/*
  * One thread per LUN/vol. This thread works
  * on queue and it sends ack back to client on
  * a given fd.
@@ -829,6 +936,7 @@ static void
 uzfs_zvol_io_ack_sender(void *arg)
 {
 	int fd;
+	int md_len;
 	zvol_info_t		*zinfo;
 	thread_args_t 		*thrd_arg;
 	zvol_io_cmd_t 		*zio_cmd = NULL;
@@ -842,17 +950,16 @@ uzfs_zvol_io_ack_sender(void *arg)
 		(void) pthread_mutex_lock(&zinfo->complete_queue_mutex);
 		do {
 			if (STAILQ_EMPTY(&zinfo->complete_queue)) {
-				zinfo->io_ack_waiting = 1;
-				pthread_cond_wait(&zinfo->io_ack_cond,
-				    &zinfo->complete_queue_mutex);
-
-				zinfo->io_ack_waiting = 0;
 				if ((zinfo->state == ZVOL_INFO_STATE_OFFLINE) ||
 				    (zinfo->conn_closed == B_TRUE)) {
 					(void) pthread_mutex_unlock(
 					    &zinfo->complete_queue_mutex);
 					goto exit;
 				}
+				zinfo->io_ack_waiting = 1;
+				pthread_cond_wait(&zinfo->io_ack_cond,
+				    &zinfo->complete_queue_mutex);
+				zinfo->io_ack_waiting = 0;
 			}
 		} while (STAILQ_EMPTY(&zinfo->complete_queue));
 
@@ -860,9 +967,24 @@ uzfs_zvol_io_ack_sender(void *arg)
 		STAILQ_REMOVE_HEAD(&zinfo->complete_queue, cmd_link);
 		(void) pthread_mutex_unlock(&zinfo->complete_queue_mutex);
 
-		ASSERT(zio_cmd->conn == fd);
+		ASSERT3P(zio_cmd->conn, ==, fd);
 		ZREPL_LOG("ACK for op:%d with seq-id %ld\n",
 		    zio_cmd->hdr.opcode, zio_cmd->hdr.io_seq);
+
+		/* account for space taken by metadata headers */
+		if (zio_cmd->hdr.opcode == ZVOL_OPCODE_READ) {
+			md_len = 0;
+			for (metadata_desc_t *md = zio_cmd->metadata_desc;
+			    md != NULL;
+			    md = md->next) {
+				md_len++;
+			}
+			/* we need at least one header even if no metadata */
+			if (md_len == 0)
+				md_len++;
+			zio_cmd->hdr.len += (md_len *
+			    sizeof (struct zvol_io_rw_hdr));
+		}
 
 		rc = uzfs_zvol_socket_write(zio_cmd->conn,
 		    (char *)&zio_cmd->hdr, sizeof (zio_cmd->hdr));
@@ -881,13 +1003,10 @@ uzfs_zvol_io_ack_sender(void *arg)
 				break;
 			case ZVOL_OPCODE_READ:
 				/* Send data read from disk */
-				rc = uzfs_zvol_socket_write(zio_cmd->conn,
-				    zio_cmd->buf,
-				    (sizeof (char) * zio_cmd->hdr.len));
+				rc = uzfs_send_reads(zio_cmd->conn, zio_cmd);
 				if (rc == -1) {
 					ZREPL_ERRLOG("socket write err :%d\n",
 					    errno);
-					ASSERT(0);
 					goto exit;
 				}
 				zinfo->read_req_ack_cnt++;
@@ -906,6 +1025,7 @@ exit:
 		STAILQ_REMOVE_HEAD(&zinfo->complete_queue, cmd_link);
 		zio_cmd_free(&zio_cmd);
 	}
+	zinfo->is_io_ack_sender_created = B_FALSE;
 	uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
 
 	ZREPL_LOG("uzfs_zvol_io_ack_sender thread exiting\n");

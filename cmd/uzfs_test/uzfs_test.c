@@ -108,10 +108,9 @@ verify_data(char *buf, uint64_t offset, int idx, uint64_t block_size)
 void
 verify_vol_data(void *zv, uint64_t block_size, uint64_t vol_size)
 {
-	uint64_t len, mlen, i, j;
+	uint64_t len, i, j;
 	char *buf;
-	uint64_t *io_num;
-	uint64_t metadatasize = 8;
+	metadata_desc_t *md, *md_tmp;
 
 	buf = kmem_alloc(block_size, KM_SLEEP);
 	len = block_size;
@@ -121,21 +120,24 @@ verify_vol_data(void *zv, uint64_t block_size, uint64_t vol_size)
 			len = vol_size - i;
 		if (iodata[i/block_size] == 0)
 			continue;
-		uzfs_read_data(zv, buf, i, len, &io_num, &mlen);
+		uzfs_read_data(zv, buf, i, len, &md);
 		for (j = 0; j < len; j++)
 			if (data[i+j] != buf[j]) {
 				printf("verify error at %lu\n", (i+j));
 				exit(1);
 			}
-		for (j = 0; j < mlen/(metadatasize); j++)
-			if (iodata[i/block_size] != io_num[j]) {
-				printf("verify merror at %lu %lu %lu %lu\n",
-				    i/block_size, j, io_num[j],
+		for (md_tmp = md; md_tmp != NULL; md_tmp = md_tmp->next)
+			if (iodata[i/block_size] != md_tmp->metadata.io_num) {
+				printf("verify merror at %lu %lu %lu\n",
+				    i/block_size, md_tmp->metadata.io_num,
 				    iodata[i/block_size]);
 				exit(1);
 			}
-		if (mlen != 0)
-			kmem_free(io_num, mlen);
+		while (md != NULL) {
+			md_tmp = md->next;
+			kmem_free(md, sizeof (*md));
+			md = md_tmp;
+		}
 	}
 	printf("Data/metadata verification passed.\n");
 }
@@ -155,8 +157,7 @@ reader_thread(void *arg)
 	uint64_t *total_ios = warg->total_ios;
 	uint64_t vol_size = warg->active_size;
 	uint64_t block_size = warg->io_block_size;
-	uint64_t len = 0;
-	void *io_num;
+	metadata_desc_t *md, *md_tmp;
 
 	for (j = 0; j < 15; j++)
 		buf[j] = (char *)umem_alloc(sizeof (char)*(j+1)* block_size,
@@ -175,9 +176,8 @@ reader_thread(void *arg)
 		offset = blk_offset * block_size;
 
 		idx = uzfs_random(15);
-		len = 0;
 		err = uzfs_read_data(zv, buf[idx], offset,
-		    (idx + 1) * block_size, &io_num, &len);
+		    (idx + 1) * block_size, &md);
 
 		if (err != 0)
 			printf("RIO error at offset: %lu len: %lu\n", offset,
@@ -186,8 +186,11 @@ reader_thread(void *arg)
 
 		if (buf[idx][0] != 0)
 			data_ios += (idx + 1);
-		if (len != 0)
-			kmem_free(io_num, len);
+		while (md != NULL) {
+			md_tmp = md->next;
+			kmem_free(md, sizeof (*md));
+			md = md_tmp;
+		}
 		ios += (idx + 1);
 
 		now = gethrtime();
@@ -250,7 +253,7 @@ writer_thread(void *arg)
 	uint64_t block_size = warg->io_block_size;
 	uint64_t io_num;
 	rl_t *rl;
-	uint64_t *p_io_num;
+	blk_metadata_t md;
 
 	i = 0;
 	for (j = 0; j < 15; j++)
@@ -283,13 +286,11 @@ writer_thread(void *arg)
 		rl = zfs_range_lock(&zrl, offset, (idx + 1)*block_size,
 		    RL_WRITER);
 		/* randomness in io_num is to test VERSION_0 zil records */
-		p_io_num = &io_num;
-		if (uzfs_test_id == 2)
-			if (uzfs_random(2) == 0)
-				p_io_num = NULL;
-
+		md.io_num = io_num;
 		err = uzfs_write_data(zv, buf[idx], offset,
-		    (idx + 1) * block_size, p_io_num, B_FALSE);
+		    (idx + 1) * block_size,
+		    (uzfs_test_id == 2 && uzfs_random(2) == 0) ? NULL : &md,
+		    B_FALSE);
 		if (err != 0)
 			printf("WIO error at offset: %lu len: %lu\n", offset,
 			    (idx + 1) * block_size);

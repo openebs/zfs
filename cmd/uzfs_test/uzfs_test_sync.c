@@ -28,40 +28,48 @@
 int
 verify_fn(void *zv, char *buf, int block_size)
 {
-	int err, i;
-	uint64_t mdlen;
-	uint64_t *md = NULL;
+	int err;
+	metadata_desc_t *md = NULL, *md_tmp;
 	uint64_t io_num = 0;
 
 	if (metaverify != 0) {
-		err = uzfs_read_data(zv, buf, 0, block_size, &md, &mdlen);
-		if (md == NULL)
-			printf("read error.. %d %p\n", err, md);
-	} else
-	{
-		err = uzfs_read_data(zv, buf, 0, block_size, NULL, NULL);
-		mdlen = 8; // just to pass condition at the end of this fn
+		err = uzfs_read_data(zv, buf, 0, block_size, &md);
+		if (err == 0 && md == NULL) {
+			printf("no meta data returned\n");
+			return (1);
+		}
+	} else {
+		err = uzfs_read_data(zv, buf, 0, block_size, NULL);
 	}
 
-	if (err != 0)
-		printf("read error.. %d %p\n", err, md);
+	if (err != 0) {
+		printf("read error.. %d\n", err);
+		return (1);
+	}
 
 	if (md != NULL)
-		io_num = *(uint64_t *)md;
+		io_num = md->metadata.io_num;
 	else
 		io_num = 0;
 
 	if (silent == 0)
-		printf("d:r:%d %d m:r:%lu %lu l:%lu\n", buf[0], verify, io_num,
-		    metaverify, mdlen);
+		printf("d:r:%d %d m:r:%lu %lu\n", buf[0], verify, io_num,
+		    metaverify);
 
 	if (buf[0] != verify)
 		return (1);
 
-	if (md != NULL)
-		for (i = 0; i < mdlen; i += 8)
-			if (md[i/8] != io_num)
-				return (1);
+	if (md != NULL) {
+		if (md->next != NULL)
+			return (1);
+		if (md->metadata.io_num != io_num)
+			return (1);
+		while (md == NULL) {
+			md_tmp = md->next;
+			kmem_free(md, sizeof (*md));
+			md->next = md_tmp;
+		}
+	}
 	return (0);
 }
 
@@ -71,6 +79,7 @@ write_fn(void *zv, char *buf, int block_size)
 	int err, nometa;
 	static uint64_t io_num;
 	uint64_t txg1, txg2;
+	blk_metadata_t md;
 
 	io_num = uzfs_random(100);
 	if (io_num == 0)
@@ -87,8 +96,9 @@ write_fn(void *zv, char *buf, int block_size)
 
 	txg1 = uzfs_synced_txg(zv);
 
+	md.io_num = io_num;
 	err = uzfs_write_data(zv, buf, 0, block_size,
-	    (nometa == 1 ? NULL : &io_num), B_FALSE);
+	    (nometa == 1 ? NULL : &md), B_FALSE);
 	if (err != 0)
 		printf("IO error\n");
 

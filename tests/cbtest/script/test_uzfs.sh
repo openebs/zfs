@@ -25,7 +25,8 @@ ZFS="$SRC_PATH/cmd/zfs/zfs"
 ZDB="$SRC_PATH/cmd/zdb/zdb"
 TGT="$SRC_PATH/cmd/zrepl/zrepl start -t 127.0.0.1"
 TGT_IP="127.0.0.1"
-GTEST="$SRC_PATH/tests/cbtest/gtest/test_uzfs"
+GTEST_UZFS="$SRC_PATH/tests/cbtest/gtest/test_uzfs"
+GTEST_ZREPL_PROT="$SRC_PATH/tests/cbtest/gtest/test_zrepl_prot"
 ZTEST="$SRC_PATH/cmd/ztest/ztest"
 UZFS_TEST="$SRC_PATH/cmd/uzfs_test/uzfs_test"
 UZFS_TEST_SYNC_SH="$SRC_PATH/cmd/uzfs_test/uzfs_test_sync.sh"
@@ -566,14 +567,15 @@ test_raidz_pool()
 
 test_fio()
 {
+	[ -z "$FIO_SRCDIR" ] && log_fail "FIO_SRCDIR must be defined"
 	init_test
 	sleep 10
 
 	log_must $ZPOOL create -f $SRCPOOL \
 	    -o cachefile="$TMPDIR/zpool_$SRCPOOL.cache" \
 	    "$TMPDIR/test_disk1.img"
-	log_must $ZFS create -sV $VOLSIZE $SRCPOOL/vol1
-	log_must $ZFS create -sV $VOLSIZE $SRCPOOL/vol2
+	log_must $ZFS create -sV $VOLSIZE -o volblocksize=4k $SRCPOOL/vol1
+	log_must $ZFS create -sV $VOLSIZE -o volblocksize=4k $SRCPOOL/vol2
 
 	cat >$TMPDIR/test.fio <<EOF
 [global]
@@ -834,16 +836,17 @@ run_pool_test()
 
 run_zrepl_test()
 {
-  log_must run_zrepl_uzfs_test log 4096 disabled
-  #log_must run_zrepl_uzfs_test log 4096 always
-  #log_must run_zrepl_uzfs_test log 4096 standard
+	log_must run_zrepl_uzfs_test log 4096 disabled
+	#log_must run_zrepl_uzfs_test log 4096 always
+	#log_must run_zrepl_uzfs_test log 4096 standard
 }
 
 run_zvol_test()
 {
 	log_must run_uzfs_test
 	log_must run_dmu_test
-	log_must $GTEST
+	log_must $GTEST_UZFS
+	log_must $GTEST_ZREPL_PROT
 	log_must $ZTEST
 }
 

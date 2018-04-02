@@ -18,6 +18,7 @@ char *tgt_port = "6060";
 
 struct data_io {
 	zvol_io_hdr_t hdr;
+	struct zvol_io_rw_hdr rw_hdr;
 	char buf[0];
 };
 
@@ -57,6 +58,7 @@ reader_thread(void *arg)
 	int write_ack_cnt = 0;
 	int read_ack_cnt = 0;
 	zvol_io_hdr_t *hdr;
+	struct zvol_io_rw_hdr read_hdr;
 	worker_args_t *warg = (worker_args_t *)arg;
 
 	mtx = warg->mtx;
@@ -86,13 +88,20 @@ reader_thread(void *arg)
 		}
 
 		if (hdr->opcode == ZVOL_OPCODE_READ) {
-			read_ack_cnt++;
-
-			int nbytes = hdr->len;
+			int nbytes;
 			char *p = buf;
+
+			read_ack_cnt++;
+			count = read(sfd, &read_hdr, sizeof (read_hdr));
+			if (count != sizeof (read_hdr)) {
+				printf("Meta data header read error\n");
+				break;
+			}
+			nbytes = read_hdr.len;
+
 			while (nbytes) {
 				count = read(sfd, (void *)p, nbytes);
-				if (count == -1) {
+				if (count < 0) {
 					printf("\n");
 					printf("Read error in reader_thread "
 					    "reading data\n");
@@ -170,10 +179,13 @@ writer_thread(void *arg)
 		io->hdr.version = REPLICA_VERSION;
 		io->hdr.opcode = ZVOL_OPCODE_WRITE;
 		io->hdr.io_seq = i;
-		io->hdr.len    = warg->io_block_size;
+		io->hdr.len = sizeof (struct zvol_io_rw_hdr) +
+		    warg->io_block_size;
 		io->hdr.status = 0;
 		io->hdr.flags = 0;
 		io->hdr.offset = nbytes;
+		io->rw_hdr.len = warg->io_block_size;
+		io->rw_hdr.io_num = i;
 
 		int bytes = sizeof (struct data_io) + warg->io_block_size;
 		char *p = (char *)io;

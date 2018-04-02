@@ -22,22 +22,34 @@
 #ifndef	_UZFS_IO_H
 #define	_UZFS_IO_H
 
+#include <sys/zil.h>
+
+struct metadata_desc;
+
+/*
+ * This describes a chunk of data associated with given meta data info.
+ */
+typedef struct metadata_desc {
+	struct metadata_desc *next; /* next entry in list ordered by offset */
+	size_t	len;	/* length of the chunk of data */
+	blk_metadata_t	metadata;
+} metadata_desc_t;
+
 /*
  * writes metadata 'md' to zil records
  * is_rebuild: if IO is from target then it should be set to FALSE
  *		else it should be set to TRUE (in case of rebuild IO)
  */
-extern int uzfs_write_data(void *zv, char *buf, uint64_t offset, uint64_t len,
-    void *md, boolean_t is_rebuild);
+int uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
+    blk_metadata_t *metadata, boolean_t is_rebuild);
 
 /*
- * calculates length required to store metadata for the data that it reads, and
- * reads metadata and assigns to 'md' and its length to 'mdlen'
+ * reads data and metadata. Meta data is a list which must be freed by caller.
  */
-extern int uzfs_read_data(void *zv, char *buf, uint64_t offset, uint64_t len,
-    void *md, uint64_t *mdlen);
+int uzfs_read_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
+    metadata_desc_t **md);
 
-extern void uzfs_flush_data(void *zv);
+extern void uzfs_flush_data(zvol_state_t *zv);
 
 /*
  * API to set/get rebuilding status
@@ -47,18 +59,19 @@ extern void uzfs_flush_data(void *zv);
  * flag set in uzfs_write_data, it will be checked with incoming_io_tree and
  * only non-overlapping part from IO will be written.
  */
-extern void uzfs_zvol_set_rebuild_status(void *zv, int status);
-extern int uzfs_zvol_get_rebuild_status(void *zv);
+extern void uzfs_zvol_set_rebuild_status(zvol_state_t *zv,
+    zvol_rebuild_status_t status);
+extern zvol_rebuild_status_t uzfs_zvol_get_rebuild_status(zvol_state_t *zv);
 
 /*
  * API to set/get zvol status
  */
-extern void uzfs_zvol_set_status(void *zv, int status);
-extern int uzfs_zvol_get_status(void *zv);
+extern void uzfs_zvol_set_status(zvol_state_t *zv, zvol_status_t status);
+extern zvol_status_t uzfs_zvol_get_status(zvol_state_t *zv);
 
 /*
  * API to read metadata
  */
-extern int uzfs_read_metadata(void *zv, char *buf, uint64_t offset,
+extern int uzfs_read_metadata(zvol_state_t *zv, char *buf, uint64_t offset,
     uint64_t len, uint64_t *r);
 #endif

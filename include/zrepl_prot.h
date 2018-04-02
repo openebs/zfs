@@ -70,14 +70,17 @@ typedef enum zvol_op_status zvol_op_status_t;
 /*
  * Future protocol versions need to respect that the first field must be
  * 2-byte version number. The rest of struct is version dependent.
- * Version number is regarded only in handshake message. For rest of the ops
- * the version number from handshake message is assumed.
  */
 struct zvol_io_hdr {
 	uint16_t	version;
 	zvol_op_code_t	opcode;
 	uint64_t	io_seq;
+	/* only used for read/write */
 	uint64_t	offset;
+	/*
+	 * Length of data in payload.
+	 * (for read/write that includes size of io headers with meta data).
+	 */
 	uint64_t	len;
 	uint64_t	checkpointed_io_seq;
 	uint8_t 	flags;
@@ -86,6 +89,10 @@ struct zvol_io_hdr {
 
 typedef struct zvol_io_hdr zvol_io_hdr_t;
 
+/*
+ * Payload data send in response to handshake on control connection. It tells
+ * IP, port where replica listens for data connection to zvol.
+ */
 struct mgmt_ack {
 	uint16_t port;
 	char	ip[MAX_IP_LEN];
@@ -93,6 +100,22 @@ struct mgmt_ack {
 } __attribute__((packed));
 
 typedef struct mgmt_ack mgmt_ack_t;
+
+/*
+ * Describes chunk of data following this header.
+ *
+ * The length in zvol_io_hdr designates the length of the whole payload
+ * including other headers in the payload itself. The length in this
+ * header designates the lenght of data chunk following this header.
+ *
+ * ---------------------------------------------------------------------
+ * | zvol_io_hdr | zvol_io_rw_hdr | .. data .. | zvol_io_rw_hdr | .. data ..
+ * ---------------------------------------------------------------------
+ */
+struct zvol_io_rw_hdr {
+	uint64_t	io_num;
+	uint64_t	len;
+} __attribute__((packed));
 
 #ifdef	__cplusplus
 }

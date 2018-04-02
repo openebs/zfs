@@ -27,6 +27,7 @@
 #include <sys/dsl_destroy.h>
 #include <sys/dmu_tx.h>
 #include <uzfs_io.h>
+#include <uzfs_mgmt.h>
 #include <uzfs_rebuilding.h>
 
 #define	ADD_TO_IO_CHUNK_LIST(list, e_offset, e_len, count)		\
@@ -58,11 +59,11 @@ iszero(blk_metadata_t *md)
 }
 
 #define	EXECUTE_DIFF_CALLBACK(last_lun_offset, diff_count, buf, 	\
-    last_index, arg, last_md, zv, func)					\
+    last_index, arg, last_md, zv, func, ret)				\
 		do {							\
-			func(last_lun_offset, diff_count * 		\
+			ret = func(last_lun_offset, diff_count * 	\
 			    zv->zv_metavolblocksize, (blk_metadata_t *) \
-			    (buf + last_index), zv->zv_objset, arg);	\
+			    (buf + last_index), zv, arg);		\
 			diff_count = 0;					\
 			last_index = 0;					\
 			last_md = NULL;					\
@@ -70,22 +71,16 @@ iszero(blk_metadata_t *md)
 		} while (0)
 
 int
-get_metadata_snapshot_info(zvol_state_t *zv, blk_metadata_t *md,
-    zvol_state_t **snap_zv)
+get_snapshot_zv(zvol_state_t *zv, char *snap_name, zvol_state_t **snap_zv)
 {
-	char *snap_name, *dataset;
+	char *dataset;
 	int ret = 0;
-	zvol_state_t *s_zv;
-	objset_t *s_obj;
 
-	dataset = kmem_asprintf("%s@%s%lu", zv->zv_name,
-	    IO_DIFF_SNAPNAME, md->io_num);
+	dataset = kmem_asprintf("%s@%s", strchr(zv->zv_name, '/') + 1,
+	    snap_name);
 
-	ret = dmu_objset_own(dataset, DMU_OST_ANY, B_TRUE, snap_zv, &s_obj);
+	ret = uzfs_open_dataset(zv->zv_spa, dataset, snap_zv);
 	if (ret == ENOENT) {
-		snap_name = kmem_asprintf("%s%llu", IO_DIFF_SNAPNAME,
-		    md->io_num);
-
 		ret = dmu_objset_snapshot_one(zv->zv_name, snap_name);
 		if (ret) {
 			printf("Failed to create snapshot for %s\n",
@@ -95,9 +90,7 @@ get_metadata_snapshot_info(zvol_state_t *zv, blk_metadata_t *md,
 			return (ret);
 		}
 
-		strfree(snap_name);
-		ret = dmu_objset_own(dataset, DMU_OST_ANY, B_TRUE, snap_zv,
-		    &s_obj);
+		ret = uzfs_open_dataset(zv->zv_spa, dataset, snap_zv);
 	}
 
 	if (ret != 0) {
@@ -106,38 +99,31 @@ get_metadata_snapshot_info(zvol_state_t *zv, blk_metadata_t *md,
 		return (ret);
 	}
 
-	s_zv = umem_alloc(sizeof (*s_zv), KM_SLEEP);
-	memcpy(s_zv, zv, sizeof (zvol_state_t));
-	s_zv->zv_objset = s_obj;
-	*snap_zv = s_zv;
-
 	strfree(dataset);
 	return (ret);
 }
 
 void
-destroy_metadata_snapshot(zvol_state_t *zv, blk_metadata_t *md)
+destroy_snapshot_zv(zvol_state_t *zv, char *snap_name)
 {
 	char *dataset;
 
-	dataset = kmem_asprintf("%s@%s%lu", zv->zv_name,
-	    IO_DIFF_SNAPNAME, md->io_num);
+	dataset = kmem_asprintf("%s@%s", zv->zv_name, snap_name);
 	(void) dsl_destroy_snapshot(dataset, B_FALSE);
 	strfree(dataset);
 }
 
 int
 uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *low,
-    uzfs_get_io_diff_cb_t *func, off_t zvol_offset, size_t zvol_len,
-    void *arg)
+    uzfs_get_io_diff_cb_t *func, off_t lun_offset, size_t lun_len, void *arg)
 {
 	uint64_t blocksize = zv->zv_volmetablocksize;
 	uint64_t metadata_read_chunk_size = 10 * blocksize;
 	uint64_t metaobjectsize = (zv->zv_volsize / zv->zv_metavolblocksize) *
 	    zv->zv_volmetadatasize;
 	uint64_t metadatasize = zv->zv_volmetadatasize;
-	char *buf;
-	uint64_t lun_offset, i, read;
+	char *buf, *snap_name;
+	uint64_t i, read;
 	uint64_t offset, len, end;
 	int ret = 0;
 	int diff_count = 0, last_index = 0;
@@ -146,19 +132,23 @@ uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *low,
 	zvol_state_t *snap_zv;
 	metaobj_blk_offset_t snap_metablk;
 
-	if (!func || (zvol_offset + zvol_len) > zv->zv_volsize)
+	if (!func || (lun_offset + lun_len) > zv->zv_volsize)
 		return (EINVAL);
 
-	get_zv_metaobj_block_details(&snap_metablk, zv, zvol_offset, zvol_len);
+	get_zv_metaobj_block_details(&snap_metablk, zv, lun_offset, lun_len);
 	offset = snap_metablk.m_offset;
 	end = snap_metablk.m_offset + snap_metablk.m_len;
+
 	if (end > metaobjectsize)
 		end = metaobjectsize;
 
-	ret = get_metadata_snapshot_info(zv, low, &snap_zv);
+	snap_name = kmem_asprintf("%s%llu", IO_DIFF_SNAPNAME, low->io_num);
+
+	ret = get_snapshot_zv(zv, snap_name, &snap_zv);
 	if (ret != 0) {
 		printf("failed to get snapshot info for %s io_num:%lu\n",
 		    zv->zv_name, low->io_num);
+		strfree(snap_name);
 		return (ret);
 	}
 
@@ -167,7 +157,7 @@ uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *low,
 	buf = umem_alloc(metadata_read_chunk_size, KM_SLEEP);
 	len = metadata_read_chunk_size;
 
-	for (; offset < end; offset += len) {
+	for (; offset < end && !ret; offset += len) {
 		read = 0;
 		len = metadata_read_chunk_size;
 
@@ -180,27 +170,40 @@ uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *low,
 			break;
 
 		lun_offset = (offset / metadatasize) * zv->zv_metavolblocksize;
-		for (i = 0; i < len; i += sizeof (blk_metadata_t)) {
+		for (i = 0; i < len && !ret; i += sizeof (blk_metadata_t)) {
 			if (!iszero((blk_metadata_t *)(buf+i)) &&
 			    (compare_blk_metadata((blk_metadata_t *)(buf + i),
 			    low) > 0)) {
+				/*
+				 * We will keep track of last lun_offset having
+				 * metadata lesser than incoming_metadata and
+				 * join adjacent chunk with the same on_disk
+				 * io_number.
+				 */
 				if (diff_count == 0) {
 					last_lun_offset = lun_offset;
 					last_md = (blk_metadata_t *)(buf+i);
 					last_index = i;
 				}
+
+				// Increase diff_count if on_disk io number is
+				// same as last one.
 				diff_count++;
-				if (last_md != NULL &&
-				    compare_blk_metadata((blk_metadata_t *)
+
+				if (compare_blk_metadata((blk_metadata_t *)
 				    (buf + i), last_md) != 0) {
+					/*
+					 * Execute callback function with last
+					 * compared metadata and diff_count
+					 */
 					EXECUTE_DIFF_CALLBACK(last_lun_offset,
 					    diff_count, buf, last_index, arg,
-					    last_md, snap_zv, func);
+					    last_md, snap_zv, func, ret);
 				}
 			} else if (diff_count) {
 				EXECUTE_DIFF_CALLBACK(last_lun_offset,
 				    diff_count, buf, last_index, arg, last_md,
-				    snap_zv, func);
+				    snap_zv, func, ret);
 			}
 
 			lun_offset += zv->zv_metavolblocksize;
@@ -208,32 +211,32 @@ uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *low,
 
 		if (diff_count) {
 			EXECUTE_DIFF_CALLBACK(last_lun_offset, diff_count, buf,
-			    last_index, arg, last_md, snap_zv, func);
+			    last_index, arg, last_md, snap_zv, func, ret);
 		}
 	}
 
-	dmu_objset_disown(snap_zv->zv_objset, &snap_zv);
-	umem_free(snap_zv, sizeof (*snap_zv));
+	uzfs_close_dataset(snap_zv);
 
 	/*
 	 * TODO: if we failed to destroy snapshot here then
 	 * this should be handled separately from application.
 	 */
 	if (end == metaobjectsize)
-		destroy_metadata_snapshot(zv, low);
+		destroy_snapshot_zv(zv, snap_name);
 
 	umem_free(buf, metadata_read_chunk_size);
+	strfree(snap_name);
 	return (ret);
 }
 
 int
-uzfs_search_nonoverlapping_io(zvol_state_t *zv, uint64_t offset, uint64_t len,
-    blk_metadata_t *metadata, void **list)
+uzfs_get_nonoverlapping_ondisk_blks(zvol_state_t *zv, uint64_t offset,
+    uint64_t len, blk_metadata_t *incoming_md, void **list)
 {
-	char *rd_metadata_buf;
+	char *ondisk_metadata_buf;
 	uint64_t rd_rlen;
-	metaobj_blk_offset_t rd_metablk;
-	blk_metadata_t *rd_metadata;
+	metaobj_blk_offset_t ondisk_metablk;
+	blk_metadata_t *ondisk_md;
 	int diff_count = 0;
 	int count = 0;
 	int ret = 0;
@@ -243,12 +246,12 @@ uzfs_search_nonoverlapping_io(zvol_state_t *zv, uint64_t offset, uint64_t len,
 	uint64_t metavolblocksize = zv->zv_metavolblocksize;
 	uint64_t metadatasize = zv->zv_volmetadatasize;
 
-	get_zv_metaobj_block_details(&rd_metablk, zv, offset, len);
-	rd_metadata_buf = umem_alloc(rd_metablk.m_len, UMEM_NOFAIL);
+	get_zv_metaobj_block_details(&ondisk_metablk, zv, offset, len);
+	ondisk_metadata_buf = umem_alloc(ondisk_metablk.m_len, UMEM_NOFAIL);
 
-	ret = uzfs_read_metadata(zv, rd_metadata_buf, rd_metablk.m_offset,
-	    rd_metablk.m_len, &rd_rlen);
-	if (ret || rd_rlen != rd_metablk.m_len) {
+	ret = uzfs_read_metadata(zv, ondisk_metadata_buf,
+	    ondisk_metablk.m_offset, ondisk_metablk.m_len, &rd_rlen);
+	if (ret || rd_rlen != ondisk_metablk.m_len) {
 		printf("failed to read metadata\n");
 		goto exit;
 	}
@@ -257,25 +260,19 @@ uzfs_search_nonoverlapping_io(zvol_state_t *zv, uint64_t offset, uint64_t len,
 	list_create(chunk_list, sizeof (uzfs_io_chunk_list_t),
 	    offsetof(uzfs_io_chunk_list_t, link));
 
-	for (i = 0; i < rd_metablk.m_len; i += sizeof (blk_metadata_t)) {
-		rd_metadata = (blk_metadata_t *)(rd_metadata_buf + i);
-		lun_offset = ((rd_metablk.m_offset + i) * metavolblocksize) /
-		    metadatasize;
-		ret = compare_blk_metadata(rd_metadata, metadata);
+	for (i = 0; i < ondisk_metablk.m_len; i += sizeof (blk_metadata_t)) {
+		ondisk_md = (blk_metadata_t *)(ondisk_metadata_buf + i);
+		lun_offset = ((ondisk_metablk.m_offset + i) *
+		    metavolblocksize) / metadatasize;
+		ret = compare_blk_metadata(ondisk_md, incoming_md);
 		if (ret == -1) {
-			// old io number < new io number
-			if (diff_count == 0) {
+			// on_disk io number < incoming io number
+			if (diff_count == 0)
 				last_lun_offset = lun_offset;
-			}
-			diff_count++;
-		} else if (!ret) {
-			// old io number == new io number
-			if (diff_count == 0) {
-				last_lun_offset = lun_offset;
-			}
+
 			diff_count++;
 		} else {
-			// old io number > new io number
+			// on_disk io number >= incoming io number
 			if (diff_count != 0) {
 				ADD_TO_IO_CHUNK_LIST(chunk_list,
 				    last_lun_offset, diff_count *
@@ -290,7 +287,7 @@ uzfs_search_nonoverlapping_io(zvol_state_t *zv, uint64_t offset, uint64_t len,
 		    diff_count * metavolblocksize, count);
 
 exit:
-	umem_free(rd_metadata_buf, rd_metablk.m_len);
+	umem_free(ondisk_metadata_buf, ondisk_metablk.m_len);
 	*list = chunk_list;
 	return (count);
 }

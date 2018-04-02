@@ -93,6 +93,7 @@
 #include <sys/zvol.h>
 #else
 #include <libuzfs.h>
+#include <uzfs_mgmt.h>
 #include <sys/uzfs_zvol.h>
 #endif
 
@@ -319,6 +320,11 @@ zvol_create_cb(objset_t *os, void *arg, cred_t *cr, dmu_tx_t *tx)
 
 	error = zap_update(os, ZVOL_ZAP_OBJ, "size", 8, 1, &volsize, tx);
 	ASSERT(error == 0);
+
+#if !defined(_KERNEL)
+	VERIFY(uzfs_zvol_create_meta(os, volblocksize, volblocksize,
+	    volblocksize, tx) == 0);
+#endif
 }
 
 /*

@@ -40,12 +40,13 @@ int uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *base_metadata,
     uzfs_get_io_diff_cb_t *cb_func, off_t offset, size_t len, void *arg);
 
 /*
- * uzfs_search_nonoverlapping_io will check on_disk metadata with w_metadata and
- * will populate list with non-overlapping segment(offset,len).
- * IO's will be compared by meta_vol_block_size. If on_disk metadata is greater
- * than w_metadata then that part of IO's will be discarded else it will be
- * added to list.
+ * uzfs_get_nonoverlapping_ondisk_blks will check on_disk metadata with
+ * incoming metadata and will populate list with non-overlapping
+ * segment(offset,len).
+ * Segment will be compared by meta_vol_block_size. If on_disk metadata
+ * is greater than incoming metadata then that segment will be discarded
+ * else it will be added to list.
  */
-int uzfs_search_nonoverlapping_io(zvol_state_t *zv, uint64_t offset,
-    uint64_t len, blk_metadata_t *w_metadata, void **list);
+int uzfs_get_nonoverlapping_ondisk_blks(zvol_state_t *zv, uint64_t offset,
+    uint64_t len, blk_metadata_t *incoming_md, void **list);
 #endif

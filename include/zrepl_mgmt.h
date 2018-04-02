@@ -27,7 +27,7 @@
 
 #include <pthread.h>
 #include <sys/queue.h>
-#include <sys/uzfs_zvol.h>
+#include <uzfs_io.h>
 #include "zrepl_prot.h"
 
 #ifdef	__cplusplus
@@ -96,6 +96,7 @@ typedef struct zvol_io_cmd_s {
 	zvol_io_hdr_t 	hdr;
 	void		*zv;
 	void		*buf;
+	metadata_desc_t	*metadata_desc;
 	int		conn;
 } zvol_io_cmd_t;
 

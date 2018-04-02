@@ -102,8 +102,6 @@ replica_reader_thread(void *arg)
 	uint64_t block_size = warg->io_block_size;
 	uint64_t len1 = 0, len2 = 0;
 	uint64_t mismatch_count = 0;
-	uint64_t mdlen1, mdlen2;
-	void *md1, *md2;
 
 	for (j = 0; j < 15; j++) {
 		buf1[j] = (char *)umem_alloc(sizeof (char)*(j+1)* block_size,
@@ -131,14 +129,12 @@ replica_reader_thread(void *arg)
 		if ((offset + len) > end)
 			len = end - offset;
 
-		err = uzfs_read_data(zvol1, buf1[idx], offset,
-		    len, &md1, &mdlen1);
+		err = uzfs_read_data(zvol1, buf1[idx], offset, len, NULL);
 		if (err != 0)
 			printf("IO error at offset: %lu len: %lu\n", offset,
 			    len);
 
-		err = uzfs_read_data(zvol2, buf2[idx], offset,
-		    len, &md2, &mdlen2);
+		err = uzfs_read_data(zvol2, buf2[idx], offset, len, NULL);
 		if (err != 0)
 			printf("IO error at offset: %lu len: %lu\n", offset,
 			    len);
@@ -146,10 +142,6 @@ replica_reader_thread(void *arg)
 		uint64_t mismatch;
 		mismatch = verify_replica_data(buf1[idx], buf2[idx], len);
 		mismatch_count += mismatch;
-		if (mdlen1 != mdlen2) {
-			printf("this should not happen\n");
-			exit(3);
-		}
 
 		if (mismatch) {
 			printf("verification error at %lu, mismatch:%lu\n",
@@ -181,7 +173,7 @@ replica_reader_thread(void *arg)
 
 static int
 uzfs_test_meta_diff_traverse_cb(off_t offset, size_t len,
-    blk_metadata_t *md, objset_t *snap_obj, void *arg)
+    blk_metadata_t *md, zvol_state_t *snap_zv, void *arg)
 {
 	uzfs_rebuild_data_t *r_data = (uzfs_rebuild_data_t *)arg;
 	uzfs_io_chunk_list_t *io;
@@ -193,9 +185,7 @@ uzfs_test_meta_diff_traverse_cb(off_t offset, size_t len,
 	io->io_number = md->io_num;
 	io->buf = umem_alloc(len, UMEM_NOFAIL);
 
-	err = dmu_read(snap_obj, ZVOL_OBJ, offset, len,
-	    io->buf, 0);
-
+	err = uzfs_read_data(snap_zv, io->buf, offset, len, NULL);
 	if (err) {
 		umem_free(io, sizeof (*io));
 		umem_free(io->buf, len);
@@ -360,7 +350,7 @@ rebuild_replica_thread(void *arg)
 	mutex_exit(&r_data.mtx);
 
 	printf("rebuilding finished.. written:%lu, actual written:%lu\n",
-	    diff_data, to_zvol->rebuild_data.rebuild_bytes);
+	    diff_data, to_zvol->rebuild_info.rebuild_bytes);
 	umem_free(io_list, sizeof (*io_list));
 	mutex_destroy(&r_data.mtx);
 	cv_destroy(&r_data.cv);
@@ -444,7 +434,7 @@ replica_writer_thread(void *arg)
 		populate_string(buf[idx], (idx + 1) * block_size);
 
 		err = uzfs_write_data(zvol1, buf[idx], offset,
-		    (idx + 1) * block_size, &io_num, B_FALSE);
+		    (idx + 1) * block_size, (blk_metadata_t *)&io_num, B_FALSE);
 		if (err != 0)
 			printf("IO error at offset: %lu len: %lu\n", offset,
 			    (idx + 1) * block_size);
@@ -461,7 +451,8 @@ replica_writer_thread(void *arg)
 
 		if (replica_active) {
 			err = uzfs_write_data(zvol2, buf[idx], offset,
-			    (idx + 1) * block_size, &io_num, B_FALSE);
+			    (idx + 1) * block_size, (blk_metadata_t *)&io_num,
+			    B_FALSE);
 			if (err != 0)
 				printf("IO error at offset: %lu len: %lu\n",
 				    offset, (idx + 1) * block_size);

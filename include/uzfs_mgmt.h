@@ -31,6 +31,8 @@ extern int uzfs_open_pool(char *name, spa_t **spa);
 extern int uzfs_vdev_add(spa_t *spa, char *path, int ashift, int log);
 extern int uzfs_create_dataset(spa_t *spa, char *ds, uint64_t vol_size,
     uint64_t block_size, zvol_state_t **zv);
+extern int uzfs_zvol_create_meta(objset_t *os, uint64_t block_size,
+    uint64_t meta_block_size, uint64_t meta_vol_block_size, dmu_tx_t *tx);
 extern int uzfs_open_dataset(spa_t *spa, const char *ds, zvol_state_t **zv);
 extern int uzfs_zvol_create_cb(const char *ds_name, void *n);
 extern int uzfs_zvol_destroy_cb(const char *ds_name, void *n);

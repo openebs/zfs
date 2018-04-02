@@ -449,6 +449,8 @@ TEST_F(ZreplHandshakeTest, HandshakeOk) {
 	rc = read(m_control_fd, &mgmt_ack, sizeof (mgmt_ack));
 	ASSERT_EQ(rc, sizeof (mgmt_ack));
 	EXPECT_STREQ(mgmt_ack.volname, m_zvol->name.c_str());
+	EXPECT_NE(mgmt_ack.pool_guid, 0);
+	EXPECT_NE(mgmt_ack.zvol_guid, 0);
 }
 
 TEST_F(ZreplHandshakeTest, HandshakeWrongVersion) {

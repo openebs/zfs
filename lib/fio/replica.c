@@ -393,8 +393,10 @@ static int get_data_endpoint(struct thread_data *td, const char *volname,
 		pthread_mutex_unlock(&mgmt_mtx);
 		return (1);
 	}
-	log_info("repl: replica server: %s:%d, volume name %s\n",
-	    mgmt_ack.ip, mgmt_ack.port, mgmt_ack.volname);
+	log_info("repl: replica server: %s:%d, volume name %s, "
+	    "pool GUID: %lx, zvol GUID: %lx\n",
+	    mgmt_ack.ip, mgmt_ack.port, mgmt_ack.volname,
+	    mgmt_ack.pool_guid, mgmt_ack.zvol_guid);
 
 	*port = mgmt_ack.port;
 	strncpy(host, mgmt_ack.ip, 256);

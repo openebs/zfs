@@ -559,8 +559,11 @@ uzfs_zvol_mgmt_do_handshake(zvol_io_hdr_t *hdr, int sfd, char *name)
 	}
 
 	if (zinfo != NULL) {
-		uzfs_zvol_get_last_committed_io_no(zinfo->zv,
+		zvol_state_t *zv = zinfo->zv;
+		uzfs_zvol_get_last_committed_io_no(zv,
 		    &hdr->checkpointed_io_seq);
+		mgmt_ack.pool_guid = spa_guid(zv->zv_spa);
+		mgmt_ack.zvol_guid = dmu_objset_fsid_guid(zv->zv_objset);
 		uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
 	}
 

@@ -94,6 +94,8 @@ typedef struct zvol_io_hdr zvol_io_hdr_t;
  * IP, port where replica listens for data connection to zvol.
  */
 struct mgmt_ack {
+	uint64_t pool_guid;
+	uint64_t zvol_guid;
 	uint16_t port;
 	char	ip[MAX_IP_LEN];
 	char	volname[MAX_NAME_LEN];

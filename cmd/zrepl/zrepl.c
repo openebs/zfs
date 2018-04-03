@@ -289,7 +289,7 @@ uzfs_zvol_worker(void *arg)
 	zinfo = zio_cmd->zv;
 	zvol_state = zinfo->zv;
 	/* If zvol hasn't passed rebuild phase we need the metadata */
-	if (zvol_state->zv_rebuild_status == ZVOL_REBUILDING_DONE) {
+	if (ZVOL_IS_REBUILDED(zvol_state)) {
 		metadata_desc = NULL;
 		zio_cmd->metadata_desc = NULL;
 	} else {
@@ -560,8 +560,7 @@ uzfs_zvol_mgmt_do_handshake(zvol_io_hdr_t *hdr, int sfd, char *name)
 
 	if (zinfo != NULL) {
 		zvol_state_t *zv = zinfo->zv;
-
-		uzfs_zvol_get_last_committed_io_no(zinfo,
+		uzfs_zvol_get_last_committed_io_no(zv,
 		    &hdr->checkpointed_io_seq);
 		mgmt_ack.pool_guid = spa_guid(zv->zv_spa);
 		mgmt_ack.zvol_guid = dmu_objset_fsid_guid(zv->zv_objset);

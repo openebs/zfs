@@ -24,7 +24,6 @@
 #include <sys/uzfs_zvol.h>
 #include <sys/stat.h>
 #include <uzfs.h>
-#include <uzfs_mtree.h>
 #include <zrepl_mgmt.h>
 #include <uzfs_mgmt.h>
 #include <uzfs_io.h>
@@ -284,7 +283,7 @@ uzfs_objset_create_cb(objset_t *new_os, void *arg, cred_t *cr, dmu_tx_t *tx)
 
 /* owns objset with name 'ds_name' in pool 'spa' */
 static int
-uzfs_open_dataset_init(const char *ds_name, zvol_state_t **z)
+uzfs_own_dataset(const char *ds_name, zvol_state_t **z)
 {
 	zvol_state_t *zv = NULL;
 	int error = -1;
@@ -309,9 +308,6 @@ uzfs_open_dataset_init(const char *ds_name, zvol_state_t **z)
 
 	zv->zv_spa = spa;
 	zfs_rlock_init(&zv->zv_range_lock);
-	zfs_rlock_init(&zv->zv_mrange_lock);
-	mutex_init(&zv->rebuild_data.io_tree_mtx, NULL, MUTEX_DEFAULT, NULL);
-	uzfs_create_txg_diff_tree((void **)&zv->rebuild_data.incoming_io_tree);
 
 	strlcpy(zv->zv_name, ds_name, MAXNAMELEN);
 
@@ -355,7 +351,6 @@ disown_free:
 free_ret:
 		spa_close(spa, zv);
 		zfs_rlock_destroy(&zv->zv_range_lock);
-		zfs_rlock_destroy(&zv->zv_mrange_lock);
 		kmem_free(zv, sizeof (zvol_state_t));
 		zv = NULL;
 		goto ret;
@@ -391,7 +386,7 @@ uzfs_open_dataset(spa_t *spa, const char *ds_name, zvol_state_t **z)
 		return (error);
 	(void) snprintf(name, sizeof (name), "%s/%s", spa_name(spa), ds_name);
 
-	error = uzfs_open_dataset_init(name, z);
+	error = uzfs_own_dataset(name, z);
 	return (error);
 }
 
@@ -443,7 +438,7 @@ uzfs_zvol_create_cb(const char *ds_name, void *arg)
 
 	printf("ds_name %s\n", ds_name);
 
-	error = uzfs_open_dataset_init(ds_name, &zv);
+	error = uzfs_own_dataset(ds_name, &zv);
 	if (error) {
 		printf("Failed to open dataset: %s\n", ds_name);
 		return (error);
@@ -475,10 +470,7 @@ uzfs_close_dataset(zvol_state_t *zv)
 	zil_close(zv->zv_zilog);
 	dnode_rele(zv->zv_dn, zv);
 	dmu_objset_disown(zv->zv_objset, zv);
-	mutex_destroy(&zv->rebuild_data.io_tree_mtx);
-	uzfs_destroy_txg_diff_tree(zv->rebuild_data.incoming_io_tree);
 	zfs_rlock_destroy(&zv->zv_range_lock);
-	zfs_rlock_destroy(&zv->zv_mrange_lock);
 	spa_close(zv->zv_spa, zv);
 	kmem_free(zv, sizeof (zvol_state_t));
 }

@@ -36,7 +36,7 @@ USER_H = \
 	$(top_srcdir)/include/uzfs_zap.h \
 	$(top_srcdir)/include/uzfs.h \
 	$(top_srcdir)/include/uzfs_task.h \
-	$(top_srcdir)/include/uzfs_mtree.h
+	$(top_srcdir)/include/uzfs_rebuilding.h
 
 EXTRA_DIST = $(COMMON_H) $(KERNEL_H) $(USER_H)
 

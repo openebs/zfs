@@ -322,8 +322,14 @@ zvol_create_cb(objset_t *os, void *arg, cred_t *cr, dmu_tx_t *tx)
 	ASSERT(error == 0);
 
 #if !defined(_KERNEL)
+	/*
+	 * By default we are setting metavolblocksize to 512 bytes
+	 * till we have CLI support for metavolblocksize property.
+	 */
+	uint64_t metavolblocksize = 512;
+
 	VERIFY(uzfs_zvol_create_meta(os, volblocksize, volblocksize,
-	    volblocksize, tx) == 0);
+	    metavolblocksize, tx) == 0);
 #endif
 }
 

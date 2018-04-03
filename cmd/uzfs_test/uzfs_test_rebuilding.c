@@ -20,19 +20,20 @@
  */
 
 #include <sys/zfs_context.h>
-#include <sys/txg.h>
-#include <sys/zil.h>
+#include <sys/spa.h>
 #include <sys/uzfs_zvol.h>
-#include <rte_ring.h>
 #include <uzfs_mgmt.h>
-#include <uzfs_mtree.h>
 #include <uzfs_io.h>
+#include <zrepl_mgmt.h>
+#include <uzfs_zap.h>
+#include <uzfs_rebuilding.h>
 #include <uzfs_test.h>
 
 extern void make_vdev(char *path);
 extern void populate_string(char *buf, uint64_t size);
 
-void *spa1, *spa2, *zvol1, *zvol2;
+spa_t *spa1, *spa2;
+zvol_state_t *zvol1, *zvol2;
 uint32_t f_index = 0;
 
 #define	POOL_NAME	"testpool"
@@ -42,6 +43,7 @@ uint32_t f_index = 0;
 struct rebuilding_info {
 	zvol_state_t *to_zvol;
 	zvol_state_t *from_zvol;
+	uint64_t base_io_num;
 	kmutex_t mtx;
 	kcondvar_t cv;
 	int active;
@@ -58,8 +60,7 @@ typedef struct uzfs_rebuild_data {
 struct rebuilding_data {
 	uzfs_rebuild_data_t *r_data;
 	zvol_state_t *zvol;
-	uint64_t start_txg;
-	uint64_t end_txg;
+	uint64_t base_io;
 };
 
 struct replica_read_data {
@@ -117,6 +118,7 @@ replica_reader_thread(void *arg)
 
 	while (1) {
 		idx = uzfs_random(15);
+		idx = 0;
 		len1 = 0;
 		len2 = 0;
 
@@ -140,9 +142,11 @@ replica_reader_thread(void *arg)
 		uint64_t mismatch;
 		mismatch = verify_replica_data(buf1[idx], buf2[idx], len);
 		mismatch_count += mismatch;
-		if (mismatch)
+
+		if (mismatch) {
 			printf("verification error at %lu, mismatch:%lu\n",
 			    offset, mismatch);
+		}
 
 		iops += (idx + 1);
 		offset += len;
@@ -168,8 +172,8 @@ replica_reader_thread(void *arg)
 }
 
 static int
-uzfs_test_txg_diff_traverse_cb(off_t offset, size_t len,
-    uint64_t blkid, void *arg)
+uzfs_test_meta_diff_traverse_cb(off_t offset, size_t len,
+    blk_metadata_t *md, zvol_state_t *snap_zv, void *arg)
 {
 	uzfs_rebuild_data_t *r_data = (uzfs_rebuild_data_t *)arg;
 	uzfs_io_chunk_list_t *io;
@@ -178,10 +182,10 @@ uzfs_test_txg_diff_traverse_cb(off_t offset, size_t len,
 	io = umem_alloc(sizeof (*io), UMEM_NOFAIL);
 	io->offset = offset;
 	io->len = len;
+	io->io_number = md->io_num;
 	io->buf = umem_alloc(len, UMEM_NOFAIL);
 
-	err = uzfs_read_data(r_data->zvol, io->buf, offset, len, NULL);
-
+	err = uzfs_read_data(snap_zv, io->buf, offset, len, NULL);
 	if (err) {
 		umem_free(io, sizeof (*io));
 		umem_free(io->buf, len);
@@ -197,19 +201,68 @@ done:
 }
 
 void
+check_snapshot(zvol_state_t *zv, blk_metadata_t *md, boolean_t err)
+{
+	objset_t *s_obj;
+	char *dataset;
+	int ret = 0;
+
+	dataset = kmem_asprintf("%s@%s%lu", zv->zv_name,
+	    IO_DIFF_SNAPNAME, md->io_num);
+
+	ret = dmu_objset_own(dataset, DMU_OST_ANY, B_TRUE, zv, &s_obj);
+	if ((ret != 0 && err) ||
+	    (!err && ret == 0)) {
+		printf("ret:%d\n", ret);
+		printf("snapshot %s %s\n", dataset,
+		    (err) ? "should not be removed" : "should be removed");
+		exit(1);
+	}
+
+	if (ret == 0)
+		dmu_objset_disown(s_obj, zv);
+}
+
+void
 fetch_modified_data(void *arg)
 {
 	struct rebuilding_data *repl_data = arg;
 	uzfs_rebuild_data_t *r_data = repl_data->r_data;
 	int err;
+	blk_metadata_t md;
+	off_t offset, end;
+	size_t len;
+	int max_count = 4;
 
 	printf("fetching modified data\n");
+	md.io_num = repl_data->base_io;
 
-	err = uzfs_get_txg_diff(repl_data->zvol, repl_data->start_txg,
-	    repl_data->end_txg, uzfs_test_txg_diff_traverse_cb, r_data);
+	len = r_data->zvol->zv_volsize / max_count;
 
-	if (err)
+	for (offset = 0; offset < r_data->zvol->zv_volsize; ) {
+		end = offset + len;
+		if (end > r_data->zvol->zv_volsize)
+			len = r_data->zvol->zv_volsize - offset;
+
+		err = uzfs_get_io_diff(repl_data->zvol, &md,
+		    uzfs_test_meta_diff_traverse_cb, offset, len,
+		    r_data);
+		if (err)
+			break;
+
+		offset += len;
+		if (offset != r_data->zvol->zv_volsize)
+			check_snapshot(repl_data->zvol, &md, B_TRUE);
+		else
+			break;
+	}
+
+	if (err) {
 		printf("error(%d)... while fetching modified data\n", err);
+		exit(1);
+	}
+
+	check_snapshot(repl_data->zvol, &md, B_FALSE);
 
 	printf("finished fetching modified data\n");
 
@@ -225,7 +278,6 @@ rebuild_replica_thread(void *arg)
 {
 	struct rebuilding_info *r_info = arg;
 	r_info->active = B_TRUE;
-	uint64_t start_txg, end_txg;
 	zvol_state_t *from_zvol = r_info->from_zvol;
 	zvol_state_t *to_zvol = r_info->to_zvol;
 	list_t *io_list;
@@ -235,15 +287,13 @@ rebuild_replica_thread(void *arg)
 	uzfs_io_chunk_list_t *node = NULL;
 	int err = 0;
 	uint64_t diff_data = 0;
-
-	start_txg = 0;
-	txg_wait_synced(spa_get_dsl(to_zvol->zv_spa), 0);
+	uint64_t latest_io;
 
 	uzfs_zvol_set_rebuild_status(to_zvol, ZVOL_REBUILDING_INIT);
 
-	txg_wait_synced(spa_get_dsl(from_zvol->zv_spa), 0);
-	end_txg = spa_last_synced_txg(from_zvol->zv_spa);
-
+	uzfs_zvol_get_last_committed_io_no(from_zvol, &latest_io);
+	printf("io number... healthy replica:%lu degraded replica:%lu\n",
+	    latest_io, r_info->base_io_num);
 	uzfs_zvol_set_rebuild_status(to_zvol, ZVOL_REBUILDING_IN_PROGRESS);
 
 	mutex_enter(&r_info->mtx);
@@ -260,12 +310,9 @@ rebuild_replica_thread(void *arg)
 	mutex_init(&r_data.mtx, NULL, MUTEX_DEFAULT, NULL);
 	cv_init(&r_data.cv, NULL, CV_DEFAULT, NULL);
 
-	repl_data.start_txg = start_txg;
-	repl_data.end_txg = end_txg;
 	repl_data.r_data = &r_data;
+	repl_data.base_io = r_info->base_io_num;
 	repl_data.zvol = from_zvol;
-
-	printf("difference : start(%lu) end(%lu)\n", start_txg, end_txg);
 
 	tid = zk_thread_create(NULL, 0,
 	    (thread_func_t)fetch_modified_data, &repl_data, 0, NULL,
@@ -273,6 +320,8 @@ rebuild_replica_thread(void *arg)
 
 	mutex_enter(&r_data.mtx);
 	while (!r_data.done || (node = list_remove_head(io_list)) != NULL) {
+		blk_metadata_t temp_metadata;
+
 		if (!node) {
 			mutex_exit(&r_data.mtx);
 			// sleep for some time here
@@ -282,8 +331,10 @@ rebuild_replica_thread(void *arg)
 		}
 		mutex_exit(&r_data.mtx);
 
+		temp_metadata.io_num = node->io_number;
+
 		err = uzfs_write_data(to_zvol, node->buf, node->offset,
-		    node->len, NULL, B_TRUE);
+		    node->len, &temp_metadata, B_TRUE);
 		if (err) {
 			printf("IO error during rebuilding offset:%lu,"
 			    "len:%lu\n", node->offset, node->len);
@@ -299,7 +350,7 @@ rebuild_replica_thread(void *arg)
 	mutex_exit(&r_data.mtx);
 
 	printf("rebuilding finished.. written:%lu, actual written:%lu\n",
-	    diff_data, to_zvol->rebuild_data.rebuild_bytes);
+	    diff_data, to_zvol->rebuild_info.rebuild_bytes);
 	umem_free(io_list, sizeof (*io_list));
 	mutex_destroy(&r_data.mtx);
 	cv_destroy(&r_data.cv);
@@ -307,7 +358,7 @@ rebuild_replica_thread(void *arg)
 	uzfs_zvol_set_rebuild_status(to_zvol, ZVOL_REBUILDING_DONE);
 
 	/*
-	 * We finished rebuilding data in degraded zvol so set status to
+	 * Degraded replica has finished rebuilding.. setting status to
 	 * ZVOL_STATUS_HEALTHY
 	 */
 	uzfs_zvol_set_status(to_zvol, ZVOL_STATUS_HEALTHY);
@@ -340,6 +391,7 @@ replica_writer_thread(void *arg)
 	struct rebuilding_info rebuild_info;
 	kthread_t *rebuilding_thread = NULL;
 	uint64_t mismatch_count = 0;
+	uint64_t last_io_num = 0;
 
 	for (j = 0; j < 15; j++)
 		buf[j] = (char *)umem_alloc(sizeof (char)*(j+1)*block_size,
@@ -382,14 +434,25 @@ replica_writer_thread(void *arg)
 		populate_string(buf[idx], (idx + 1) * block_size);
 
 		err = uzfs_write_data(zvol1, buf[idx], offset,
-		    (idx + 1) * block_size, NULL, B_FALSE);
+		    (idx + 1) * block_size, (blk_metadata_t *)&io_num, B_FALSE);
 		if (err != 0)
 			printf("IO error at offset: %lu len: %lu\n", offset,
 			    (idx + 1) * block_size);
 
+		/*
+		 * update ZAP entries for io_number frequently.
+		 */
+		if (!(io_num % 30)) {
+			uzfs_zvol_store_last_committed_io_no(zvol1, io_num);
+			if (replica_active)
+				uzfs_zvol_store_last_committed_io_no(zvol2,
+				    io_num);
+		}
+
 		if (replica_active) {
 			err = uzfs_write_data(zvol2, buf[idx], offset,
-			    (idx + 1) * block_size, NULL, B_FALSE);
+			    (idx + 1) * block_size, (blk_metadata_t *)&io_num,
+			    B_FALSE);
 			if (err != 0)
 				printf("IO error at offset: %lu len: %lu\n",
 				    offset, (idx + 1) * block_size);
@@ -406,7 +469,19 @@ replica_writer_thread(void *arg)
 			replica_active = B_FALSE;
 		} else if (now > replica_start_time && !replica_active) {
 			uzfs_zvol_set_status(zvol2, ZVOL_STATUS_DEGRADED);
+
 			replica_active = B_TRUE;
+			printf("other replica missed %lu bytes during "
+			    "downtime\n", mismatch_count);
+
+			/*
+			 * For testing purpose, we will copy last committed
+			 * io_number from degraded replica to some variable
+			 * and continue to update last_committed_io_number in
+			 * degraded replica.
+			 */
+			uzfs_zvol_get_last_committed_io_no(zvol2, &last_io_num);
+			rebuild_info.base_io_num = last_io_num;
 		} else if (now > replica_rebuild_start_time &&
 		    !rebuilding_started) {
 			mutex_enter(&rebuild_info.mtx);
@@ -433,9 +508,6 @@ replica_writer_thread(void *arg)
 	if (silent == 0)
 		printf("Stopping write.. ios done: %lu\n", iops);
 
-	printf("other replica missed %lu bytes during downtime\n",
-	    mismatch_count);
-
 	mutex_enter(&rebuild_info.mtx);
 	while (rebuild_info.active)
 		cv_wait(&rebuild_info.cv, &rebuild_info.mtx);
@@ -453,7 +525,7 @@ replica_writer_thread(void *arg)
 }
 
 void
-create_and_init_pool(void **spa, void **zvol)
+create_and_init_pool(spa_t **spa, zvol_state_t **zvol)
 {
 	int err;
 	char *pool_name, *file_name, *zvol_name;
@@ -492,84 +564,6 @@ create_and_init_pool(void **spa, void **zvol)
 }
 
 void
-verify_overlaps(void *zv, uint64_t offset, uint64_t len, int num_args, ...)
-{
-	list_t *list, check_list;
-	va_list arg_list;
-	int count, num_chunks;
-	uzfs_io_chunk_list_t *node1, *node2;
-	uzfs_io_chunk_list_t *chunk_io;
-	int i;
-
-	num_chunks = num_args / 2;
-	count = uzfs_search_incoming_io_tree(zv, offset, len, (void **)&list);
-
-	if (count != num_chunks) {
-		printf("argument mismatch\n");
-		exit(1);
-	}
-
-	list_create(&check_list, sizeof (uzfs_io_chunk_list_t),
-	    offsetof(uzfs_io_chunk_list_t, link));
-
-	va_start(arg_list, num_args);
-	for (i = 0; i < num_args; i += 2) {
-		chunk_io = umem_alloc(sizeof (*chunk_io), UMEM_NOFAIL);
-		chunk_io->offset = va_arg(arg_list, int);
-		chunk_io->len = va_arg(arg_list, int);
-		list_insert_tail(&check_list, chunk_io);
-	}
-
-	va_end(arg_list);
-
-	while ((node1 = list_remove_head(list))) {
-		for (node2 = list_head(&check_list); node2 != NULL;
-		    node2 = list_next(&check_list, node2)) {
-			if (node2->offset == node1->offset &&
-			    node2->len == node1->len) {
-				list_remove(&check_list, node2);
-				umem_free(node2, sizeof (*node2));
-				break;
-			}
-		}
-		umem_free(node1, sizeof (*node1));
-	}
-
-	VERIFY(list_is_empty(list));
-	VERIFY(list_is_empty(&check_list));
-
-	list_destroy(list);
-	list_destroy(&check_list);
-	umem_free(list, sizeof (*list));
-}
-
-void
-uzfs_test_check_overlaps(void *zv)
-{
-	uzfs_add_to_incoming_io_tree(zv, 100, 150);
-	uzfs_add_to_incoming_io_tree(zv, 300, 450);
-	uzfs_add_to_incoming_io_tree(zv, 800, 100);
-
-	// offset == entry offset
-	verify_overlaps(zv, 100, 120, 0);
-	verify_overlaps(zv, 100, 150, 0);
-	verify_overlaps(zv, 100, 160, 2, 250, 10);
-	verify_overlaps(zv, 100, 800, 4, 250, 50, 750, 50);
-
-	// offset > entry offset
-	verify_overlaps(zv, 120, 130, 0);
-	verify_overlaps(zv, 120, 100, 0);
-	verify_overlaps(zv, 120, 150, 2, 250, 20);
-	verify_overlaps(zv, 120, 300, 2, 250, 50);
-
-	// offset < entry offset
-	verify_overlaps(zv, 50, 60, 2, 50, 50);
-	verify_overlaps(zv, 50, 100, 2, 50, 50);
-	verify_overlaps(zv, 50, 220, 4, 50, 50, 250, 20);
-	verify_overlaps(zv, 50, 1000, 8, 50, 50, 250, 50, 750, 50, 900, 150);
-}
-
-void
 uzfs_rebuild_test(void *arg)
 {
 	uzfs_test_info_t *test_info = (uzfs_test_info_t *)arg;
@@ -579,7 +573,7 @@ uzfs_rebuild_test(void *arg)
 	kthread_t *writer, *reader;
 	worker_args_t writer_args, **reader_args;
 	int reader_count;
-	int n = 0, check = 0;
+	int n = 0;
 
 	printf("starting %s\n", test_info->name);
 
@@ -658,13 +652,6 @@ uzfs_rebuild_test(void *arg)
 
 		cv_destroy(&cv);
 		mutex_destroy(&mtx);
-
-		/*
-		 * This is a small test only to verify most possibilities
-		 * of overlapping IO
-		 */
-		if (!check++)
-			uzfs_test_check_overlaps(zvol1);
 
 		uzfs_close_dataset(zvol1);
 		uzfs_close_dataset(zvol2);

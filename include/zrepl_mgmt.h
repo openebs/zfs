@@ -57,7 +57,7 @@ typedef struct zvol_info_s {
 	/* Logical Unit related fields */
 	zvol_info_state_t	state;
 	char 		name[MAXPATHLEN];
-	void 		*zv;
+	zvol_state_t	*zv;
 	int 		refcnt;
 	int		is_io_ack_sender_created;
 	uint64_t	checkpointed_io_seq;
@@ -107,8 +107,10 @@ extern void uzfs_zinfo_take_refcnt(zvol_info_t *zinfo, int locked);
 extern void uzfs_zinfo_replay_zil_all(void);
 extern int uzfs_zinfo_destroy(const char *ds_name);
 extern void uzfs_zinfo_update_io_seq_for_all_volumes(void);
-extern void uzfs_zvol_get_last_committed_io_no(zvol_info_t *z,
+void uzfs_zvol_get_last_committed_io_no(zvol_state_t *zv,
     uint64_t *io_seq);
+void uzfs_zvol_store_last_committed_io_no(zvol_state_t *zv,
+    uint64_t io_seq);
 extern int create_and_bind(const char *port, int bind_needed);
 
 #define	ZREPL_LOG(fmt, ...)  syslog(LOG_NOTICE,				\

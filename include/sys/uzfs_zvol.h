@@ -49,16 +49,6 @@ typedef struct metaobj_blk_offset {
 } metaobj_blk_offset_t;
 
 /*
- * rebuild related information for zvol
- */
-typedef struct zvol_rebuild_data {
-	/* mutex to synchronize io tree operation */
-	kmutex_t io_tree_mtx;
-	uint64_t rebuild_bytes;
-	avl_tree_t *incoming_io_tree;   /* incoming io tree */
-} zvol_rebuild_data_t;
-
-/*
  * zvol rebuild related state
  */
 typedef enum zvol_rebuild_status {
@@ -76,6 +66,14 @@ typedef enum zvol_status {
 } zvol_status_t;
 
 /*
+ * rebuild related information for zvol
+ */
+typedef struct zvol_rebuild_info {
+	zvol_rebuild_status_t zv_rebuild_status; /* zvol rebuilding status */
+	uint64_t rebuild_bytes;
+} zvol_rebuild_info_t;
+
+/*
  * The in-core state of each volume.
  */
 struct zvol_state {
@@ -86,7 +84,6 @@ struct zvol_state {
 	zilog_t *zv_zilog;		/* ZIL handle */
 	dnode_t *zv_dn;			/* dnode hold */
 	zfs_rlock_t zv_range_lock;	/* range lock */
-	zfs_rlock_t zv_mrange_lock;	/* range lock */
 	spa_t *zv_spa;			/* spa */
 	uint64_t zv_volmetablocksize;	/* meta block size */
 	uint64_t zv_volmetadatasize;	/* volume meta data size */
@@ -96,9 +93,8 @@ struct zvol_state {
 	 * This should not be greater than volblocksize
 	 */
 	uint64_t zv_metavolblocksize;
-	zvol_rebuild_status_t zv_rebuild_status; /* zvol rebuilding status */
 	zvol_status_t zv_status;	/* zvol status */
-	zvol_rebuild_data_t rebuild_data;
+	zvol_rebuild_info_t rebuild_info;
 };
 
 typedef struct zvol_state zvol_state_t;
@@ -106,6 +102,12 @@ typedef struct zvol_state zvol_state_t;
 #define	UZFS_IO_TX_ASSIGN_FAIL	1
 #define	UZFS_IO_READ_FAIL	2
 #define	UZFS_IO_MREAD_FAIL	3
+
+#define	ZVOL_IS_DEGRADED(zv)	(zv->zv_status == ZVOL_STATUS_DEGRADED)
+#define	ZVOL_IS_REBUILDING(zv)	\
+	(zv->rebuild_info.zv_rebuild_status == ZVOL_REBUILDING_IN_PROGRESS)
+#define	ZVOL_IS_REBUILDED(zv)	\
+	(zv->rebuild_info.zv_rebuild_status == ZVOL_REBUILDING_DONE)
 
 extern int zvol_get_data(void *arg, lr_write_t *lr, char *buf, zio_t *zio);
 
@@ -149,11 +151,12 @@ typedef struct uzfs_zvol_blk_phy {
 typedef struct uzfs_io_chunk_list {
 	uint64_t offset;
 	uint64_t len;
+	uint64_t io_number;
 	char *buf;
 	list_node_t link;
 } uzfs_io_chunk_list_t;
 
-typedef int (uzfs_txg_diff_traverse_cb_t)(off_t offset, size_t len,
-    uint64_t blkid, void *arg);
+typedef int (uzfs_get_io_diff_cb_t)(off_t offset, size_t len,
+    blk_metadata_t *metadata, zvol_state_t *zv, void *arg);
 #endif
 #endif

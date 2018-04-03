@@ -50,9 +50,6 @@ uzfs_test_info_t uzfs_tests[] = {
 	{ uzfs_zvol_zap_operation, "uzfs zap operation test" },
 	{ replay_fn, "zvol replay test" },
 	{ unit_test_fn, "zvol read/write verification test"},
-	{ uzfs_txg_diff_verifcation_test,
-	    "test to verify modified blocks between two txg for zvol" },
-	{ uzfs_txg_diff_tree_test, "txg_diff_tree functionality test" },
 	{ uzfs_rebuild_test, "uzfs rebuild pool test"},
 	{ zrepl_utest, "ZFS replication test" },
 	{ uzfs_test_get_metablk_details, "Tests offset,len calculations of"\

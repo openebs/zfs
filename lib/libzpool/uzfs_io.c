@@ -76,6 +76,9 @@ uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 	uint64_t orig_offset = offset;
 	char *mdata = NULL, *tmdata = NULL, *tmdataend = NULL;
 
+	VERIFY(IS_P2ALIGNED(offset, zv->zv_metavolblocksize) &&
+	    IS_P2ALIGNED(len, zv->zv_metavolblocksize));
+
 	sync = (dmu_objset_syncprop(os) == ZFS_SYNC_ALWAYS) ? 1 : 0;
 	ASSERT3P(zv->zv_volmetablocksize, !=, 0);
 
@@ -197,6 +200,9 @@ uzfs_read_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 	metadata_desc_t *md_ent = NULL, *new_md;
 	blk_metadata_t *metadata;
 	int nmetas;
+
+	VERIFY(IS_P2ALIGNED(offset, zv->zv_metavolblocksize) &&
+	    IS_P2ALIGNED(len, zv->zv_metavolblocksize));
 
 	ASSERT3P(zv->zv_volmetadatasize, ==, sizeof (blk_metadata_t));
 

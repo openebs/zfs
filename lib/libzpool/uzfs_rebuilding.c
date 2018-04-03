@@ -67,7 +67,6 @@ iszero(blk_metadata_t *md)
 			diff_count = 0;					\
 			last_index = 0;					\
 			last_md = NULL;					\
-			diff_count = 0;					\
 		} while (0)
 
 int
@@ -186,19 +185,27 @@ uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *low,
 					last_index = i;
 				}
 
-				// Increase diff_count if on_disk io number is
-				// same as last one.
-				diff_count++;
-
-				if (compare_blk_metadata((blk_metadata_t *)
+				if (diff_count &&
+				    compare_blk_metadata((blk_metadata_t *)
 				    (buf + i), last_md) != 0) {
 					/*
 					 * Execute callback function with last
-					 * compared metadata and diff_count
+					 * metadata and diff_count if
+					 * last compared metadata is changed
 					 */
 					EXECUTE_DIFF_CALLBACK(last_lun_offset,
 					    diff_count, buf, last_index, arg,
 					    last_md, snap_zv, func, ret);
+					last_lun_offset = lun_offset;
+					last_md = (blk_metadata_t *)(buf+i);
+					last_index = i;
+					diff_count++;
+				} else {
+					/*
+					 * increament diff_count with 1 if
+					 * metadata is same
+					 */
+					diff_count++;
 				}
 			} else if (diff_count) {
 				EXECUTE_DIFF_CALLBACK(last_lun_offset,

@@ -852,8 +852,8 @@ run_zvol_test()
 
 run_rebuild_test()
 {
-	log_must $UZFS_TEST -T 3 -t 60 -n 3
-	log_must $UZFS_TEST -T 3 -t 120 -n 3
+	log_must $UZFS_TEST -T 3 -t 60 -n 3 -a 419430400
+	log_must $UZFS_TEST -T 3 -t 120 -n 3 -a 629145600
 
 }
 

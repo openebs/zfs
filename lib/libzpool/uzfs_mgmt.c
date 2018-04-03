@@ -283,7 +283,7 @@ uzfs_objset_create_cb(objset_t *new_os, void *arg, cred_t *cr, dmu_tx_t *tx)
 
 /* owns objset with name 'ds_name' in pool 'spa' */
 static int
-uzfs_open_dataset_init(const char *ds_name, zvol_state_t **z)
+uzfs_own_dataset(const char *ds_name, zvol_state_t **z)
 {
 	zvol_state_t *zv = NULL;
 	int error = -1;
@@ -386,7 +386,7 @@ uzfs_open_dataset(spa_t *spa, const char *ds_name, zvol_state_t **z)
 		return (error);
 	(void) snprintf(name, sizeof (name), "%s/%s", spa_name(spa), ds_name);
 
-	error = uzfs_open_dataset_init(name, z);
+	error = uzfs_own_dataset(name, z);
 	return (error);
 }
 
@@ -438,7 +438,7 @@ uzfs_zvol_create_cb(const char *ds_name, void *arg)
 
 	printf("ds_name %s\n", ds_name);
 
-	error = uzfs_open_dataset_init(ds_name, &zv);
+	error = uzfs_own_dataset(ds_name, &zv);
 	if (error) {
 		printf("Failed to open dataset: %s\n", ds_name);
 		return (error);

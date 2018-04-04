@@ -36,65 +36,9 @@
 #include <arpa/inet.h>
 
 #include <zrepl_prot.h>
+#include "gtest_utils.h"
 
-/* Prints errno string if cond is not true */
-#define	ASSERT_ERRNO(fname, cond)	do { \
-	if (!(cond)) { \
-		perror(fname); \
-		ASSERT_EQ(errno, 0); \
-	} \
-} while(0)
-
-void init_buf(void *buf, int len, const char *pattern) {
-	int i;
-	char c;
-	int pat_len = strlen(pattern);
-
-	for (i = 0; i < len; i++) {
-		c = pattern[i % pat_len];
-		((char *)buf)[i] = c;
-	}
-}
-
-int verify_buf(void *buf, int len, const char *pattern) {
-	int i;
-	char c;
-	int pat_len = strlen(pattern);
-
-	for (i = 0; i < len; i++) {
-		c = pattern[i % pat_len];
-		if (c != ((char *)buf)[i])
-			return 1;
-	}
-
-	return 0;
-}
-
-std::string getCmdPath(std::string zfsCmd) {
-	std::string cmdPath;
-	const char *srcPath = std::getenv("SRC_PATH");
-
-	if (srcPath == NULL) {
-		cmdPath += ".";
-	} else {
-		cmdPath = srcPath;
-	}
-	cmdPath += "/cmd/" + zfsCmd + "/" + zfsCmd;
-
-	return cmdPath;
-}
-
-void execCmd(std::string zfsCmd, std::string args) {
-	int rc;
-	std::string cmdLine;
-
-	cmdLine = getCmdPath(zfsCmd) + " " + args;
-	rc = system(cmdLine.c_str());
-	if (rc != 0) {
-		throw std::runtime_error(
-		    std::string("Command failed: ") + cmdLine);
-	}
-}
+using namespace GtestUtils;
 
 pid_t start_zrepl() {
 	std::string zrepl_path = getCmdPath("zrepl");
@@ -198,7 +142,6 @@ public:
 	}
 
 	std::string name;
-private:
 	std::string pool;
 	std::string path;
 };
@@ -239,7 +182,7 @@ protected:
 };
 
 pid_t ZreplHandshakeTest::m_pid = 0;
-TestZvol *ZreplHandshakeTest::m_zvol = NULL;
+TestZvol *ZreplHandshakeTest::m_zvol = nullptr;
 
 class ZreplDataTest : public testing::Test {
 protected:
@@ -419,12 +362,13 @@ pid_t ZreplDataTest::m_pid = 0;
 int ZreplDataTest::m_control_fd = -1;
 uint16_t ZreplDataTest::m_port = 0;
 std::string ZreplDataTest::m_host = "";
-TestZvol *ZreplDataTest::m_zvol = NULL;
+TestZvol *ZreplDataTest::m_zvol = nullptr;
 
 TEST_F(ZreplHandshakeTest, HandshakeOk) {
 	zvol_io_hdr_t hdr_out, hdr_in;
-	int rc;
+	std::string output;
 	mgmt_ack_t mgmt_ack;
+	int rc;
 
 	hdr_out.version = REPLICA_VERSION;
 	hdr_out.opcode = ZVOL_OPCODE_HANDSHAKE;
@@ -449,8 +393,12 @@ TEST_F(ZreplHandshakeTest, HandshakeOk) {
 	rc = read(m_control_fd, &mgmt_ack, sizeof (mgmt_ack));
 	ASSERT_EQ(rc, sizeof (mgmt_ack));
 	EXPECT_STREQ(mgmt_ack.volname, m_zvol->name.c_str());
-	EXPECT_NE(mgmt_ack.pool_guid, 0);
-	EXPECT_NE(mgmt_ack.zvol_guid, 0);
+	output = execCmd("zpool", std::string("get guid -Hpo value ") +
+	    m_zvol->pool);
+	EXPECT_EQ(mgmt_ack.pool_guid, std::stoul(output));
+	output = execCmd("zfs", std::string("get guid -Hpo value ") +
+	    m_zvol->name);
+	EXPECT_EQ(mgmt_ack.zvol_guid, std::stoul(output));
 }
 
 TEST_F(ZreplHandshakeTest, HandshakeWrongVersion) {

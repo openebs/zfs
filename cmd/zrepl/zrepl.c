@@ -4,6 +4,8 @@
 #include <syslog.h>
 #include <libuzfs.h>
 #include <libzfs.h>
+#include <sys/dsl_dataset.h>
+#include <sys/dmu_objset.h>
 #include <uzfs_mgmt.h>
 #include <zrepl_mgmt.h>
 #include <uzfs_io.h>
@@ -563,7 +565,12 @@ uzfs_zvol_mgmt_do_handshake(zvol_io_hdr_t *hdr, int sfd, char *name)
 		uzfs_zvol_get_last_committed_io_no(zv,
 		    &hdr->checkpointed_io_seq);
 		mgmt_ack.pool_guid = spa_guid(zv->zv_spa);
-		mgmt_ack.zvol_guid = dmu_objset_fsid_guid(zv->zv_objset);
+		/*
+		 * We don't use fsid_guid because that one is not guaranteed
+		 * to stay the same (it is changed in case of conflicts).
+		 */
+		mgmt_ack.zvol_guid = dsl_dataset_phys(
+		    zv->zv_objset->os_dsl_dataset)->ds_guid;
 		uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
 	}
 

@@ -7,7 +7,7 @@ DEFAULT_INCLUDES += \
 sbin_PROGRAMS = test_uzfs test_zrepl_prot
 
 test_uzfs_SOURCES = test_uzfs.cc
-test_zrepl_prot_SOURCES = test_zrepl_prot.cc
+test_zrepl_prot_SOURCES = test_zrepl_prot.cc gtest_utils.cc
 
 test_uzfs_LDADD = \
 	$(top_builddir)/lib/libnvpair/libnvpair.la \

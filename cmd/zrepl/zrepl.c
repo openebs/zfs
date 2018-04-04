@@ -889,7 +889,12 @@ uzfs_send_reads(int fd, zvol_io_cmd_t *zio_cmd)
 	/* special case for missing metadata */
 	if (zio_cmd->metadata_desc == NULL) {
 		read_hdr.io_num = 0;
-		read_hdr.len = hdr->len;
+		/*
+		 * read_hdr.len should be adjusted back
+		 * to actual read request size now
+		 */
+		read_hdr.len = hdr->len -
+		    sizeof (struct zvol_io_rw_hdr);
 		rc = uzfs_zvol_socket_write(fd, (char *)&read_hdr,
 		    sizeof (read_hdr));
 		if (rc != 0)

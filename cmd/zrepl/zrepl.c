@@ -906,7 +906,8 @@ uzfs_send_reads(int fd, zvol_io_cmd_t *zio_cmd)
 		    sizeof (read_hdr));
 		if (rc != 0)
 			return (rc);
-		rc = uzfs_zvol_socket_write(fd, zio_cmd->buf, hdr->len);
+		/* Data that need to be sent is equal to read_hdr.len */
+		rc = uzfs_zvol_socket_write(fd, zio_cmd->buf, read_hdr.len);
 		return (rc);
 	}
 

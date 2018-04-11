@@ -1,5 +1,8 @@
 language: c
 sudo: required
+branches:
+  only:
+    - zfs-0.7-release
 env:
   global:
     # Travis limits maximum log size, we have to cut tests output 
@@ -8,16 +11,6 @@ env:
   matrix:
     # tags are mainly in ascending order
     - ZFS_BUILD_TAGS=0
-    - ZFS_TEST_TAGS=pool_test
-      ZFS_BUILD_TAGS=0
-    - ZFS_TEST_TAGS=zvol_test
-      ZFS_BUILD_TAGS=0
-    - ZFS_TEST_TAGS=rebuild_test
-      ZFS_BUILD_TAGS=0
-    - ZFS_TEST_TAGS=fio_test
-      ZFS_BUILD_TAGS=0
-    - ZFS_TEST_TAGS=zrepl_test
-      ZFS_BUILD_TAGS=0
     - ZFS_BUILD_TAGS=1
 before_install:
     - sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
@@ -74,7 +67,7 @@ script:
     - if [ $ZFS_BUILD_TAGS = 0 ]; then
         sudo mkdir /etc/zfs;
         export FIO_SRCDIR=$PWD/../fio;
-        travis_wait 60 sudo bash ./tests/cbtest/script/test_uzfs.sh -T $ZFS_TEST_TAGS || travis_terminate 1;
+        travis_wait 60 sudo bash ./tests/cbtest/script/test_uzfs.sh -T all || travis_terminate 1;
       else
         sudo /sbin/modprobe zfs;
         travis_wait 10 /sbin/ztest || travis_terminate 1;

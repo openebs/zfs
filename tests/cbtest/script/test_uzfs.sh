@@ -23,8 +23,7 @@ fi
 ZPOOL="$SRC_PATH/cmd/zpool/zpool"
 ZFS="$SRC_PATH/cmd/zfs/zfs"
 ZDB="$SRC_PATH/cmd/zdb/zdb"
-TGT="$SRC_PATH/cmd/zrepl/zrepl start -t 127.0.0.1"
-TGT_IP="127.0.0.1"
+ZREPL="$SRC_PATH/cmd/zrepl/zrepl start -t 127.0.0.1"
 GTEST_UZFS="$SRC_PATH/tests/cbtest/gtest/test_uzfs"
 GTEST_ZREPL_PROT="$SRC_PATH/tests/cbtest/gtest/test_zrepl_prot"
 GTEST_EXPORT="$SRC_PATH/tests/cbtest/gtest/test_export"
@@ -37,12 +36,10 @@ UZFS_TEST_POOL="testp"
 UZFS_TEST_VOL="ds0"
 UZFS_TEST_VOLSIZE="128M"
 UZFS_TEST_VOLSIZE_IN_NUM=134217728
-SRCPOOL="src_pool"
-SRCVOL="src_vol"
-DSTPOOL="dst_pool"
-DSTVOL="dst_vol"
-TGT_PID="-1"
-TGT_PID2="-1"
+ZREPL_PID="-1"
+
+source $UZFS_TEST_SYNC_SH
+
 log_fail()
 {
 	echo "failed => [$@]"
@@ -60,16 +57,74 @@ log_note()
 # $@ - command to execute
 log_must()
 {
-	log_note $@
-	$@
-	test $? != 0 && log_fail $@
+	local logfile status
+
+	logfile=`mktemp`
+
+	log_note $@ >> $logfile 2>&1
+	$@ >> $logfile 2>&1
+	status=$?
+
+	cat $logfile
+	rm $logfile
+	if [ $status -ne 0 ]; then
+		log_fail $@
+	fi
 }
 
 log_must_not()
 {
-	log_note $@
-	$@
-	test $? -eq 0 && log_fail $@
+	local logfile status
+
+	logfile=`mktemp`
+
+	log_note $@ >> $logfile 2>&1
+	$@ >> $logfile 2>&1
+	status=$?
+
+	cat $logfile
+	rm $logfile
+
+	if [ $status -eq 0 ]; then
+		log_fail $@
+	fi
+}
+
+start_zrepl()
+{
+	if [ $ZREPL_PID -eq -1 ]; then
+		# XXX Remove redirection to /dev/null when debug messages are removed
+		# from zrepl
+		$ZREPL >/dev/null &
+		sleep 5
+		ZREPL_PID=$!
+	else
+		echo "warning.. zrepl is already started"
+	fi
+}
+
+stop_zrepl()
+{
+	if [ $ZREPL_PID -ne -1 ]; then
+		kill -SIGKILL $ZREPL_PID
+		ZREPL_PID=-1
+	fi
+}
+
+create_disk()
+{
+	for disk in "$@"; do
+		disk_name=$disk
+		log_must truncate -s 2G $disk_name
+	done
+}
+
+destroy_disk()
+{
+	for disk in "$@"; do
+		disk_name=$disk
+		stat $disk_name >/dev/null && rm $disk_name
+	done
 }
 
 init_test()
@@ -92,11 +147,7 @@ init_test()
 	log_must truncate -s 2G "$TMPDIR/test_spare8.img"
 	log_must truncate -s 2G "$TMPDIR/test_log.img"
 
-	# XXX Remove redirection to /dev/null when debug messages are removed
-	# from zrepl
-	$TGT $TGT_IP >/dev/null &
-	TGT_PID=$!
-	sleep 1
+	start_zrepl
 }
 
 #
@@ -104,9 +155,8 @@ init_test()
 #
 close_test()
 {
-	if [ $TGT_PID -ne -1 ]; then
-		kill -SIGKILL $TGT_PID
-	fi
+	stop_zrepl
+
 	rm "$TMPDIR/test_disk1.img"
 	rm "$TMPDIR/test_disk2.img"
 	rm "$TMPDIR/test_disk3.img"
@@ -128,8 +178,12 @@ close_test()
 
 dump_data()
 {
-	kill -SIGHUP $TGT_PID
-	ret=$?
+	if [ $ZREPL_PID -ne -1 ]; then
+		kill -SIGHUP $ZREPL_PID
+		ret=$?
+	else
+		echo "warning.. zrepl was not started"
+	fi
 	# wait for some data to be dumped
 	sleep 3
 	return $ret
@@ -137,137 +191,165 @@ dump_data()
 
 run_zvol_tests()
 {
-	if poolnotexists $SRCPOOL ; then
-		return 1
-	fi
+	local src_pool
+	local src_vol
+	local dst_pool
+	local dst_vol
 
-	if poolnotexists $DSTPOOL ; then
+	[[ $# -ne 2 ]] && return 1
+
+	src_pool=`echo $1| awk -F '/' '{print $1}'`
+	dst_pool=`echo $2| awk -F '/' '{print $1}'`
+
+	src_vol=`echo $1| awk -F '/' '{print $2}'`
+	dst_vol=`echo $2| awk -F '/' '{print $2}'`
+
+	[[ -z $src_pool || -z $dst_pool || -z $src_vol || -z $dst_vol ]] && return 1
+
+	if poolnotexists $src_pool || poolnotexists $dst_pool ; then
+		echo "pool does not exists"
 		return 1
 	fi
 
 	# test volume creation
-	log_must $ZFS create -V $VOLSIZE $SRCPOOL/$SRCVOL
-	log_must datasetexists $SRCPOOL/$SRCVOL
-	log_must check_prop $SRCPOOL/$SRCVOL type volume
+	log_must $ZFS create -V $VOLSIZE $src_pool/$src_vol
+	log_must datasetexists $src_pool/$src_vol
+	log_must check_prop $src_pool/$src_vol type volume
 
 	# test volume properties
-	log_must $ZFS get all $SRCPOOL/$SRCVOL > /dev/null
-	log_must $ZFS list $SRCPOOL/$SRCVOL > /dev/null
-	log_must $ZFS set dedup=on $SRCPOOL/$SRCVOL
-	log_must check_prop "$SRCPOOL/$SRCVOL" dedup on
-	log_must $ZFS set compression=on $SRCPOOL/$SRCVOL
-	log_must check_prop "$SRCPOOL/$SRCVOL" compression on
+	log_must $ZFS get all $src_pool/$src_vol > /dev/null
+	log_must $ZFS list $src_pool/$src_vol > /dev/null
+	log_must $ZFS set dedup=on $src_pool/$src_vol
+	log_must check_prop "$src_pool/$src_vol" dedup on
+	log_must $ZFS set compression=on $src_pool/$src_vol
+	log_must check_prop "$src_pool/$src_vol" compression on
 
-	log_must $ZFS set sync=standard $SRCPOOL/$SRCVOL
-	log_must check_prop "$SRCPOOL/$SRCVOL" sync standard
+	log_must $ZFS set sync=standard $src_pool/$src_vol
+	log_must check_prop "$src_pool/$src_vol" sync standard
 
-	log_must $ZFS set sync=disabled $SRCPOOL/$SRCVOL
-	log_must check_prop "$SRCPOOL/$SRCVOL" sync disabled
+	log_must $ZFS set sync=disabled $src_pool/$src_vol
+	log_must check_prop "$src_pool/$src_vol" sync disabled
 
-	log_must $ZFS set sync=always $SRCPOOL/$SRCVOL
-	log_must check_prop "$SRCPOOL/$SRCVOL" sync always
+	log_must $ZFS set sync=always $src_pool/$src_vol
+	log_must check_prop "$src_pool/$src_vol" sync always
 
 	# dump some data
 	#log_must dump_data
 
 	# test snapshot creation
-	log_must create_snapshot "$SRCPOOL/$SRCVOL" "snap"
-	log_must snapexists "$SRCPOOL/$SRCVOL@snap"
-	log_must check_prop "$SRCPOOL/$SRCVOL@snap" type snapshot
+	log_must create_snapshot "$src_pool/$src_vol" "snap"
+	log_must snapexists "$src_pool/$src_vol@snap"
+	log_must check_prop "$src_pool/$src_vol@snap" type snapshot
 
 	# test zfs send/recv
 	log_note "zfs send/recv"
-	$ZFS send -vv "$SRCPOOL/$SRCVOL@snap" | $ZFS recv "$DSTPOOL/$DSTVOL"
+	$ZFS send -vv "$src_pool/$src_vol@snap" | $ZFS recv "$dst_pool/$dst_vol"
 
 	# after zfs recv, dataset and snap should exist
-	log_must datasetexists $DSTPOOL/$DSTVOL
-	log_must check_prop $DSTPOOL/$DSTVOL type volume
-	log_must snapexists "$DSTPOOL/$DSTVOL@snap"
-	log_must check_prop "$DSTPOOL/$DSTVOL@snap" type snapshot
+	log_must datasetexists $dst_pool/$dst_vol
+	log_must check_prop $dst_pool/$dst_vol type volume
+	log_must snapexists "$dst_pool/$dst_vol@snap"
+	log_must check_prop "$dst_pool/$dst_vol@snap" type snapshot
 
 	# should fail as it has children and -r is not passed
-	log_must_not $ZFS destroy $DSTPOOL/$DSTVOL 2> /dev/null
-	log_must_not $ZFS destroy $SRCPOOL/$SRCVOL 2> /dev/null
+	log_must_not $ZFS destroy $dst_pool/$dst_vol 2> /dev/null
+	log_must_not $ZFS destroy $src_pool/$src_vol 2> /dev/null
 
 	# test volume destroy
-	log_must $ZFS list -t all $DSTPOOL/$DSTVOL > /dev/null
-	log_must $ZFS destroy -r $DSTPOOL/$DSTVOL
-	log_must $ZFS list -t all $SRCPOOL/$SRCVOL > /dev/null
-	log_must $ZFS destroy -r $SRCPOOL/$SRCVOL
+	log_must $ZFS list -t all $dst_pool/$dst_vol > /dev/null
+	log_must $ZFS destroy -r $dst_pool/$dst_vol
+	log_must $ZFS list -t all $src_pool/$src_vol > /dev/null
+	log_must $ZFS destroy -r $src_pool/$src_vol
 
 	# test snap destroy
-	log_must $ZFS create -s -V $VOLSIZE $SRCPOOL/$SRCVOL
-	log_must datasetexists $SRCPOOL/$SRCVOL
+	log_must $ZFS create -s -V $VOLSIZE $src_pool/$src_vol
+	log_must datasetexists $src_pool/$src_vol
 
-	log_must create_snapshot "$SRCPOOL/$SRCVOL" "snap"
-	log_must snapexists "$SRCPOOL/$SRCVOL@snap"
-	log_must check_prop "$SRCPOOL/$SRCVOL@snap" type snapshot
-	log_must destroy_snapshot "$SRCPOOL/$SRCVOL@snap"
-	log_must_not snapexists "$SRCPOOL/$SRCVOL@snap"
+	log_must create_snapshot "$src_pool/$src_vol" "snap"
+	log_must snapexists "$src_pool/$src_vol@snap"
+	log_must check_prop "$src_pool/$src_vol@snap" type snapshot
+	log_must destroy_snapshot "$src_pool/$src_vol@snap"
+	log_must_not snapexists "$src_pool/$src_vol@snap"
 
 	return 0
 }
 
 run_pool_tests()
 {
-	if poolnotexists $SRCPOOL ; then
+	local src_pool
+	local src_vol
+	local dst_pool
+	local dst_vol
+	local log_disk
+
+	[[ $# -ne 2 ]] && return 1
+
+	src_pool=`echo $1| awk -F '/' '{print $1}'`
+	dst_pool=`echo $2| awk -F '/' '{print $1}'`
+
+	src_vol=`echo $1| awk -F '/' '{print $2}'`
+	dst_vol=`echo $2| awk -F '/' '{print $2}'`
+
+	[[ -z $src_pool || -z $dst_pool || -z $src_vol || -z $dst_vol ]] && return 1
+
+	if poolnotexists $src_pool || poolnotexists $dst_pool ; then
+		echo "pool does not exists"
 		return 1
 	fi
 
-	if poolnotexists $DSTPOOL ; then
-		return 1
-	fi
-
-	log_must cp $TMPDIR/zpool_$SRCPOOL.cache $TMPDIR/$SRCPOOL.cache
-	log_must cp $TMPDIR/zpool_$DSTPOOL.cache $TMPDIR/$DSTPOOL.cache
+	log_must cp $TMPDIR/zpool_$src_pool.cache $TMPDIR/$src_pool.cache
+	log_must cp $TMPDIR/zpool_$dst_pool.cache $TMPDIR/$dst_pool.cache
 
 	# test log addition/removal
-	log_must $ZPOOL add -f $SRCPOOL log "$TMPDIR/test_log.img"
-	log_must $ZPOOL remove $SRCPOOL "$TMPDIR/test_log.img"
-	log_must $ZPOOL add -f $DSTPOOL log "$TMPDIR/test_log.img"
-	log_must $ZPOOL remove $DSTPOOL "$TMPDIR/test_log.img"
+	log_disk="$TMPDIR/${src_pool}_disk.img"
+	create_disk $log_disk
+	log_must $ZPOOL add -f $src_pool log $log_disk
+	log_must $ZPOOL remove $src_pool $log_disk
+	log_must $ZPOOL add -f $dst_pool log $log_disk
+	log_must $ZPOOL remove $dst_pool $log_disk
+	destroy_disk $log_disk
 
 	# test pool export
-	log_must export_pool $SRCPOOL
-	log_must export_pool $DSTPOOL
+	log_must export_pool $src_pool
+	log_must export_pool $dst_pool
 
 	# should fail
-	#log_must check_state $SRCPOOL "$TMPDIR/test_disk1.img" "online"
+	#log_must check_state $src_pool "$TMPDIR/test_disk1.img" "online"
 
 	# test pool import
-	log_must $ZPOOL import -c "$TMPDIR/$SRCPOOL.cache" $SRCPOOL
-	log_must $ZPOOL import -c "$TMPDIR/$DSTPOOL.cache" $DSTPOOL
+	log_must $ZPOOL import -c "$TMPDIR/$src_pool.cache" $src_pool
+	log_must $ZPOOL import -c "$TMPDIR/$dst_pool.cache" $dst_pool
 
-	log_must rm "$TMPDIR/$SRCPOOL.cache"
-	log_must rm "$TMPDIR/$DSTPOOL.cache"
+	log_must rm "$TMPDIR/$src_pool.cache"
+	log_must rm "$TMPDIR/$dst_pool.cache"
 
-	log_must $ZPOOL set cachefile="$TMPDIR/zpool_$SRCPOOL.cache" $SRCPOOL
-	log_must $ZPOOL set cachefile="$TMPDIR/zpool_$DSTPOOL.cache" $DSTPOOL
-	cache=$($ZPOOL get -H -o value cachefile $SRCPOOL)
-	if [ $cache != "$TMPDIR/zpool_$SRCPOOL.cache" ]; then
-		log_fail "cachefile not set for $SRCPOOL [$cache => $TMPDIR/zpool_$SRCPOOL.cache]"
+	log_must $ZPOOL set cachefile="$TMPDIR/zpool_$src_pool.cache" $src_pool
+	log_must $ZPOOL set cachefile="$TMPDIR/zpool_$dst_pool.cache" $dst_pool
+	cache=$($ZPOOL get -H -o value cachefile $src_pool)
+	if [ $cache != "$TMPDIR/zpool_$src_pool.cache" ]; then
+		log_fail "cachefile not set for $src_pool [$cache => $TMPDIR/zpool_$src_pool.cache]"
 		return 1
 	fi
-	cache=$($ZPOOL get -H -o value cachefile $DSTPOOL)
-	if [ $cache != "$TMPDIR/zpool_$DSTPOOL.cache" ]; then
-		log_fail "cachefile not set for $DSTPOOL [$cache => $TMPDIR/zpool_$DSTPOOL.cache]"
+	cache=$($ZPOOL get -H -o value cachefile $dst_pool)
+	if [ $cache != "$TMPDIR/zpool_$dst_pool.cache" ]; then
+		log_fail "cachefile not set for $dst_pool [$cache => $TMPDIR/zpool_$dst_pool.cache]"
 		return 1
 	fi
 
 	# check pool status
-	log_must check_state $SRCPOOL "online"
-	log_must check_state $DSTPOOL "online"
+	log_must check_state $src_pool "online"
+	log_must check_state $dst_pool "online"
 
 	# check history
-	log_must check_history $SRCPOOL "import -c $TMPDIR/$SRCPOOL.cache $SRCPOOL"
-	log_must check_history $SRCPOOL "export $SRCPOOL"
-	log_must check_history $SRCPOOL "set cachefile=$TMPDIR/$SRCPOOL.cache $SRCPOOL"
-	log_must check_history $DSTPOOL "import -c $TMPDIR/$DSTPOOL.cache $DSTPOOL"
-	log_must check_history $DSTPOOL "export $DSTPOOL"
-	log_must check_history $DSTPOOL "set cachefile=$TMPDIR/$DSTPOOL.cache $DSTPOOL"
+	log_must check_history $src_pool "import -c $TMPDIR/$src_pool.cache $src_pool"
+	log_must check_history $src_pool "export $src_pool"
+	log_must check_history $src_pool "set cachefile=$TMPDIR/$src_pool.cache $src_pool"
+	log_must check_history $dst_pool "import -c $TMPDIR/$dst_pool.cache $dst_pool"
+	log_must check_history $dst_pool "export $dst_pool"
+	log_must check_history $dst_pool "set cachefile=$TMPDIR/$dst_pool.cache $dst_pool"
 
-	log_must $ZPOOL iostat -v $SRCPOOL 1 5 > /dev/null
-	log_must $ZPOOL iostat -v $DSTPOOL 1 5 > /dev/null
+	log_must $ZPOOL iostat -v $src_pool 1 5 > /dev/null
+	log_must $ZPOOL iostat -v $dst_pool 1 5 > /dev/null
 
 	return 0
 }
@@ -439,142 +521,235 @@ check_prop()
 
 test_stripe_pool()
 {
+	local src_pool dst_pool src_vol dst_vol
+	local src_pool_disk dst_pool_disk
+	local src_pool_spare_disk dst_pool_spare_disk
+
+	if [ $# -ne 2 ]; then
+		echo "missing src and dst pool"
+		exit 1
+	fi
+
+	src_pool=`echo $1| awk -F '/' '{print $1}'`
+	dst_pool=`echo $2| awk -F '/' '{print $1}'`
+
+	src_vol=`echo $1| awk -F '/' '{print $2}'`
+	dst_vol=`echo $2| awk -F '/' '{print $2}'`
+
+	src_pool_disk="$TMPDIR/test_stripe_s.img"
+	dst_pool_disk="$TMPDIR/test_stripe_d.img"
+	src_pool_spare_disk="$TMPDIR/test_stripe_spare_s.img"
+	dst_pool_spare_disk="$TMPDIR/test_stripe_spare_d.img"
+
 	# test pool creation
-	log_must $ZPOOL create -f $SRCPOOL -o cachefile="$TMPDIR/zpool_$SRCPOOL.cache" \
-	    "$TMPDIR/test_disk1.img"
-	log_must $ZPOOL create -f $DSTPOOL -o cachefile="$TMPDIR/zpool_$DSTPOOL.cache" \
-	    "$TMPDIR/test_disk2.img"
+	create_disk $src_pool_disk
+	create_disk $dst_pool_disk
+
+	log_must $ZPOOL create -f $src_pool -o cachefile="$TMPDIR/zpool_$src_pool.cache" \
+	    $src_pool_disk
+	log_must $ZPOOL create -f $dst_pool -o cachefile="$TMPDIR/zpool_$dst_pool.cache" \
+	    $dst_pool_disk
 
 	# test pool expansion
-	log_must $ZPOOL add -f $SRCPOOL "$TMPDIR/test_spare1.img"
-	log_must $ZPOOL add -f $DSTPOOL "$TMPDIR/test_spare2.img"
+	create_disk $src_pool_spare_disk
+	create_disk $dst_pool_spare_disk
+
+	log_must $ZPOOL add -f $src_pool $src_pool_spare_disk
+	log_must $ZPOOL add -f $dst_pool $dst_pool_spare_disk
 
 	# test vdev remove
-	log_must_not $ZPOOL remove $SRCPOOL "$TMPDIR/test_spare1.img"
-	log_must_not $ZPOOL remove $DSTPOOL "$TMPDIR/test_spare2.img"
+	log_must_not $ZPOOL remove $src_pool $src_pool_spare_disk
+	log_must_not $ZPOOL remove $dst_pool $dst_pool_spare_disk
 
 	# read cachefile
-	log_must $ZDB -C -U "$TMPDIR/zpool_$SRCPOOL.cache" $SRCPOOL > /dev/null
-	log_must $ZDB -C -U "$TMPDIR/zpool_$DSTPOOL.cache" $DSTPOOL > /dev/null
+	log_must $ZDB -C -U "$TMPDIR/zpool_$src_pool.cache" $src_pool > /dev/null
+	log_must $ZDB -C -U "$TMPDIR/zpool_$dst_pool.cache" $dst_pool > /dev/null
 
 	# read disk labels
-	log_must $ZDB -l "$TMPDIR/test_disk1.img" > /dev/null
-	log_must $ZDB -l "$TMPDIR/test_disk2.img" > /dev/null
+	log_must $ZDB -l $src_pool_disk > /dev/null
+	log_must $ZDB -l $dst_pool_disk > /dev/null
 
 	# run test cases
-	log_must run_zvol_tests
-	log_must run_pool_tests
+	log_must run_zvol_tests $src_pool/$src_vol $dst_pool/$dst_vol
+	log_must run_pool_tests $src_pool/$src_vol $dst_pool/$dst_vol
 
 	# test pool destroy
-	log_must destroy_pool $SRCPOOL
-	log_must destroy_pool $DSTPOOL
+	log_must destroy_pool $src_pool
+	log_must destroy_pool $dst_pool
+
+	destroy_disk $src_pool_disk
+	destroy_disk $dst_pool_disk
+	destroy_disk $src_pool_spare_disk
+	destroy_disk $dst_pool_spare_disk
 
 	return 0
 }
 
 test_mirror_pool()
 {
-	# test pool creation
-	log_must $ZPOOL create -f $SRCPOOL mirror \
-	    -o cachefile="$TMPDIR/zpool_$SRCPOOL.cache" \
-	    "$TMPDIR/test_disk1.img" "$TMPDIR/test_disk2.img"
+	local src_pool dst_pool src_vol dst_vol
+	local src_pool_disk_a src_pool_disk_b
+	local dst_pool_disk_a dst_pool_disk_b
+	local src_pool_spare_disk_a src_pool_spare_disk_b
+	local dst_pool_spare_disk_a dst_pool_spare_disk_b
 
-	log_must $ZPOOL create -f $DSTPOOL mirror \
-	    -o cachefile="$TMPDIR/zpool_$DSTPOOL.cache" \
-	    "$TMPDIR/test_disk3.img" "$TMPDIR/test_disk4.img"
+	if [ $# -ne 2 ]; then
+		echo "missing src and dst pool"
+		exit 1
+	fi
+
+	src_pool=`echo $1| awk -F '/' '{print $1}'`
+	dst_pool=`echo $2| awk -F '/' '{print $1}'`
+
+	src_vol=`echo $1| awk -F '/' '{print $2}'`
+	dst_vol=`echo $2| awk -F '/' '{print $2}'`
+
+	src_pool_disk_a="$TMPDIR/test_mirror_s_a.img"
+	src_pool_disk_b="$TMPDIR/test_mirror_s_b.img"
+	dst_pool_disk_a="$TMPDIR/test_mirror_d_a.img"
+	dst_pool_disk_b="$TMPDIR/test_mirror_d_b.img"
+	src_pool_spare_disk_a="$TMPDIR/test_mirror_spare_s_a.img"
+	src_pool_spare_disk_b="$TMPDIR/test_mirror_spare_s_b.img"
+	dst_pool_spare_disk_a="$TMPDIR/test_mirror_spare_d_a.img"
+	dst_pool_spare_disk_b="$TMPDIR/test_mirror_spare_d_b.img"
+
+	# test pool creation
+	create_disk $src_pool_disk_a $src_pool_disk_b
+	create_disk $dst_pool_disk_a $dst_pool_disk_b
+
+	# test pool creation
+	log_must $ZPOOL create -f $src_pool mirror \
+	    -o cachefile="$TMPDIR/zpool_$src_pool.cache" \
+	    $src_pool_disk_a $src_pool_disk_b
+
+	log_must $ZPOOL create -f $dst_pool mirror \
+	    -o cachefile="$TMPDIR/zpool_$dst_pool.cache" \
+	    $dst_pool_disk_a $dst_pool_disk_b
 
 	# test pool expansion
-	log_must $ZPOOL add -f $SRCPOOL "$TMPDIR/test_spare1.img" \
-	    "$TMPDIR/test_spare2.img"
-	log_must $ZPOOL add -f $DSTPOOL "$TMPDIR/test_spare3.img" \
-	    "$TMPDIR/test_spare4.img"
+	create_disk $src_pool_spare_disk_a $src_pool_spare_disk_b
+	create_disk $dst_pool_spare_disk_a $dst_pool_spare_disk_b
+
+	log_must $ZPOOL add -f $src_pool $src_pool_spare_disk_a $src_pool_spare_disk_b
+	log_must $ZPOOL add -f $dst_pool $dst_pool_spare_disk_a $dst_pool_spare_disk_b
 
 	# test vdev remove
-	log_must_not $ZPOOL remove $SRCPOOL "$TMPDIR/test_spare1.img"
-	log_must_not $ZPOOL remove $DSTPOOL "$TMPDIR/test_spare3.img"
+	log_must_not $ZPOOL remove $src_pool $src_pool_spare_disk_a
+	log_must_not $ZPOOL remove $dst_pool $dst_pool_spare_disk_b
 
 	# read cachefile
-	log_must $ZDB -C -U "$TMPDIR/zpool_$SRCPOOL.cache" $SRCPOOL > /dev/null
-	log_must $ZDB -C -U "$TMPDIR/zpool_$DSTPOOL.cache" $DSTPOOL > /dev/null
+	log_must $ZDB -C -U "$TMPDIR/zpool_$src_pool.cache" $src_pool > /dev/null
+	log_must $ZDB -C -U "$TMPDIR/zpool_$dst_pool.cache" $dst_pool > /dev/null
 
 	# read disk labels
-	log_must $ZDB -l "$TMPDIR/test_disk1.img" > /dev/null
-	log_must $ZDB -l "$TMPDIR/test_disk2.img" > /dev/null
-	log_must $ZDB -l "$TMPDIR/test_disk3.img" > /dev/null
-	log_must $ZDB -l "$TMPDIR/test_disk4.img" > /dev/null
+	log_must $ZDB -l $src_pool_disk_a > /dev/null
+	log_must $ZDB -l $src_pool_disk_b > /dev/null
+	log_must $ZDB -l $dst_pool_disk_a > /dev/null
+	log_must $ZDB -l $dst_pool_disk_b > /dev/null
 
 	# run test cases
-	log_must run_zvol_tests
-	log_must run_pool_tests
+	log_must run_zvol_tests $src_pool/$src_vol $dst_pool/$dst_vol
+	log_must run_pool_tests $src_pool/$src_vol $dst_pool/$dst_vol
 
 	# test pool destroy
-	log_must destroy_pool $SRCPOOL
-	log_must destroy_pool $DSTPOOL
+	log_must destroy_pool $src_pool
+	log_must destroy_pool $dst_pool
+
+	destroy_disk $src_pool_disk_a $src_pool_disk_b
+	destroy_disk $dst_pool_disk_a $dst_pool_disk_b
+	destroy_disk $src_pool_spare_disk_a $src_pool_spare_disk_b
+	destroy_disk $dst_pool_spare_disk_a $dst_pool_spare_disk_b
 
 	return 0
 }
 
 test_raidz_pool()
 {
-	# test pool creation
-	log_must $ZPOOL create -f $SRCPOOL raidz1 \
-	    -o cachefile="$TMPDIR/zpool_$SRCPOOL.cache" \
-	    "$TMPDIR/test_disk1.img" "$TMPDIR/test_disk2.img" \
-	    "$TMPDIR/test_disk3.img" "$TMPDIR/test_disk4.img"
+        local src_pool dst_pool src_vol dst_vol
+        local src_pool_disk dst_pool_disk
+        local src_pool_spare_disk dst_pool_spare_disk
 
-	log_must $ZPOOL create -f $DSTPOOL raidz1 \
-	    -o cachefile="$TMPDIR/zpool_$DSTPOOL.cache" \
-	    "$TMPDIR/test_disk5.img" "$TMPDIR/test_disk6.img" \
-	    "$TMPDIR/test_disk7.img" "$TMPDIR/test_disk8.img"
+        if [ $# -ne 2 ]; then
+                echo "missing src and dst pool"
+                exit 1
+        fi
+
+        src_pool=`echo $1| awk -F '/' '{print $1}'`
+        dst_pool=`echo $2| awk -F '/' '{print $1}'`
+
+        src_vol=`echo $1| awk -F '/' '{print $2}'`
+        dst_vol=`echo $2| awk -F '/' '{print $2}'`
+
+	for (( i = 1; i <= 4; i++ )) do
+		src_pool_disk[$i]="$TMPDIR/test_raidz_s_$i.img"
+		dst_pool_disk[$i]="$TMPDIR/test_raidz_d_$i.img"
+		src_pool_spare_disk[$i]="$TMPDIR/test_raidz_spare_s_$i.img"
+		dst_pool_spare_disk[$i]="$TMPDIR/test_raidz_spare_d_$i.img"
+		create_disk ${src_pool_disk[$i]} ${dst_pool_disk[$i]} \
+			${src_pool_spare_disk[$i]} ${dst_pool_spare_disk[$i]}
+	done
+
+	# test pool creation
+	log_must $ZPOOL create -f $src_pool raidz1 \
+	    -o cachefile="$TMPDIR/zpool_$src_pool.cache" \
+	    ${src_pool_disk[1]} ${src_pool_disk[2]} ${src_pool_disk[3]} ${src_pool_disk[4]}
+
+	log_must $ZPOOL create -f $dst_pool raidz1 \
+	    -o cachefile="$TMPDIR/zpool_$dst_pool.cache" \
+	    ${dst_pool_disk[1]} ${dst_pool_disk[2]} ${dst_pool_disk[3]} ${dst_pool_disk[4]}
 
 	# test pool expansion
-	log_must $ZPOOL add -f $SRCPOOL \
-	    "$TMPDIR/test_spare1.img" "$TMPDIR/test_spare2.img" \
-	    "$TMPDIR/test_spare3.img" "$TMPDIR/test_spare4.img"
-	log_must $ZPOOL add -f $DSTPOOL \
-	    "$TMPDIR/test_spare5.img" "$TMPDIR/test_spare6.img"
-	    "$TMPDIR/test_spare7.img" "$TMPDIR/test_spare8.img"
+	log_must $ZPOOL add -f $src_pool \
+	    ${src_pool_spare_disk[1]} ${src_pool_spare_disk[2]} \
+	    ${src_pool_spare_disk[3]} ${src_pool_spare_disk[4]}
+	log_must $ZPOOL add -f $dst_pool \
+	    ${dst_pool_spare_disk[1]} ${dst_pool_spare_disk[2]} \
+	    ${dst_pool_spare_disk[3]} ${dst_pool_spare_disk[4]}
 
 	# test vdev remove
-	log_must_not $ZPOOL remove $SRCPOOL "$TMPDIR/test_spare1.img"
-	log_must_not $ZPOOL remove $DSTPOOL "$TMPDIR/test_spare5.img"
+	log_must_not $ZPOOL remove $src_pool ${src_pool_spare_disk[2]}
+	log_must_not $ZPOOL remove $dst_pool ${dst_pool_spare_disk[3]}
 
 	# read cachefile
-	log_must $ZDB -C -U "$TMPDIR/zpool_$SRCPOOL.cache" $SRCPOOL > /dev/null
-	log_must $ZDB -C -U "$TMPDIR/zpool_$DSTPOOL.cache" $DSTPOOL > /dev/null
+	log_must $ZDB -C -U "$TMPDIR/zpool_$src_pool.cache" $src_pool > /dev/null
+	log_must $ZDB -C -U "$TMPDIR/zpool_$dst_pool.cache" $dst_pool > /dev/null
 
 	# read disk labels
-	log_must $ZDB -l "$TMPDIR/test_disk1.img" > /dev/null
-	log_must $ZDB -l "$TMPDIR/test_disk2.img" > /dev/null
-	log_must $ZDB -l "$TMPDIR/test_disk3.img" > /dev/null
-	log_must $ZDB -l "$TMPDIR/test_disk4.img" > /dev/null
-	log_must $ZDB -l "$TMPDIR/test_disk5.img" > /dev/null
-	log_must $ZDB -l "$TMPDIR/test_disk6.img" > /dev/null
-	log_must $ZDB -l "$TMPDIR/test_disk7.img" > /dev/null
-	log_must $ZDB -l "$TMPDIR/test_disk8.img" > /dev/null
+	for (( i = 1; i <= 4; i++ )) do
+		log_must $ZDB -l ${src_pool_disk[$i]} > /dev/null
+		log_must $ZDB -l ${dst_pool_disk[$i]} > /dev/null
+	done
 
 	# run test cases
-	log_must run_zvol_tests
-	log_must run_pool_tests
+	log_must run_zvol_tests $src_pool/$src_vol $dst_pool/$dst_vol
+	log_must run_pool_tests $src_pool/$src_vol $dst_pool/$dst_vol
 
 	# test pool destroy
-	log_must destroy_pool $SRCPOOL
-	log_must destroy_pool $DSTPOOL
+	log_must destroy_pool $src_pool
+	log_must destroy_pool $dst_pool
+
+	for (( i = 1; i <= 4; i++ )) do
+		destroy_disk ${src_pool_disk[$i]} ${dst_pool_disk[$i]} \
+			${src_pool_spare_disk[$i]} ${dst_pool_spare_disk[$i]}
+	done
 
 	return 0
 }
 
 test_fio()
 {
-	[ -z "$FIO_SRCDIR" ] && log_fail "FIO_SRCDIR must be defined"
-	init_test
-	sleep 10
+	local fio_pool="fio_pool"
 
-	log_must $ZPOOL create -f $SRCPOOL \
-	    -o cachefile="$TMPDIR/zpool_$SRCPOOL.cache" \
-	    "$TMPDIR/test_disk1.img"
-	log_must $ZFS create -sV $VOLSIZE -o volblocksize=4k $SRCPOOL/vol1
-	log_must $ZFS create -sV $VOLSIZE -o volblocksize=4k $SRCPOOL/vol2
+	[ -z "$FIO_SRCDIR" ] && log_fail "FIO_SRCDIR must be defined"
+
+	start_zrepl
+	create_disk "$TMPDIR/fio_disk1.img"
+
+	log_must $ZPOOL create -f $fio_pool \
+	    -o cachefile="$TMPDIR/zpool_$fio_pool.cache" \
+	    "$TMPDIR/fio_disk1.img"
+	log_must $ZFS create -sV $VOLSIZE -o volblocksize=4k $fio_pool/vol1
+	log_must $ZFS create -sV $VOLSIZE -o volblocksize=4k $fio_pool/vol2
 
 	cat >$TMPDIR/test.fio <<EOF
 [global]
@@ -593,9 +768,9 @@ time_based=1
 runtime=15
 numjobs=1
 [vol1]
-filename=$SRCPOOL/vol1
+filename=$fio_pool/vol1
 [vol2]
-filename=$SRCPOOL/vol2
+filename=$fio_pool/vol2
 EOF
 
 	# run the fio
@@ -608,69 +783,106 @@ EOF
 
 	# test pool destroy
 	# XXX Bug: we must destroy volumes before pool. If not then EBUSY
-	log_must $ZFS destroy -r $SRCPOOL/vol1
-	log_must $ZFS destroy -r $SRCPOOL/vol2
-	log_must destroy_pool $SRCPOOL
+	log_must $ZFS destroy -r $fio_pool/vol1
+	log_must $ZFS destroy -r $fio_pool/vol2
+	log_must destroy_pool $fio_pool
 	log_must rm $TMPDIR/test.fio
+	destroy_disk "$TMPDIR/fio_disk1.img"
 
-	close_test
+	stop_zrepl
 
 	return 0
 }
 
+#setup_uzfs_test log/nolog block_size vol_size sync pool_name \
+#		volume_name vdev_file log_file
 setup_uzfs_test()
 {
-	$TGT &
-	TGT_PID2=$!
-	sleep 10
-	export_pool $UZFS_TEST_POOL
+	local block_size=$2
+	local vol_size=$3
+	local sync_prop=$4
+	local pool_name=$5
+	local volume_name=$6
+	local vdev_file=$7
+	local log_file
 
-	if [ "$1" == "log" ]; then
-		log_must $ZPOOL create -f $UZFS_TEST_POOL "$TMPDIR/uztest.1a" \
-		    log "$TMPDIR/uztest.log"
-	else
-		log_must $ZPOOL create -f $UZFS_TEST_POOL "$TMPDIR/uztest.1a"
+	if [ $ZREPL_PID -eq -1 ]; then
+		echo "zrepl is not started..."
+		$ZREPL &
+		sleep 10
+		ZREPL_PID=$!
 	fi
 
-	log_must $ZFS create -V $UZFS_TEST_VOLSIZE \
-	    $UZFS_TEST_POOL/$UZFS_TEST_VOL -b $2
+	export_pool $pool_name
 
-	log_must $ZFS set sync=$3 $UZFS_TEST_POOL/$UZFS_TEST_VOL
+	if [ "$1" == "log" ]; then
+		if [ $# -ne 8 ]; then
+			echo "log file missing"
+			return 1
+		fi
 
-	log_must kill -SIGKILL $TGT_PID2
+		log_file=$8
+		create_disk $TMPDIR/$vdev_file
+		create_disk $TMPDIR/$log_file
+		log_must $ZPOOL create -f $pool_name "$TMPDIR/$vdev_file" \
+		    log "$TMPDIR/$log_file"
+	else
+		create_disk $TMPDIR/$vdev_file
+		log_must $ZPOOL create -f $pool_name "$TMPDIR/$vdev_file"
+	fi
+
+	log_must $ZFS create -V $vol_size $pool_name/$volume_name -b $block_size
+	log_must $ZFS set sync=$sync_prop $pool_name/$volume_name
+
 	return 0
+}
+
+#cleanup_uzfs_test pool_name vdev_file log_file
+cleanup_uzfs_test()
+{
+	local pool_name vdev_file log_file
+
+	if [ $# -lt 2 ]; then
+		echo "missing pool name and disk name"
+		exit 1
+	fi
+
+	pool_name=$1
+	vdev_file=$2
+
+	log_must $ZPOOL destroy $pool_name 2> /dev/null
+
+	destroy_disk $TMPDIR/$vdev_file
+	if [ $# -eq 3 ]; then
+		log_file=$3
+		destroy_disk $TMPDIR/$log_file
+	fi
 }
 
 run_zrepl_uzfs_test()
 {
-	log_must truncate -s 2G "$TMPDIR/uztest.1a"
-	log_must truncate -s 2G "$TMPDIR/uztest.log"
-
-	$TGT >/dev/null &
-	TGT_PID2=$!
-	sleep 10 
+	start_zrepl
 
 	export_pool $UZFS_TEST_POOL
 
 	if [ "$1" == "log" ]; then
-		log_must $ZPOOL create -f $UZFS_TEST_POOL "$TMPDIR/uztest.1a" \
-		    log "$TMPDIR/uztest.log"
+		log_must setup_uzfs_test log $2 $UZFS_TEST_VOLSIZE $3 $UZFS_TEST_POOL \
+		    $UZFS_TEST_VOL uzfs_zrepl_vdev1 uzfs_zrepl_log1
 	else
-		log_must $ZPOOL create -f $UZFS_TEST_POOL "$TMPDIR/uztest.1a"
+		log_must setup_uzfs_test nolog $2 $UZFS_TEST_VOLSIZE $3 $UZFS_TEST_POOL $UZFS_TEST_VOL uzfs_zrepl_vdev1
 	fi
-
-	log_must $ZFS create -V $UZFS_TEST_VOLSIZE \
-	    $UZFS_TEST_POOL/$UZFS_TEST_VOL -b $2
-
-	log_must $ZFS set sync=$3 $UZFS_TEST_POOL/$UZFS_TEST_VOL
 
 	log_must_not $UZFS_TEST
 	log_must $UZFS_TEST -T 4
 	sleep 5
-	log_must kill -SIGKILL $TGT_PID2
 
-	log_must rm "$TMPDIR/uztest.1a"
-	log_must rm "$TMPDIR/uztest.log"
+	if [ "$1" == "log" ]; then
+		cleanup_uzfs_test $UZFS_TEST_POOL uzfs_zrepl_vdev1 uzfs_zrepl_log1
+	else
+		cleanup_uzfs_test $UZFS_TEST_POOL uzfs_zrepl_vdev1
+	fi
+
+	stop_zrepl
 	return 0
 }
 
@@ -685,81 +897,135 @@ greater()
 run_uzfs_test()
 {
 	log_must_not $UZFS_TEST
+	local pid1 pid2 pid3 pid4 pid5
 
-	log_must $UZFS_TEST -t 30 -c -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -T 6
-	#log_must $UZFS_TEST -t 30 -c -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -s -T 6
-	log_must $UZFS_TEST -t 30 -c -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -l -T 6
-	#log_must $UZFS_TEST -t 30 -c -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -s -l -T 6
+	log_must setup_uzfs_test nolog 4096 $UZFS_TEST_VOLSIZE disabled uzfs_pool1 uzfs_vol1 uzfs_test_vdev1
+	log_must $UZFS_TEST -t 30 -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -p uzfs_pool1 -d uzfs_vol1 -T 6 &
+	pid1=$!
 
-	log_must $UZFS_TEST -t 30 -c -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -i 8192 -b 65536 -T 6
-	#log_must $UZFS_TEST -t 30 -c -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -s -i 8192 -b 65536 -T 6
-	log_must $UZFS_TEST -t 30 -c -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -l -i 8192 -b 65536 -T 6
-	#log_must $UZFS_TEST -t 30 -c -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -s -l -i 8192 -b 65536 -T 6
+	log_must setup_uzfs_test nolog 4096 $UZFS_TEST_VOLSIZE disabled uzfs_pool2 uzfs_vol2 uzfs_test_vdev2
+	log_must $UZFS_TEST -t 30 -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -l -p uzfs_pool2 -d uzfs_vol2  -T 6 &
+	pid2=$!
 
-	log_must truncate -s 2G "$TMPDIR/uztest.1a"
-	log_must truncate -s 2G "$TMPDIR/uztest.log"
 
-	log_must setup_uzfs_test nolog 4096 disabled
-	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -T 2 > $TMPDIR/uzfs_test.out
-	ios1=$(cat /tmp/uzfs_test.out  | grep "Total write IOs" | awk '{print $4}')
+	log_must setup_uzfs_test nolog 4096 $UZFS_TEST_VOLSIZE disabled uzfs_pool3 uzfs_vol3 uzfs_test_vdev3
+	log_must $UZFS_TEST -t 30 -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
+	    -i 8192 -b 65536 -p uzfs_pool3 -d uzfs_vol3 -T 6 &
+	pid3=$!
+	log_must setup_uzfs_test nolog 4096 $UZFS_TEST_VOLSIZE disabled uzfs_pool4 uzfs_vol4 uzfs_test_vdev4
+	log_must $UZFS_TEST -t 30 -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
+	    -p uzfs_pool4 -d uzfs_vol4 -l -i 8192 -b 65536 -T 6 &
+	pid4=$!
 
-	log_must setup_uzfs_test nolog 4096 always
-	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -s -T 2 > $TMPDIR/uzfs_test.out
-	ios2=$(cat /tmp/uzfs_test.out  | grep "Total write IOs" | awk '{print $4}')
+	wait $pid1 $pid2 $pid3 $pid4
+	cleanup_uzfs_test uzfs_pool1 uzfs_test_vdev1
+	cleanup_uzfs_test uzfs_pool2 uzfs_test_vdev2
+	cleanup_uzfs_test uzfs_pool3 uzfs_test_vdev3
+	cleanup_uzfs_test uzfs_pool4 uzfs_test_vdev4
+
+	log_must setup_uzfs_test nolog 4096 $UZFS_TEST_VOLSIZE disabled uzfs_pool5 uzfs_vol5 uzfs_test_vdev5
+	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -p uzfs_pool5 -d uzfs_vol5\
+	    -a $UZFS_TEST_VOLSIZE_IN_NUM -T 2 > $TMPDIR/uzfs_test1.out &
+	pid1=$!
+
+	log_must setup_uzfs_test nolog 4096 $UZFS_TEST_VOLSIZE always uzfs_pool6 uzfs_vol6 uzfs_test_vdev6
+	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -p uzfs_pool6 -d uzfs_vol6 \
+	    -a $UZFS_TEST_VOLSIZE_IN_NUM -s -T 2 > $TMPDIR/uzfs_test2.out &
+	pid2=$!
+
+	wait $pid1 $pid2
+	ios1=$(cat /tmp/uzfs_test1.out  | grep "Total write IOs" | awk '{print $4}')
+	ios2=$(cat /tmp/uzfs_test2.out  | grep "Total write IOs" | awk '{print $4}')
+	log_must_not greater $ios1 $ios2
+
+	cleanup_uzfs_test uzfs_pool5 uzfs_test_vdev5
+	cleanup_uzfs_test uzfs_pool6 uzfs_test_vdev6
+
+	log_must setup_uzfs_test nolog 4096 $UZFS_TEST_VOLSIZE standard uzfs_pool6 uzfs_vol6 uzfs_test_vdev6
+	log_must $UZFS_TEST -t 30 -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
+	     -p uzfs_pool6 -d uzfs_vol6 -T 2 &
+	pid1=$!
+
+	log_must setup_uzfs_test log 4096 $UZFS_TEST_VOLSIZE disabled uzfs_pool7 uzfs_vol7 uzfs_test_vdev7 uzfs_test_log7
+	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
+	    -p uzfs_pool7 -d uzfs_vol7 -l -T 2 > $TMPDIR/uzfs_test1.out
+	pid2=$!
+
+	log_must setup_uzfs_test log 4096 $UZFS_TEST_VOLSIZE always uzfs_pool8 uzfs_vol8 uzfs_test_vdev8 uzfs_test_log8
+	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
+	    -p uzfs_pool8 -d uzfs_vol8 -s -l -T 2 > $TMPDIR/uzfs_test2.out &
+	pid3=$!
+	wait $pid1 $pid3 $pid3
+	ios1=$(cat /tmp/uzfs_test1.out  | grep "Total write IOs" | awk '{print $4}')
+	ios2=$(cat /tmp/uzfs_test2.out  | grep "Total write IOs" | awk '{print $4}')
 
 	log_must_not greater $ios1 $ios2
 
-	log_must setup_uzfs_test nolog 4096 standard
-	log_must $UZFS_TEST -t 30 -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -T 2
+	cleanup_uzfs_test uzfs_pool6 uzfs_test_vdev6
+	cleanup_uzfs_test uzfs_pool7 uzfs_test_vdev7 uzfs_test_log7
+	cleanup_uzfs_test uzfs_pool8 uzfs_test_vdev8 uzfs_test_log8
 
+	log_must setup_uzfs_test log 4096 $UZFS_TEST_VOLSIZE standard uzfs_pool9 uzfs_vol9 uzfs_test_vdev9 uzfs_test_log9
+	log_must $UZFS_TEST -t 30 -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
+	    -p uzfs_pool9 -d uzfs_vol9 -l -T 2 &
+	pid1=$!
 
-	log_must setup_uzfs_test log 4096 disabled
-	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -l -T 2 > $TMPDIR/uzfs_test.out
-	ios1=$(cat /tmp/uzfs_test.out  | grep "Total write IOs" | awk '{print $4}')
+	log_must setup_uzfs_test nolog 65536 $UZFS_TEST_VOLSIZE disabled uzfs_pool10 uzfs_vol10 uzfs_test_vdev10
+	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
+	    -p uzfs_pool10 -d uzfs_vol10 -i 8192 -b 65536 -T 2 > $TMPDIR/uzfs_test1.out &
+	pid2=$!
 
-	log_must setup_uzfs_test log 4096 always
-	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -s -l -T 2 > $TMPDIR/uzfs_test.out
-	ios2=$(cat /tmp/uzfs_test.out  | grep "Total write IOs" | awk '{print $4}')
+	log_must setup_uzfs_test nolog 65536 $UZFS_TEST_VOLSIZE always uzfs_pool11 uzfs_vol11 uzfs_test_vdev11
+	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
+	    -p uzfs_pool11 -d uzfs_vol11 -s -i 8192 -b 65536 -T 2 > $TMPDIR/uzfs_test2.out &
+	pid3=$!
 
-	log_must_not greater $ios1 $ios2
-
-	log_must setup_uzfs_test log 4096 standard
-	log_must $UZFS_TEST -t 30 -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -l -T 2
-
-
-	log_must setup_uzfs_test nolog 65536 disabled
-	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -i 8192 -b 65536 -T 2 > $TMPDIR/uzfs_test.out
-	ios1=$(cat /tmp/uzfs_test.out  | grep "Total write IOs" | awk '{print $4}')
-
-	log_must setup_uzfs_test nolog 65536 always
-	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -s -i 8192 -b 65536 -T 2 > $TMPDIR/uzfs_test.out
-	ios2=$(cat /tmp/uzfs_test.out  | grep "Total write IOs" | awk '{print $4}')
+	wait $pid1 $pid2 $pid3
+	ios1=$(cat /tmp/uzfs_test1.out  | grep "Total write IOs" | awk '{print $4}')
+	ios2=$(cat /tmp/uzfs_test2.out  | grep "Total write IOs" | awk '{print $4}')
 
 	log_must_not greater $ios1 $ios2
+	cleanup_uzfs_test uzfs_pool9 uzfs_test_vdev9 uzfs_test_log9
+	cleanup_uzfs_test uzfs_pool10 uzfs_test_vdev10
+	cleanup_uzfs_test uzfs_pool11 uzfs_test_vdev11
 
-	log_must setup_uzfs_test nolog 65536 standard
-	log_must $UZFS_TEST -t 30 -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -i 8192 -b 65536 -T 2
+	log_must setup_uzfs_test nolog 65536 $UZFS_TEST_VOLSIZE standard uzfs_pool12 uzfs_vol12 uzfs_test_vdev12
+	log_must $UZFS_TEST -t 30 -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
+	    -p uzfs_pool12 -d uzfs_vol12 -i 8192 -b 65536 -T 2 &
+	pid1=$!
 
+	log_must setup_uzfs_test log 65536 $UZFS_TEST_VOLSIZE disabled uzfs_pool13 uzfs_vol13 uzfs_test_vdev13 uzfs_test_log13
+	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
+	    -p uzfs_pool13 -d uzfs_vol13 -l -i 8192 -b 65536 -T 2 > $TMPDIR/uzfs_test1.out &
+	pid2=$!
 
-	log_must setup_uzfs_test log 65536 disabled
-	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -l -i 8192 -b 65536 -T 2 > $TMPDIR/uzfs_test.out
-	ios1=$(cat /tmp/uzfs_test.out  | grep "Total write IOs" | awk '{print $4}')
+	log_must setup_uzfs_test log 65536 $UZFS_TEST_VOLSIZE always uzfs_pool14 uzfs_vol14 uzfs_test_vdev14 uzfs_test_log14
+	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
+	    -p uzfs_pool14 -d uzfs_vol14 -s -l -i 8192 -b 65536 -T 2 > $TMPDIR/uzfs_test2.out &
+	pid3=$!
 
-	log_must setup_uzfs_test log 65536 always
-	log_must $UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -s -l -i 8192 -b 65536 -T 2 > $TMPDIR/uzfs_test.out
-	ios2=$(cat /tmp/uzfs_test.out  | grep "Total write IOs" | awk '{print $4}')
+	log_must setup_uzfs_test log 65536 $UZFS_TEST_VOLSIZE standard uzfs_pool15 uzfs_vol15 uzfs_test_vdev15 uzfs_test_log15
+	log_must $UZFS_TEST -t 30 -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
+	    -p uzfs_pool15 -d uzfs_vol15 -l -i 8192 -b 65536 -T 2 &
+	pid4=$!
 
+	log_must setup_uzfs_test nolog 4096 $UZFS_TEST_VOLSIZE standard uzfs_pool16 uzfs_vol16 uzfs_test_vdev16
+	log_must $UZFS_TEST -t 10 -T 0 -n 10 -p uzfs_pool16 -d uzfs_vol16 &
+	pid5=$!
+
+	wait $pid1 $pid2 $pid3 $pid4 $pid5
+
+	ios1=$(cat /tmp/uzfs_test1.out  | grep "Total write IOs" | awk '{print $4}')
+	ios2=$(cat /tmp/uzfs_test2.out  | grep "Total write IOs" | awk '{print $4}')
 	log_must_not greater $ios1 $ios2
 
-	log_must setup_uzfs_test log 65536 standard
-	log_must $UZFS_TEST -t 30 -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM -l -i 8192 -b 65536 -T 2
+	cleanup_uzfs_test uzfs_pool12 uzfs_test_vdev12
+	cleanup_uzfs_test uzfs_pool13 uzfs_test_vdev13 uzfs_test_log13
+	cleanup_uzfs_test uzfs_pool14 uzfs_test_vdev14 uzfs_test_log14
+	cleanup_uzfs_test uzfs_pool15 uzfs_test_vdev15 uzfs_test_log15
+	cleanup_uzfs_test uzfs_pool16 uzfs_test_vdev16
 
-	log_must $UZFS_TEST -t 10 -T 0 -n 10
-
-	log_must . $UZFS_TEST_SYNC_SH
-
-	log_must rm "$TMPDIR/uztest.1a"
-	log_must rm "$TMPDIR/uztest.log"
+	log_must run_sync_test
 
 	return 0
 }
@@ -789,6 +1055,7 @@ test_type :
 	- rebuild_test (zvol rebuild related tests)
 	- fio_test
 	- zrepl_test
+	- all (run all test)
 EOF
 }
 
@@ -822,12 +1089,24 @@ run_fio_test()
 
 run_pool_test()
 {
-	init_test
-	sleep 10
-	log_must test_stripe_pool
-	log_must test_mirror_pool
-	log_must test_raidz_pool
-	close_test
+	start_zrepl
+
+	local stripe_pid mirror_pid raidz_pid
+
+	log_must test_stripe_pool pool_test_ss_pool/ss_vol pool_test_ds_pool/ds_vol &
+	stripe_pid=$!
+
+	log_must test_mirror_pool pool_test_sm_pool/sm_vol pool_test_dm_pool/dm_vol &
+	mirror_pid=$!
+
+	log_must test_raidz_pool pool_test_sr_pool/sr_vol pool_test_dr_pool/dr_vol &
+	raidz_pid=$!
+
+	wait $stripe_pid
+	wait $mirror_pid
+	wait $raidz_pid
+
+	stop_zrepl
 }
 
 run_zrepl_test()
@@ -839,32 +1118,75 @@ run_zrepl_test()
 
 run_zvol_test()
 {
+	local ztest_pid
+
+	start_zrepl
+
+	log_must $ZTEST &
+	ztest_pid=$!
+
 	log_must run_uzfs_test
 	log_must run_dmu_test
 	log_must $GTEST_UZFS
-	log must $GTEST_EXPORT
+	log_must $GTEST_EXPORT
 	log_must $GTEST_ZREPL_PROT
-	log_must $ZTEST
+
+	wait $ztest_pid
+	stop_zrepl
 }
 
 run_rebuild_test()
 {
-	log_must $UZFS_TEST -T 3 -t 60 -n 2 -a 419430400
-	log_must $UZFS_TEST -T 3 -t 60 -n 2 -a 629145600
+	local pid1 pid2
+	start_zrepl
 
+	log_must setup_uzfs_test nolog 4096 $VOLSIZE standard uzfs_rebuild_pool1 uzfs_vol1 uzfs_rebuild_vdev1
+	log_must setup_uzfs_test nolog 4096 $VOLSIZE standard uzfs_rebuild_pool2 uzfs_vol1 uzfs_rebuild_vdev2
+
+	log_must $UZFS_TEST -T 0 -t 10 -n 10 -p uzfs_rebuild_pool2 -d uzfs_vol1 -a 419430400 &
+	pid1=$!
+
+	wait $pid1
+	stop_zrepl
+	return
+	log_must setup_uzfs_test nolog 4096 $VOLSIZE standard uzfs_rebuild_pool3 uzfs_vol1 uzfs_rebuild_vdev3
+	log_must setup_uzfs_test nolog 4096 $VOLSIZE standard uzfs_rebuild_pool4 uzfs_vol1 uzfs_rebuild_vdev4
+
+	log_must $UZFS_TEST -T 3 -t 60 -n 2 -p uzfs_rebuild_pool3,uzfs_rebuild_pool4 -d uzfs_vol1 -a 629145600 &
+	pid2=$!
+
+	wait $pid1 $pid2
+	cleanup_uzfs_test uzfs_rebuild_pool1 uzfs_rebuild_vdev1
+	cleanup_uzfs_test uzfs_rebuild_pool2 uzfs_rebuild_vdev2
+	cleanup_uzfs_test uzfs_rebuild_pool3 uzfs_rebuild_vdev3
+	cleanup_uzfs_test uzfs_rebuild_pool4 uzfs_rebuild_vdev4
+
+	stop_zrepl
 }
 
-test_func="run_${test_type}"
-type -t $test_func
-if [ $? -eq 0 ]; then
-	START=$(date +%s.%N)
-	$test_func
-	END=$(date +%s.%N)
-	DIFF=$(echo "scale=0;$END - $START" | bc)
-	echo -e "\n####################################"
-	echo "All cases passed for $test_type in ${DIFF%.*} seconds"
-	echo "####################################"
+execute_test() {
+	test_func="run_$1"
+	type -t $test_func > /dev/null
+	if [ $? -eq 0 ]; then
+		START=$(date +%s.%N)
+		$test_func
+		END=$(date +%s.%N)
+		DIFF=$(echo "scale=0;$END - $START" | bc)
+		echo -e "\n####################################"
+		echo "All cases passed for $1 in ${DIFF%.*} seconds"
+		echo "####################################"
+	else
+		usage
+		exit 1
+	fi
+}
+
+if [ $test_type == "all" ]; then
+	execute_test "pool_test"
+	execute_test "zvol_test"
+	execute_test "rebuild_test"
+	execute_test "zrepl_test"
+	execute_test "fio_test"
 else
-	usage
-	exit 1
+	execute_test $test_type
 fi

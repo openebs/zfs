@@ -3,6 +3,7 @@
 #include <sys/zap_impl.h>
 #include <uzfs_mgmt.h>
 #include <uzfs_zap.h>
+#include <zrepl_mgmt.h>
 #include <uzfs_test.h>
 
 /*
@@ -113,6 +114,7 @@ uzfs_zvol_zap_operation(void *arg)
 {
 	uzfs_test_info_t *test_info = (uzfs_test_info_t *)arg;
 	int i = 0;
+	char name[MAXNAMELEN];
 	hrtime_t end, now;
 	spa_t *spa;
 	zvol_state_t *zvol;
@@ -122,11 +124,17 @@ uzfs_zvol_zap_operation(void *arg)
 	struct timespec ts;
 	int err1, err2;
 	txg_update_interval_time = hz;
+	zvol_info_t *zinfo = NULL;
 
-	setup_unit_test();
-	unit_test_create_pool_ds();
 	open_pool(&spa);
-	open_ds(spa, &zvol);
+	zinfo = uzfs_zinfo_lookup(ds);
+	zvol = zinfo->zv;
+	if (!zvol) {
+		printf("couldn't find zvol\n");
+		uzfs_close_pool(spa);
+		uzfs_fini();
+		exit(1);
+	}
 
 	while (i++ < test_iterations) {
 		zap_count = uzfs_random(16) + 1;
@@ -170,7 +178,7 @@ uzfs_zvol_zap_operation(void *arg)
 	end = now + (hrtime_t)(total_time_in_sec * (hrtime_t)(NANOSEC));
 
 	zfs_txg_timeout = 1;
-	ts.tv_sec = 3;
+	ts.tv_sec = 5;
 	ts.tv_nsec = 0;
 
 	while (1) {
@@ -203,6 +211,8 @@ uzfs_zvol_zap_operation(void *arg)
 			break;
 	}
 
-	uzfs_close_dataset(zvol);
+	strlcpy(name, zinfo->name, MAXNAMELEN);
+	uzfs_zinfo_drop_refcnt(zinfo, 0);
+	uzfs_zinfo_destroy(name, NULL);
 	uzfs_close_pool(spa);
 }

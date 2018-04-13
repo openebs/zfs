@@ -18,6 +18,8 @@ env:
       ZFS_BUILD_TAGS=0
     - ZFS_TEST_TAGS=zrepl_test
       ZFS_BUILD_TAGS=0
+    - ZFS_TEST_TAGS=zrepl_rebuild_test
+      ZFS_BUILD_TAGS=0
     - ZFS_BUILD_TAGS=1
 before_install:
     - sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test

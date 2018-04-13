@@ -60,8 +60,9 @@ typedef struct worker_args {
 	int *threads_done;
 	uint64_t io_block_size;
 	uint64_t active_size;
-	int sfd;
+	int sfd[2];
 	int max_iops;
+	int rebuild_test;
 } worker_args_t;
 
 typedef struct uzfs_test_info {
@@ -73,4 +74,5 @@ void uzfs_zvol_zap_operation(void *arg);
 void unit_test_fn(void *arg);
 void zrepl_utest(void *arg);
 void uzfs_rebuild_test(void *arg);
+void zrepl_rebuild_test(void *arg);
 #endif

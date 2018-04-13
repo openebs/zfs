@@ -55,6 +55,7 @@ uzfs_test_info_t uzfs_tests[] = {
 	{ uzfs_test_get_metablk_details, "Tests offset,len calculations of"\
 	    " metadata for given data block" },
 	{ unit_test_fn, "zvol random read/write verification with metadata" },
+	{ zrepl_rebuild_test, "ZFS rebuild test" },
 };
 
 uint64_t metaverify = 0;

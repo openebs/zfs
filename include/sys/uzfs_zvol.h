@@ -25,6 +25,7 @@
 #include <sys/zvol.h>
 #include <sys/zfs_rlock.h>
 #include <sys/zil.h>
+#include <zrepl_prot.h>
 
 #if !defined(_KERNEL)
 
@@ -47,7 +48,7 @@ typedef struct metaobj_blk_offset {
 	uint64_t m_offset;
 	uint64_t m_len;
 } metaobj_blk_offset_t;
-
+#if 0
 /*
  * zvol rebuild related state
  */
@@ -64,7 +65,7 @@ typedef enum zvol_status {
 	ZVOL_STATUS_HEALTHY,		/* zvol has latest data */
 	ZVOL_STATUS_DEGRADED		/* zvol is missing some data */
 } zvol_status_t;
-
+#endif
 /*
  * rebuild related information for zvol
  */
@@ -97,6 +98,7 @@ struct zvol_state {
 	zvol_rebuild_info_t rebuild_info;
 };
 
+#define	ZVOL_VOLUME_SIZE(zv)	(zv->zv_volsize)
 typedef struct zvol_state zvol_state_t;
 
 #define	UZFS_IO_TX_ASSIGN_FAIL	1

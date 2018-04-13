@@ -35,6 +35,7 @@ TMPDIR="/tmp"
 VOLSIZE="1G"
 UZFS_TEST_POOL="testp"
 UZFS_TEST_VOL="ds0"
+UZFS_REBUILD_VOL="ds1"
 UZFS_TEST_VOLSIZE="128M"
 UZFS_TEST_VOLSIZE_IN_NUM=134217728
 SRCPOOL="src_pool"
@@ -674,6 +675,45 @@ run_zrepl_uzfs_test()
 	return 0
 }
 
+run_zrepl_rebuild_uzfs_test()
+{
+	log_must truncate -s 2G "$TMPDIR/uztest.1a"
+	log_must truncate -s 2G "$TMPDIR/uztest.log"
+
+	$TGT >/dev/null &
+	TGT_PID2=$!
+	sleep 10 
+
+	export_pool $UZFS_TEST_POOL
+
+	if [ "$1" == "log" ]; then
+		log_must $ZPOOL create -f $UZFS_TEST_POOL "$TMPDIR/uztest.1a" \
+		    log "$TMPDIR/uztest.log"
+	else
+		log_must $ZPOOL create -f $UZFS_TEST_POOL "$TMPDIR/uztest.1a"
+	fi
+
+	log_must $ZFS create -V $UZFS_TEST_VOLSIZE \
+	    $UZFS_TEST_POOL/$UZFS_TEST_VOL -b $2
+
+	log_must $ZFS create -V $UZFS_TEST_VOLSIZE \
+	    $UZFS_TEST_POOL/$UZFS_REBUILD_VOL -b $2
+
+	log_must $ZFS set sync=$3 $UZFS_TEST_POOL/$UZFS_TEST_VOL
+	log_must $ZFS set sync=$3 $UZFS_TEST_POOL/$UZFS_REBUILD_VOL
+
+	log_must_not $UZFS_TEST
+	log_must $UZFS_TEST -T 7
+	sleep 20
+	log_must $ZFS destroy $UZFS_TEST_POOL/$UZFS_TEST_VOL
+	log_must $ZFS destroy $UZFS_TEST_POOL/$UZFS_REBUILD_VOL
+
+	log_must kill -SIGKILL $TGT_PID2
+
+	log_must rm "$TMPDIR/uztest.1a"
+	log_must rm "$TMPDIR/uztest.log"
+	return 0
+}
 greater()
 {
 	if [ $1 -le $2 ]; then
@@ -789,6 +829,7 @@ test_type :
 	- rebuild_test (zvol rebuild related tests)
 	- fio_test
 	- zrepl_test
+	- zrepl_rebuild_test
 EOF
 }
 
@@ -852,6 +893,11 @@ run_rebuild_test()
 	log_must $UZFS_TEST -T 3 -t 60 -n 2 -a 419430400
 	log_must $UZFS_TEST -T 3 -t 60 -n 2 -a 629145600
 
+}
+
+run_zrepl_rebuild_test()
+{
+	log_must run_zrepl_rebuild_uzfs_test log 4096 disabled
 }
 
 test_func="run_${test_type}"

@@ -48,6 +48,7 @@ typedef enum zvol_info_state_e {
 
 typedef struct thread_args_s {
 	char zvol_name[MAXNAMELEN];
+	char dw_zvol_name[MAXNAMELEN];
 	int fd;
 } thread_args_t;
 
@@ -63,6 +64,7 @@ typedef struct zvol_info_s {
 	int		is_io_ack_sender_created;
 	uint64_t	checkpointed_io_seq;
 	taskq_t		*uzfs_zvol_taskq;	/* Taskq for minor management */
+	uint16_t 	rebuild_cnt;		/* Rebuild_cnt */
 
 	/* Thread sync related */
 
@@ -100,6 +102,11 @@ typedef struct zvol_io_cmd_s {
 	metadata_desc_t	*metadata_desc;
 	int		conn;
 } zvol_io_cmd_t;
+
+typedef struct zvol_rebuild_s {
+	zvol_info_t	*zinfo;
+	int		fd;
+} zvol_rebuild_t;
 
 extern int uzfs_zinfo_init(void *zv, const char *ds_name);
 extern zvol_info_t *uzfs_zinfo_lookup(const char *name);

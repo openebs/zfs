@@ -295,19 +295,19 @@ uzfs_zvol_worker(void *arg)
 	metadata_desc_t	**metadata_desc;
 	int		rc = 0;
 	int 		write = 0;
-	boolean_t	rebuild;
+	boolean_t	rebuild_cmd_req;
 
 	zio_cmd = (zvol_io_cmd_t *)arg;
 	hdr = &zio_cmd->hdr;
 	zinfo = zio_cmd->zv;
 	zvol_state = zinfo->zv;
-	rebuild = hdr->flags & ZVOL_OP_FLAG_REBUILD;
+	rebuild_cmd_req = hdr->flags & ZVOL_OP_FLAG_REBUILD;
+
 	/*
-	 * Read metadata/IO# too in following cases:
-	 * 1. When Replica is helping other replica to rebuild
-	 * 2. When Replica is not healthy, need to return metadata too
+	 * If zvol hasn't passed rebuild phase or if read
+	 * is meant for rebuild then we need the metadata
 	 */
-	if (rebuild || ZVOL_IS_REBUILDED(zvol_state)) {
+	if (!rebuild_cmd_req && ZVOL_IS_REBUILDED(zvol_state)) {
 		metadata_desc = NULL;
 		zio_cmd->metadata_desc = NULL;
 	} else {
@@ -349,7 +349,7 @@ uzfs_zvol_worker(void *arg)
 	/*
 	 * We are not sending ACK for writes meant for rebuild
 	 */
-	if (rebuild && (hdr->opcode == ZVOL_OPCODE_WRITE)) {
+	if (rebuild_cmd_req && (hdr->opcode == ZVOL_OPCODE_WRITE)) {
 		zio_cmd_free(&zio_cmd);
 		goto drop_refcount;
 	}
@@ -769,15 +769,8 @@ uzfs_zvol_rebuild_dw_replica(void *arg)
 
 	thrd_arg = (thread_args_t *)arg;
 	sfd = thrd_arg->fd;
-	zinfo = uzfs_zinfo_lookup(thrd_arg->dw_zvol_name);
+	zinfo = thrd_arg->zinfo;
 
-	if (zinfo == NULL) {
-		ZREPL_ERRLOG("Rebuild volume %s not found\n",
-		    thrd_arg->dw_zvol_name);
-		goto exit;
-	}
-	/* Count how many rebuilds we are initializing on this replica */
-	atomic_inc_16(&zinfo->rebuild_cnt);
 	uzfs_zvol_get_last_committed_io_no(zinfo->zv, &checkpointed_io_seq);
 	zvol_state = zinfo->zv;
 	bzero(&hdr, sizeof (hdr));
@@ -806,14 +799,15 @@ next_step:
 			ZREPL_ERRLOG("Socket write failed, err: %d\n", errno);
 			goto exit;
 		}
-		atomic_dec_16(&zinfo->rebuild_cnt);
-		if (!zinfo->rebuild_cnt) {
+		atomic_dec_16(&zinfo->zv->rebuild_info.rebuild_cnt);
+		if (!zinfo->zv->rebuild_info.rebuild_cnt) {
 			/* Mark replica healthy now */
 			uzfs_zvol_set_rebuild_status(zinfo->zv,
 			    ZVOL_REBUILDING_DONE);
 			uzfs_zvol_set_status(zinfo->zv, ZVOL_STATUS_HEALTHY);
 		}
-		ZREPL_ERRLOG("Rebuild on LUN:%s completed\n", zinfo->name);
+		ZREPL_ERRLOG("Rebuilding on Replica:%s completed\n",
+		    zinfo->name);
 		goto exit;
 	} else {
 		bzero(&hdr, sizeof (hdr));
@@ -855,7 +849,11 @@ next_step:
 			    "error: %d\n", errno);
 			goto exit;
 		}
-		/* Take refcount for uzfs_zvol_worker to work on it */
+
+		/*
+		 * Take refcount for uzfs_zvol_worker to work on it.
+		 * Will dropped by uzfs_zvol_worker once cmd is executed.
+		 */
 		uzfs_zinfo_take_refcnt(zinfo, B_FALSE);
 		zio_cmd->zv = zinfo;
 		taskq_dispatch(zinfo->uzfs_zvol_taskq, uzfs_zvol_worker,
@@ -867,10 +865,12 @@ exit:
 	kmem_free(thrd_arg, sizeof (thread_args_t));
 	if (zio_cmd != NULL)
 		zio_cmd_free(&zio_cmd);
-	if (zinfo != NULL)
-		uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
 	if (sfd != -1)
 		close(sfd);
+	/*
+	 * Parent thread have taken refcount, drop it now.
+	 */
+	uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
 
 	printf("uzfs_zvol_rebuild_dw_replica thread exiting\n");
 	zk_thread_exit();
@@ -879,20 +879,54 @@ exit:
 static int
 uzfs_zvol_rebuild_dw_replica_start(zvol_io_hdr_t *hdr, int fd, char *buf)
 {
-	int			rc, io_sfd;
+	int			rc = 0;
+	int 			io_sfd = -1;
 	int			rebuild_op_cnt;
 	thread_args_t		*thrd_arg;
 	mgmt_ack_t		*mgmt_ack;
 	kthread_t		*thrd_info;
+	zvol_info_t		*zinfo = NULL;
 	struct sockaddr_in	replica_ip;
 
+	mgmt_ack = (mgmt_ack_t *)buf;
 	rebuild_op_cnt = hdr->len / sizeof (mgmt_ack_t);
-	ZREPL_LOG("Number of rebuild op triggered %d\n", rebuild_op_cnt);
+	ZREPL_LOG("Replica being rebuild:%s and rebuild ops requested:%d\n",
+	    mgmt_ack->dw_volname, rebuild_op_cnt);
+
 	while (rebuild_op_cnt) {
-		mgmt_ack = (mgmt_ack_t *)buf;
-		printf("Replica to be rebuilt: %s\n", mgmt_ack->volname);
-		printf("Replica's IP address: %s\n", mgmt_ack->ip);
-		printf("Replica's Port: %d\n", mgmt_ack->port);
+		ZREPL_LOG("Replica:%s helping in rebuild with IP:%s and Port%d",
+		    mgmt_ack->volname, mgmt_ack->ip, mgmt_ack->port);
+		if (zinfo == NULL) {
+			zinfo = uzfs_zinfo_lookup(mgmt_ack->dw_volname);
+			if (zinfo == NULL) {
+				ZREPL_ERRLOG("Replica being rebuilt:%s "
+				    "not found\n", mgmt_ack->dw_volname);
+				return (-1);
+			}
+
+			/*
+			 * Count how many rebuilds we are
+			 * initializing on this replica
+			 */
+			zinfo->zv->rebuild_info.rebuild_cnt = rebuild_op_cnt;
+		} else {
+			uzfs_zinfo_take_refcnt(zinfo, B_FALSE);
+		}
+
+		/*
+		 * Case where just one replica is being used by customer.
+		 */
+		if ((strcmp(mgmt_ack->volname, "")) == 0) {
+			zinfo->zv->rebuild_info.rebuild_cnt = 0;
+			/* Mark replica healthy now */
+			uzfs_zvol_set_rebuild_status(zinfo->zv,
+			    ZVOL_REBUILDING_DONE);
+			uzfs_zvol_set_status(zinfo->zv, ZVOL_STATUS_HEALTHY);
+			ZREPL_ERRLOG("Rebuilding on Replica:%s completed\n",
+			    zinfo->name);
+			uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
+			goto exit;
+		}
 
 		bzero((char *)&replica_ip, sizeof (replica_ip));
 		replica_ip.sin_family = AF_INET;
@@ -902,20 +936,21 @@ uzfs_zvol_rebuild_dw_replica_start(zvol_io_hdr_t *hdr, int fd, char *buf)
 		if (io_sfd == -1) {
 			ZREPL_ERRLOG("Rebuild IO socket create "
 			    "and bind failed\n");
-			return (-1);
+			rc = -1;
+			goto exit;
 		}
 
 		rc = connect(io_sfd, (struct sockaddr *)&replica_ip,
 		    sizeof (replica_ip));
 		if (rc == -1) {
-			printf("Failed to connect to bad replica IO port\n");
-			return (-1);
+			printf("Failed to connect to port\n");
+			rc = -1;
+			goto exit;
 		}
 
 		thrd_arg = kmem_alloc(sizeof (thread_args_t), KM_SLEEP);
+		thrd_arg->zinfo = zinfo;
 		thrd_arg->fd = io_sfd;
-		strlcpy(thrd_arg->dw_zvol_name, mgmt_ack->dw_volname,
-		    MAXNAMELEN);
 		strlcpy(thrd_arg->zvol_name, mgmt_ack->volname, MAXNAMELEN);
 		thrd_info = zk_thread_create(NULL, 0,
 		    (thread_func_t)uzfs_zvol_rebuild_dw_replica,
@@ -925,6 +960,9 @@ uzfs_zvol_rebuild_dw_replica_start(zvol_io_hdr_t *hdr, int fd, char *buf)
 		rebuild_op_cnt--;
 		mgmt_ack++;
 	}
+exit:
+	if (rc == -1)
+		uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
 	return (0);
 }
 
@@ -1149,7 +1187,8 @@ read_socket:
 			break;
 
 		case ZVOL_OPCODE_REBUILD_COMPLETE:
-			ZREPL_LOG("Rebuild on LUN:%s completed\n", zinfo->name);
+			ZREPL_LOG("Rebuild process is over on Replica:%s\n",
+			    zinfo->name);
 			goto exit;
 			break;
 

@@ -46,12 +46,6 @@ typedef enum zvol_info_state_e {
 	ZVOL_INFO_STATE_OFFLINE,
 } zvol_info_state_t;
 
-typedef struct thread_args_s {
-	char zvol_name[MAXNAMELEN];
-	char dw_zvol_name[MAXNAMELEN];
-	int fd;
-} thread_args_t;
-
 typedef struct zvol_info_s {
 
 	SLIST_ENTRY(zvol_info_s) zinfo_next;
@@ -64,7 +58,6 @@ typedef struct zvol_info_s {
 	int		is_io_ack_sender_created;
 	uint64_t	checkpointed_io_seq;
 	taskq_t		*uzfs_zvol_taskq;	/* Taskq for minor management */
-	uint16_t 	rebuild_cnt;		/* Rebuild_cnt */
 
 	/* Thread sync related */
 
@@ -93,6 +86,12 @@ typedef struct zvol_info_s {
 	int 		read_req_ack_cnt;
 	int 		write_req_ack_cnt;
 } zvol_info_t;
+
+typedef struct thread_args_s {
+	char zvol_name[MAXNAMELEN];
+	zvol_info_t *zinfo;
+	int fd;
+} thread_args_t;
 
 typedef struct zvol_io_cmd_s {
 	STAILQ_ENTRY(zvol_io_cmd_s) cmd_link;

@@ -72,6 +72,7 @@ typedef enum zvol_status {
 typedef struct zvol_rebuild_info {
 	zvol_rebuild_status_t zv_rebuild_status; /* zvol rebuilding status */
 	uint64_t rebuild_bytes;
+	uint16_t rebuild_cnt;
 } zvol_rebuild_info_t;
 
 /*

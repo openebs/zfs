@@ -1068,9 +1068,12 @@ run_zvol_test()
 
 	run_uzfs_test
 	run_dmu_test
+
+	stop_zrepl
 	log_must $GTEST_UZFS
 	log_must $GTEST_EXPORT
 	log_must $GTEST_ZREPL_PROT
+	start_zrepl
 
 	wait $ztest_pid
 }

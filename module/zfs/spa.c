@@ -4573,10 +4573,16 @@ spa_export_common(char *pool, int new_state, nvlist_t **oldconfig,
 	if ((new_state == POOL_STATE_DESTROYED) ||
 	    (new_state == POOL_STATE_EXPORTED)) {
 		uzfs_zvol_destroy_cb(NULL,  spa);
-		uzfs_spa_fini(spa);
 	}
 #endif
 	mutex_enter(&spa_namespace_lock);
+
+#ifndef _KERNEL
+	if ((new_state == POOL_STATE_DESTROYED) ||
+	    (new_state == POOL_STATE_EXPORTED))
+		uzfs_spa_fini(spa);
+#endif
+
 	spa_close(spa, FTAG);
 
 	if (spa->spa_state == POOL_STATE_UNINITIALIZED)
@@ -4600,6 +4606,13 @@ spa_export_common(char *pool, int new_state, nvlist_t **oldconfig,
 	    (spa->spa_inject_ref != 0 &&
 	    new_state != POOL_STATE_UNINITIALIZED)) {
 		spa_async_resume(spa);
+
+#ifndef _KERNEL
+		if (((new_state == POOL_STATE_DESTROYED) ||
+		    (new_state == POOL_STATE_EXPORTED)) &&
+		    spa->spa_us == NULL)
+			uzfs_spa_init(spa);
+#endif
 		mutex_exit(&spa_namespace_lock);
 		return (SET_ERROR(EBUSY));
 	}
@@ -4614,6 +4627,13 @@ spa_export_common(char *pool, int new_state, nvlist_t **oldconfig,
 		if (!force && new_state == POOL_STATE_EXPORTED &&
 		    spa_has_active_shared_spare(spa)) {
 			spa_async_resume(spa);
+
+#ifndef _KERNEL
+			if (((new_state == POOL_STATE_DESTROYED) ||
+			    (new_state == POOL_STATE_EXPORTED)) &&
+			    spa->spa_us == NULL)
+				uzfs_spa_init(spa);
+#endif
 			mutex_exit(&spa_namespace_lock);
 			return (SET_ERROR(EXDEV));
 		}

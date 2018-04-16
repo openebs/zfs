@@ -85,7 +85,6 @@ get_snapshot_zv(zvol_state_t *zv, char *snap_name, zvol_state_t **snap_zv)
 			printf("Failed to create snapshot for %s\n",
 			    zv->zv_name);
 			strfree(dataset);
-			strfree(snap_name);
 			return (ret);
 		}
 

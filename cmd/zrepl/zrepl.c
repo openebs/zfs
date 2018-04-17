@@ -185,7 +185,7 @@ zio_cmd_free(zvol_io_cmd_t **cmd)
 		case ZVOL_OPCODE_WRITE:
 		case ZVOL_OPCODE_HANDSHAKE:
 			if (zio_cmd->buf != NULL) {
-				free(zio_cmd->buf);
+				kmem_free(zio_cmd->buf, zio_cmd->hdr.len);
 			}
 			break;
 
@@ -199,7 +199,7 @@ zio_cmd_free(zvol_io_cmd_t **cmd)
 			break;
 	}
 
-	free(zio_cmd);
+	kmem_free(zio_cmd, sizeof (zvol_io_cmd_t));
 	*cmd = NULL;
 }
 
@@ -247,12 +247,14 @@ static int
 uzfs_submit_writes(zvol_info_t *zinfo, zvol_io_cmd_t *zio_cmd)
 {
 	blk_metadata_t	metadata;
+	boolean_t	is_rebuild = B_FALSE;
 	zvol_io_hdr_t 	*hdr = &zio_cmd->hdr;
 	struct zvol_io_rw_hdr *write_hdr;
 	char	*datap = (char *)zio_cmd->buf;
 	size_t	data_offset = hdr->offset;
 	size_t	remain = hdr->len;
 	int	rc = 0;
+	is_rebuild = hdr->flags & ZVOL_OP_FLAG_REBUILD;
 
 	while (remain > 0) {
 		if (remain < sizeof (*write_hdr))
@@ -267,7 +269,7 @@ uzfs_submit_writes(zvol_info_t *zinfo, zvol_io_cmd_t *zio_cmd)
 			return (-1);
 
 		rc = uzfs_write_data(zinfo->zv, datap, data_offset,
-		    write_hdr->len, &metadata, B_FALSE);
+		    write_hdr->len, &metadata, is_rebuild);
 		if (rc != 0)
 			break;
 
@@ -421,7 +423,7 @@ uzfs_zvol_io_receiver(void *arg)
 	zvol_io_cmd_t	*zio_cmd;
 	kthread_t	*thrd_info;
 	fd = *(int *)arg;
-	free(arg);
+	kmem_free(arg, sizeof (int));
 
 	while (1) {
 		/*
@@ -679,7 +681,6 @@ uzfs_zvol_mgmt_sync(zvol_io_hdr_t *hdr, int sfd, char *name)
 	zvol_info_t	*zinfo = NULL;
 
 	ZREPL_LOG("Sync cmd received for Volume: %s\n", name);
-	zinfo = uzfs_zinfo_lookup(name);
 	if ((zinfo = uzfs_zinfo_lookup(name)) == NULL) {
 		ZREPL_ERRLOG("Unknown zvol: %s\n", name);
 		hdr->status = ZVOL_OP_STATUS_FAILED;
@@ -771,6 +772,8 @@ uzfs_zvol_rebuild_dw_replica(void *arg)
 	sfd = thrd_arg->fd;
 	zinfo = thrd_arg->zinfo;
 
+	/* Set state in-progess state now */
+	uzfs_zvol_set_rebuild_status(zinfo->zv, ZVOL_REBUILDING_IN_PROGRESS);
 	uzfs_zvol_get_last_committed_io_no(zinfo->zv, &checkpointed_io_seq);
 	zvol_state = zinfo->zv;
 	bzero(&hdr, sizeof (hdr));
@@ -856,8 +859,7 @@ next_step:
 		 */
 		uzfs_zinfo_take_refcnt(zinfo, B_FALSE);
 		zio_cmd->zv = zinfo;
-		taskq_dispatch(zinfo->uzfs_zvol_taskq, uzfs_zvol_worker,
-		    zio_cmd, TQ_SLEEP);
+		uzfs_zvol_worker(zio_cmd);
 		zio_cmd = NULL;
 	}
 
@@ -867,6 +869,9 @@ exit:
 		zio_cmd_free(&zio_cmd);
 	if (sfd != -1)
 		close(sfd);
+
+	if (ZVOL_IS_DEGRADED(zinfo->zv))
+		uzfs_zvol_set_rebuild_status(zinfo->zv, ZVOL_REBUILDING_INIT);
 	/*
 	 * Parent thread have taken refcount, drop it now.
 	 */
@@ -1015,7 +1020,7 @@ close_conn:
 		buf = kmem_alloc(hdr.len * sizeof (char), KM_SLEEP);
 		rc = uzfs_zvol_socket_read(sfd, buf, hdr.len);
 		if (rc != 0) {
-			free(buf);
+			kmem_free(buf, hdr.len);
 			goto close_conn;
 		}
 
@@ -1057,16 +1062,16 @@ close_conn:
 
 		/* More management commands will come here in future */
 		default:
+			kmem_free(buf, hdr.len);
 			/* Command yet to be implemented */
 			hdr.status = ZVOL_OP_STATUS_FAILED;
 			hdr.len = 0;
 			(void) uzfs_zvol_socket_write(sfd,
 			    (char *)&hdr, sizeof (hdr));
-			free(buf);
 			goto close_conn;
 			break; /* Should not be reached */
 		}
-		free(buf);
+		kmem_free(buf, hdr.len);
 	}
 exit:
 	if (sfd < 0)
@@ -1112,7 +1117,7 @@ uzfs_zvol_rebuild_scanner_callback(off_t offset, size_t len,
 static void
 uzfs_zvol_rebuild_scanner(void *arg)
 {
-	int		fd;
+	int		fd = -1;
 	zvol_info_t	*zinfo = NULL;
 	zvol_io_hdr_t	hdr;
 	int 		rc = 0;
@@ -1124,34 +1129,47 @@ uzfs_zvol_rebuild_scanner(void *arg)
 	zvol_io_cmd_t	*zio_cmd;
 
 	fd = *(int *)arg;
-	free(arg);
+	kmem_free(arg, sizeof (int));
 
 read_socket:
 	rc = uzfs_zvol_read_header(fd, &hdr);
 	if (rc != 0) {
-		close(fd);
 		goto exit;
 	}
 
 	printf("op_code=%d io_seq=%ld\n", hdr.opcode, hdr.io_seq);
+
+	/* Handshake yet to happen */
+	if ((hdr.opcode != ZVOL_OPCODE_HANDSHAKE) && (zinfo == NULL)) {
+		goto exit;
+	}
 	switch (hdr.opcode) {
 
 		case ZVOL_OPCODE_HANDSHAKE:
 			name = kmem_alloc(hdr.len, KM_SLEEP);
 			rc = uzfs_zvol_socket_read(fd, name, hdr.len);
 			if (rc != 0) {
-				free(name);
+				kmem_free(name, hdr.len);
 				ZREPL_ERRLOG("Socket read error: %d\n", errno);
+				goto exit;
+			}
+
+			/* Handshake already happened */
+			if (zinfo != NULL) {
+				ZREPL_ERRLOG("Again handshake request on "
+				    "<fd:%d - volume:%s> for volume:%s \n",
+				    fd, zinfo->name, name);
+				kmem_free(name, hdr.len);
 				goto exit;
 			}
 
 			zinfo = uzfs_zinfo_lookup(name);
 			if (zinfo == NULL) {
 				ZREPL_ERRLOG("Volume/LUN: %s not found", name);
-				free(name);
+				kmem_free(name, hdr.len);
 				goto exit;
 			}
-			free(name);
+			kmem_free(name, hdr.len);
 			warg.zinfo = zinfo;
 			warg.fd = fd;
 			goto read_socket;
@@ -1193,14 +1211,17 @@ read_socket:
 			break;
 
 		default:
-			ASSERT(0);
+			ZREPL_LOG("Wrong opcode:%d\n", hdr.opcode);
+			goto exit;
 			break;
 	}
 
 exit:
-	if (zinfo != NULL) {
+	if (zinfo != NULL)
 		uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
-	}
+
+	if (fd != -1)
+		close(fd);
 
 	printf("uzfs_zvol_rebuild_scanner thread exiting\n");
 	zk_thread_exit();
@@ -1349,8 +1370,8 @@ uzfs_zvol_io_conn_acceptor(void)
 				"(host=%s, port=%s)\n", new_fd, hbuf, sbuf);
 			}
 
-			free(hbuf);
-			free(sbuf);
+			kmem_free(hbuf, sizeof (NI_MAXHOST));
+			kmem_free(sbuf, sizeof (NI_MAXSERV));
 #endif
 			thread_fd = kmem_alloc(sizeof (int), KM_SLEEP);
 			*thread_fd = new_fd;
@@ -1470,7 +1491,7 @@ uzfs_zvol_io_ack_sender(void *arg)
 	thrd_arg = (thread_args_t *)arg;
 	fd = thrd_arg->fd;
 	zinfo = uzfs_zinfo_lookup(thrd_arg->zvol_name);
-	free(arg);
+	kmem_free(arg, sizeof (thread_args_t));
 	while (1) {
 		int rc = 0;
 		(void) pthread_mutex_lock(&zinfo->complete_queue_mutex);

@@ -47,7 +47,6 @@ extern "C" {
 #define	MAX_IP_LEN	64
 #define	TARGET_PORT	6060
 
-#define	ZVOL_OP_FLAG_NORMAL 0x00
 #define	ZVOL_OP_FLAG_REBUILD 0x01
 
 enum zvol_op_code {
@@ -107,8 +106,8 @@ struct mgmt_ack {
 	uint64_t zvol_guid;
 	uint16_t port;
 	char	ip[MAX_IP_LEN];
-	char	volname[MAX_NAME_LEN];
-	char	dw_volname[MAX_NAME_LEN];
+	char	volname[MAX_NAME_LEN]; // Replica helping rebuild
+	char	dw_volname[MAX_NAME_LEN]; // Replica being rebuilt
 } __attribute__((packed));
 
 typedef struct mgmt_ack mgmt_ack_t;

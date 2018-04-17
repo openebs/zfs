@@ -48,24 +48,7 @@ typedef struct metaobj_blk_offset {
 	uint64_t m_offset;
 	uint64_t m_len;
 } metaobj_blk_offset_t;
-#if 0
-/*
- * zvol rebuild related state
- */
-typedef enum zvol_rebuild_status {
-	ZVOL_REBUILDING_INIT,		/* rebuilding initiated on zvol */
-	ZVOL_REBUILDING_IN_PROGRESS,	/* zvol is rebuilding */
-	ZVOL_REBUILDING_DONE		/* done with rebuilding */
-} zvol_rebuild_status_t;
 
-/*
- * zvol status
- */
-typedef enum zvol_status {
-	ZVOL_STATUS_HEALTHY,		/* zvol has latest data */
-	ZVOL_STATUS_DEGRADED		/* zvol is missing some data */
-} zvol_status_t;
-#endif
 /*
  * rebuild related information for zvol
  */

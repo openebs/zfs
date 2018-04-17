@@ -303,6 +303,7 @@ protected:
 		hdr_out.io_seq = ++m_ioseq;
 		hdr_out.offset = offset;
 		hdr_out.len = len;
+		hdr_out.flags = 0;
 
 		rc = write(m_data_fd, &hdr_out, sizeof (hdr_out));
 		ASSERT_EQ(rc, sizeof (hdr_out));

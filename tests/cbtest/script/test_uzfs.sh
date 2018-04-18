@@ -61,7 +61,7 @@ log_must()
 	logfile=`mktemp`
 
 	log_note $@ >> $logfile 2>&1
-	$@ >> $logfile 2>&1
+	$@ #>> $logfile 2>&1
 	status=$?
 
 	if [ $status -ne 0 ]; then
@@ -689,7 +689,19 @@ test_raidz_pool()
 
 run_fio_test()
 {
+	FIO_SRCDIR="/home/mayank/work/dustbin/fio"
 	local fio_pool="fio_pool"
+	stop_zrepl
+	start_zrepl
+
+	while [ 1 ]; do
+		netstat -apnt |grep 6060
+		if [ $? -ne 0 ]; then
+			break
+		else
+			sleep 5
+		fi
+	done
 
 	[ -z "$FIO_SRCDIR" ] && log_fail "FIO_SRCDIR must be defined"
 
@@ -700,7 +712,6 @@ run_fio_test()
 	    "$TMPDIR/fio_disk1.img"
 	log_must $ZFS create -sV $VOLSIZE -o volblocksize=4k $fio_pool/vol1
 	log_must $ZFS create -sV $VOLSIZE -o volblocksize=4k $fio_pool/vol2
-
 	cat >$TMPDIR/test.fio <<EOF
 [global]
 ioengine=replica.so
@@ -1082,7 +1093,6 @@ run_rebuild_test()
 {
 	local pid1 pid2
 
-	log_must setup_uzfs_test nolog 4096 $VOLSIZE standard uzfs_rebuild_pool1 uzfs_vol1 uzfs_rebuild_vdev1
 	log_must setup_uzfs_test nolog 4096 $VOLSIZE standard uzfs_rebuild_pool2 uzfs_vol1 uzfs_rebuild_vdev2
 
 	log_must $UZFS_TEST -T 0 -t 10 -n 10 -p uzfs_rebuild_pool2 -d uzfs_vol1 -a 419430400 &
@@ -1096,7 +1106,6 @@ run_rebuild_test()
 
 	wait $pid1 $pid2
 
-	cleanup_uzfs_test uzfs_rebuild_pool1 uzfs_rebuild_vdev1
 	cleanup_uzfs_test uzfs_rebuild_pool2 uzfs_rebuild_vdev2
 	cleanup_uzfs_test uzfs_rebuild_pool3 uzfs_rebuild_vdev3
 	cleanup_uzfs_test uzfs_rebuild_pool4 uzfs_rebuild_vdev4

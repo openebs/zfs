@@ -10,13 +10,13 @@ run_sync_test()
 	do
 		sudo $UZFS_TEST -S -w -T 1 -p uzfs_sync_pool1 -d uzfs_sync_vol1 | grep uzfs_sync_data > $TMPDIR/uzfs_sync_data
 		if [ $? != 0 ]; then
-			exit 1
+			return 1
 		fi
 
 		sudo $UZFS_TEST -T 1 -p uzfs_sync_pool1 -d uzfs_sync_vol1 \
 		    -V `awk '{print $2}' $TMPDIR/uzfs_sync_data` -m `awk '{print $3}' $TMPDIR/uzfs_sync_data`
 		if [ $? != 0 ]; then
-			exit 1
+			return 1
 		fi
 	done
 	cleanup_uzfs_test uzfs_sync_pool1 uzfs_test_sync_vdev1
@@ -29,13 +29,13 @@ run_sync_test()
 	do
 		sudo $UZFS_TEST -S -l -p uzfs_sync_pool1 -d uzfs_sync_vol1 -T 1 -w | grep uzfs_sync_data > $TMPDIR/uzfs_sync_data
 		if [ $? != 0 ]; then
-			exit 1;
+			return 1;
 		fi
 
 		sudo $UZFS_TEST -T 1 -p uzfs_sync_pool1 -d uzfs_sync_vol1 \
 		    -V `awk '{print $2}' $TMPDIR/uzfs_sync_data` -m `awk '{print $3}' $TMPDIR/uzfs_sync_data`
 		if [ $? != 0 ]; then
-			exit 1;
+			return 1;
 		fi
 	done
 	cleanup_uzfs_test uzfs_sync_pool1 uzfs_test_sync_vdev1 uzfs_test_sync_log1
@@ -48,13 +48,13 @@ run_sync_test()
 	do
 		sudo $UZFS_TEST -S -i 8192 -p uzfs_sync_pool1 -d uzfs_sync_vol1 -b 65536 -T 1 -w | grep uzfs_sync_data > $TMPDIR/uzfs_sync_data
 		if [ $? != 0 ]; then
-			exit 1;
+			return 1;
 		fi
 
 		sudo $UZFS_TEST -i 8192 -b 65536 -T 1 -p uzfs_sync_pool1 -d uzfs_sync_vol1 \
 		    -V `awk '{print $2}' $TMPDIR/uzfs_sync_data` -m `awk '{print $3}' $TMPDIR/uzfs_sync_data`
 		if [ $? != 0 ]; then
-			exit 1;
+			return 1;
 		fi
 	done
 	cleanup_uzfs_test uzfs_sync_pool1 uzfs_test_sync_vdev1
@@ -67,13 +67,13 @@ run_sync_test()
 	do
 		sudo $UZFS_TEST -S -i 8192 -b 65536 -p uzfs_sync_pool1 -d uzfs_sync_vol1 -l -T 1 -w | grep uzfs_sync_data > $TMPDIR/uzfs_sync_data
 		if [ $? != 0 ]; then
-			exit 1;
+			return 1;
 		fi
 
 		sudo $UZFS_TEST -i 8192 -b 65536 -T 1 -p uzfs_sync_pool1 -d uzfs_sync_vol1 \
 		    -V `awk '{print $2}' $TMPDIR/uzfs_sync_data` -m `awk '{print $3}' $TMPDIR/uzfs_sync_data`
 		if [ $? != 0 ]; then
-			exit 1;
+			return 1;
 		fi
 	done
 	cleanup_uzfs_test uzfs_sync_pool1 uzfs_test_sync_vdev1 uzfs_test_sync_log1

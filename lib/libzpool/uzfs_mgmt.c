@@ -516,10 +516,14 @@ uzfs_spa_fini(spa_t *spa)
 
 	uzfs_spa_t *us = spa->spa_us;
 
+	if (us->close_pool)
+		return;
+
 	mutex_enter(&us->mtx);
 	us->close_pool = 1;
 	cv_signal(&us->cv);
 	mutex_exit(&us->mtx);
+	mutex_exit(&spa_namespace_lock);
 
 	ts.tv_sec = 0;
 	ts.tv_nsec = 100000000;
@@ -527,6 +531,7 @@ uzfs_spa_fini(spa_t *spa)
 	while (us->update_txg_tid != NULL)
 		nanosleep(&ts, NULL);
 
+	mutex_enter(&spa_namespace_lock);
 	mutex_destroy(&us->mtx);
 	cv_destroy(&us->cv);
 	spa->spa_us = NULL;

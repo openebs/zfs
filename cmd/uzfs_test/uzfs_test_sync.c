@@ -29,7 +29,7 @@ int
 verify_fn(void *zv, char *buf, int block_size)
 {
 	int err;
-	metadata_desc_t *md = NULL, *md_tmp;
+	metadata_desc_t *md = NULL;
 	uint64_t io_num = 0;
 
 	if (metaverify != 0) {
@@ -64,11 +64,7 @@ verify_fn(void *zv, char *buf, int block_size)
 			return (1);
 		if (md->metadata.io_num != io_num)
 			return (1);
-		while (md == NULL) {
-			md_tmp = md->next;
-			kmem_free(md, sizeof (*md));
-			md->next = md_tmp;
-		}
+		FREE_METADATA_LIST(md);
 	}
 	return (0);
 }

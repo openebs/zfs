@@ -24,6 +24,10 @@
 
 #include <sys/zil.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct metadata_desc;
 
 /*
@@ -35,9 +39,13 @@ typedef struct metadata_desc {
 	blk_metadata_t	metadata;
 } metadata_desc_t;
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#define	FREE_METADATA_LIST(head)	\
+	while ((head) != NULL) {	\
+		metadata_desc_t *tmp = (head)->next;	\
+		kmem_free((head), sizeof (metadata_desc_t));	\
+		(head) = tmp;	\
+	}
+
 /*
  * writes metadata 'md' to zil records
  * is_rebuild: if IO is from target then it should be set to FALSE

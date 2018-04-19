@@ -47,12 +47,20 @@ extern "C" {
 #define	MAX_IP_LEN	64
 #define	TARGET_PORT	6060
 
+#define	ZVOL_OP_FLAG_REBUILD 0x01
+
 enum zvol_op_code {
 	ZVOL_OPCODE_HANDSHAKE = 0,
 	ZVOL_OPCODE_READ,
 	ZVOL_OPCODE_WRITE,
-	ZVOL_OPCODE_UNMAP,
 	ZVOL_OPCODE_SYNC,
+	ZVOL_OPCODE_UNMAP,
+	ZVOL_OPCODE_REPLICA_STATUS,
+	ZVOL_OPCODE_PREPARE_FOR_REBUILD,
+	ZVOL_OPCODE_START_REBUILD,
+	ZVOL_OPCODE_REBUILD_STEP,
+	ZVOL_OPCODE_REBUILD_STEP_DONE,
+	ZVOL_OPCODE_REBUILD_COMPLETE,
 	ZVOL_OPCODE_SNAP_CREATE,
 	ZVOL_OPCODE_SNAP_ROLLBACK,
 } __attribute__((packed));
@@ -98,11 +106,38 @@ struct mgmt_ack {
 	uint64_t zvol_guid;
 	uint16_t port;
 	char	ip[MAX_IP_LEN];
-	char	volname[MAX_NAME_LEN];
+	char	volname[MAX_NAME_LEN]; // Replica helping rebuild
+	char	dw_volname[MAX_NAME_LEN]; // Replica being rebuilt
 } __attribute__((packed));
 
 typedef struct mgmt_ack mgmt_ack_t;
 
+/*
+ * zvol rebuild related state
+ */
+enum zvol_rebuild_status {
+	ZVOL_REBUILDING_INIT,		/* rebuilding initiated on zvol */
+	ZVOL_REBUILDING_IN_PROGRESS,	/* zvol is rebuilding */
+	ZVOL_REBUILDING_DONE		/* done with rebuilding */
+} __attribute__((packed));
+
+typedef enum zvol_rebuild_status zvol_rebuild_status_t;
+/*
+ * zvol status
+ */
+enum zvol_status {
+	ZVOL_STATUS_HEALTHY,		/* zvol has latest data */
+	ZVOL_STATUS_DEGRADED		/* zvol is missing some data */
+} __attribute__((packed));
+
+typedef enum zvol_status zvol_status_t;
+
+struct zrepl_status_ack {
+	zvol_status_t state;
+	zvol_rebuild_status_t rebuild_status;
+} __attribute__((packed));
+
+typedef struct zrepl_status_ack zrepl_status_ack_t;
 /*
  * Describes chunk of data following this header.
  *

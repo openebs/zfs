@@ -181,6 +181,47 @@ exit_with_error:
 	return (ret);
 }
 
+/*
+ * Append to the tail of metadata list and return updated tail. If the list
+ * is empty initially, the head pointer is updated here.
+ */
+static metadata_desc_t *
+uzfs_metadata_append(zvol_state_t *zv, blk_metadata_t *metadata, int n,
+    metadata_desc_t **head, metadata_desc_t *tail)
+{
+	metadata_desc_t *new_md;
+
+	for (int i = 0; i < n; i++) {
+		new_md = NULL;
+		if (tail != NULL) {
+			/*
+			 * Join adjacent metadata with the same
+			 * io number into one descriptor.
+			 * Otherwise create a new one.
+			 */
+			if (tail->metadata.io_num == metadata[i].io_num) {
+				tail->len += zv->zv_metavolblocksize;
+			} else {
+				new_md = kmem_alloc(sizeof (metadata_desc_t),
+				    KM_SLEEP);
+				tail->next = new_md;
+			}
+		} else {
+			ASSERT3P(*head, ==, NULL);
+			new_md = kmem_alloc(sizeof (metadata_desc_t), KM_SLEEP);
+			*head = new_md;
+		}
+		if (new_md != NULL) {
+			new_md->next = NULL;
+			new_md->len = zv->zv_metavolblocksize;
+			new_md->metadata = metadata[i];
+			tail = new_md;
+		}
+	}
+
+	return (tail);
+}
+
 /* Reads data from volume 'zv', and fills up memory at buf */
 int
 uzfs_read_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
@@ -197,7 +238,7 @@ uzfs_read_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 	uint64_t r_offset;
 	metaobj_blk_offset_t metablk;
 	uint64_t len_in_first_aligned_block = 0;
-	metadata_desc_t *md_ent = NULL, *new_md;
+	metadata_desc_t *md_ent = NULL;
 	blk_metadata_t *metadata;
 	int nmetas;
 
@@ -252,39 +293,12 @@ uzfs_read_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 			ASSERT3P(zv->zv_metavolblocksize * nmetas, >=, bytes);
 			ASSERT3P(zv->zv_metavolblocksize * nmetas, <,
 			    bytes + blocksize);
-			for (int i = 0; i < nmetas; i++) {
-				new_md = NULL;
-				if (md_ent != NULL) {
-					/*
-					 * Join adjacent metadata with the same
-					 * io number into one descriptor.
-					 * Otherwise create a new one.
-					 */
-					if (md_ent->metadata.io_num ==
-					    metadata[i].io_num) {
-						md_ent->len +=
-						    zv->zv_metavolblocksize;
-					} else {
-						new_md = kmem_alloc(
-						    sizeof (metadata_desc_t),
-						    KM_SLEEP);
-						md_ent->next = new_md;
-					}
-				} else {
-					new_md = kmem_alloc(
-					    sizeof (metadata_desc_t),
-					    KM_SLEEP);
-					*md_head = new_md;
-				}
-				if (new_md != NULL) {
-					new_md->next = NULL;
-					new_md->len = zv->zv_metavolblocksize;
-					memcpy(&new_md->metadata, &metadata[i],
-					    sizeof (*metadata));
-					md_ent = new_md;
-				}
-			}
+
+			md_ent = uzfs_metadata_append(zv, metadata, nmetas,
+			    md_head, md_ent);
 			kmem_free(metadata, metablk.m_len);
+			if (error != 0)
+				goto exit;
 		}
 		offset += bytes;
 		read += bytes;
@@ -295,12 +309,7 @@ exit:
 	zfs_range_unlock(rl);
 
 	if (md_head != NULL && error != 0) {
-		md_ent = *md_head;
-		while (md_ent != NULL) {
-			new_md = md_ent->next;
-			kmem_free(md_ent, sizeof (metadata_desc_t));
-			md_ent = new_md;
-		}
+		FREE_METADATA_LIST(*md_head);
 		*md_head = NULL;
 	}
 	return (error);

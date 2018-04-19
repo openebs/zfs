@@ -34,6 +34,7 @@ TMPDIR="/tmp"
 VOLSIZE="1G"
 UZFS_TEST_POOL="testp"
 UZFS_TEST_VOL="ds0"
+UZFS_REBUILD_VOL="ds1"
 UZFS_TEST_VOLSIZE="128M"
 UZFS_TEST_VOLSIZE_IN_NUM=134217728
 ZREPL_PID="-1"
@@ -61,7 +62,7 @@ log_must()
 	logfile=`mktemp`
 
 	log_note $@ >> $logfile 2>&1
-	$@ #>> $logfile 2>&1
+	$@ >> $logfile 2>&1
 	status=$?
 
 	if [ $status -ne 0 ]; then
@@ -691,9 +692,8 @@ run_fio_test()
 {
 	FIO_SRCDIR="/home/mayank/work/dustbin/fio"
 	local fio_pool="fio_pool"
-	stop_zrepl
-	start_zrepl
 
+	stop_zrepl
 	while [ 1 ]; do
 		netstat -apnt |grep 6060
 		if [ $? -ne 0 ]; then
@@ -702,6 +702,7 @@ run_fio_test()
 			sleep 5
 		fi
 	done
+	start_zrepl
 
 	[ -z "$FIO_SRCDIR" ] && log_fail "FIO_SRCDIR must be defined"
 
@@ -837,6 +838,34 @@ run_zrepl_uzfs_test()
 		cleanup_uzfs_test $UZFS_TEST_POOL uzfs_zrepl_vdev1 uzfs_zrepl_log1
 	else
 		cleanup_uzfs_test $UZFS_TEST_POOL uzfs_zrepl_vdev1
+	fi
+
+	return 0
+}
+
+run_zrepl_rebuild_uzfs_test()
+{
+	export_pool $UZFS_TEST_POOL
+
+	if [ "$1" == "log" ]; then
+		log_must setup_uzfs_test log $2 $UZFS_TEST_VOLSIZE $3 $UZFS_TEST_POOL \
+		    $UZFS_TEST_VOL uzfs_zrepl_rebuild_vdev1 uzfs_zrepl_rebuild_log1
+	else
+		log_must setup_uzfs_test nolog $2 $UZFS_TEST_VOLSIZE $3 $UZFS_TEST_POOL \
+		    $UZFS_TEST_VOL uzfs_zrepl_rebuild_vdev1
+	fi
+
+	log_must $ZFS create -V $UZFS_TEST_VOLSIZE \
+	    $UZFS_TEST_POOL/$UZFS_REBUILD_VOL -b $2
+	log_must $ZFS set sync=$3 $UZFS_TEST_POOL/$UZFS_REBUILD_VOL
+
+	log_must $UZFS_TEST -T 7
+	sleep 20
+
+	if [ "$1" == "log" ]; then
+		cleanup_uzfs_test $UZFS_TEST_POOL uzfs_zrepl_rebuild_vdev1 uzfs_zrepl_rebuild_log1
+	else
+		cleanup_uzfs_test $UZFS_TEST_POOL uzfs_zrepl_rebuild_vdev1
 	fi
 
 	return 0
@@ -1018,6 +1047,7 @@ test_type :
 	- rebuild_test (zvol rebuild related tests)
 	- fio_test
 	- zrepl_test
+	- zrepl_rebuild_test
 	- all (run all test)
 EOF
 }
@@ -1130,6 +1160,11 @@ execute_test() {
 	fi
 }
 
+run_zrepl_rebuild_test()
+{
+	log_must run_zrepl_rebuild_uzfs_test log 4096 disabled
+}
+
 start_zrepl
 if [ $test_type == "all" ]; then
 	START=$(date +%s.%N)
@@ -1137,6 +1172,7 @@ if [ $test_type == "all" ]; then
 	execute_test "zvol_test"
 	execute_test "rebuild_test"
 	execute_test "zrepl_test"
+	execute_test "zrepl_rebuild_test"
 	execute_test "fio_test"
 	END=$(date +%s.%N)
 	DIFF=$(echo "scale=0;$END - $START" | bc)

@@ -82,8 +82,9 @@ get_snapshot_zv(zvol_state_t *zv, char *snap_name, zvol_state_t **snap_zv)
 	if (ret == ENOENT) {
 		ret = dmu_objset_snapshot_one(zv->zv_name, snap_name);
 		if (ret) {
-			printf("Failed to create snapshot for %s\n",
-			    zv->zv_name);
+			printf("Failed to create snapshot for %s err(%d)\n",
+			    zv->zv_name, ret);
+			printf("vol:%s snap:%s\n", dataset, snap_name);
 			strfree(dataset);
 			return (ret);
 		}

@@ -303,6 +303,7 @@ protected:
 		hdr_out.io_seq = ++m_ioseq;
 		hdr_out.offset = offset;
 		hdr_out.len = len;
+		hdr_out.flags = 0;
 
 		rc = write(m_data_fd, &hdr_out, sizeof (hdr_out));
 		ASSERT_EQ(rc, sizeof (hdr_out));
@@ -547,21 +548,26 @@ TEST_F(ZreplDataTest, ReadBlocks) {
 	ASSERT_EQ(rc, 0);
 }
 
+/* Read two blocks without metadata */
 TEST_F(ZreplDataTest, ReadBlockWithoutMeta) {
 	zvol_io_hdr_t hdr_in;
 	struct zvol_io_rw_hdr read_hdr;
 	int rc;
 	char buf[4096];
+	size_t offset = 1024 * sizeof (buf);
 
-	read_data_start(1024 * sizeof (buf), sizeof (buf), &hdr_in);
-	ASSERT_EQ(hdr_in.len, sizeof (read_hdr) + sizeof (buf));
+	for (int i = 0; i < 2; i++) {
+		read_data_start(offset, sizeof (buf), &hdr_in);
+		ASSERT_EQ(hdr_in.len, sizeof (read_hdr) + sizeof (buf));
 
-	rc = read(m_data_fd, &read_hdr, sizeof (read_hdr));
-	ASSERT_ERRNO("read", rc >= 0);
-	ASSERT_EQ(rc, sizeof (read_hdr));
-	ASSERT_EQ(read_hdr.io_num, 0);
-	ASSERT_EQ(read_hdr.len, sizeof (buf));
-	rc = read(m_data_fd, buf, read_hdr.len);
-	ASSERT_ERRNO("read", rc >= 0);
-	ASSERT_EQ(rc, read_hdr.len);
+		rc = read(m_data_fd, &read_hdr, sizeof (read_hdr));
+		ASSERT_ERRNO("read", rc >= 0);
+		ASSERT_EQ(rc, sizeof (read_hdr));
+		ASSERT_EQ(read_hdr.io_num, 0);
+		ASSERT_EQ(read_hdr.len, sizeof (buf));
+		rc = read(m_data_fd, buf, read_hdr.len);
+		ASSERT_ERRNO("read", rc >= 0);
+		ASSERT_EQ(rc, read_hdr.len);
+		offset += sizeof (buf);
+	}
 }

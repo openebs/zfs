@@ -55,6 +55,7 @@ uzfs_test_info_t uzfs_tests[] = {
 	{ uzfs_test_get_metablk_details, "Tests offset,len calculations of"\
 	    " metadata for given data block" },
 	{ unit_test_fn, "zvol random read/write verification with metadata" },
+	{ zrepl_rebuild_test, "ZFS rebuild test" },
 };
 
 uint64_t metaverify = 0;
@@ -133,11 +134,7 @@ verify_vol_data(void *zv, uint64_t block_size, uint64_t vol_size)
 				    iodata[i/block_size]);
 				exit(1);
 			}
-		while (md != NULL) {
-			md_tmp = md->next;
-			kmem_free(md, sizeof (*md));
-			md = md_tmp;
-		}
+		FREE_METADATA_LIST(md);
 	}
 	printf("Data/metadata verification passed.\n");
 }
@@ -157,7 +154,7 @@ reader_thread(void *arg)
 	uint64_t *total_ios = warg->total_ios;
 	uint64_t vol_size = warg->active_size;
 	uint64_t block_size = warg->io_block_size;
-	metadata_desc_t *md, *md_tmp;
+	metadata_desc_t *md;
 
 	for (j = 0; j < 15; j++)
 		buf[j] = (char *)umem_alloc(sizeof (char)*(j+1)* block_size,
@@ -186,11 +183,7 @@ reader_thread(void *arg)
 
 		if (buf[idx][0] != 0)
 			data_ios += (idx + 1);
-		while (md != NULL) {
-			md_tmp = md->next;
-			kmem_free(md, sizeof (*md));
-			md = md_tmp;
-		}
+		FREE_METADATA_LIST(md);
 		ios += (idx + 1);
 
 		now = gethrtime();

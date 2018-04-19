@@ -690,7 +690,6 @@ test_raidz_pool()
 
 run_fio_test()
 {
-	FIO_SRCDIR="/home/mayank/work/dustbin/fio"
 	local fio_pool="fio_pool"
 
 	stop_zrepl

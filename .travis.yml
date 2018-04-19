@@ -29,7 +29,7 @@ install:
     - pushd .
     - cd /usr/src/gtest
     - sudo cmake CMakeLists.txt
-    - sudo make
+    - sudo make -j4
     - sudo cp *.a /usr/lib
     - popd
     - cd ..
@@ -37,7 +37,7 @@ install:
     - git clone https://github.com/axboe/fio
     - cd fio
     - ./configure
-    - make
+    - make -j4
     - cd ..
     - git clone https://github.com/openebs/spl
     - cd spl
@@ -45,7 +45,7 @@ install:
     - sh autogen.sh
     - ./configure
     - if [ $ZFS_BUILD_TAGS = 0 ]; then
-        make;
+        make -j4;
       else
         make --no-print-directory -s pkg-utils pkg-kmod;
         sudo dpkg -i *.deb;
@@ -54,7 +54,7 @@ install:
     - sh autogen.sh
     - if [ $ZFS_BUILD_TAGS = 0 ]; then
         ./configure --enable-code-coverage=yes --enable-debug --enable-uzfs=yes --with-jemalloc --with-fio=$PWD/../fio || travis_terminate 1;
-        make;
+        make -j4;
       else
         ./configure --enable-code-coverage=yes --enable-debug || travis_terminate 1;
         make --no-print-directory -s pkg-utils pkg-kmod || travis_terminate 1;

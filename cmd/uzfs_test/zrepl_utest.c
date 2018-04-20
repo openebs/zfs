@@ -347,7 +347,7 @@ zrepl_utest(void *arg)
 	reader_args.rebuild_test = B_FALSE;
 
 
-	sfd = create_and_bind(tgt_port, B_TRUE);
+	sfd = create_and_bind(tgt_port, B_TRUE, B_FALSE);
 	if (sfd == -1) {
 		return;
 	}
@@ -421,7 +421,7 @@ start:
 	replica_io_addr.sin_addr.s_addr = inet_addr(mgmt_ack.ip);
 	replica_io_addr.sin_port = htons(mgmt_ack.port);
 retry:
-	io_sfd = create_and_bind("", B_FALSE);
+	io_sfd = create_and_bind("", B_FALSE, B_FALSE);
 	if (io_sfd == -1) {
 		printf("Socket creation failed with errno:%d\n", errno);
 		goto start;
@@ -432,6 +432,7 @@ retry:
 		printf("Failed to connect to replica-IO port"
 		    " with errno:%d\n", errno);
 		close(io_sfd);
+		sleep(1);
 		goto retry;
 	}
 	printf("Connect to replica IO port is successfully\n");
@@ -520,7 +521,7 @@ zrepl_rebuild_test(void *arg)
 	reader_args[1].max_iops = max_iops/2;
 	reader_args[1].rebuild_test = B_TRUE;
 
-	sfd = create_and_bind(tgt_port, B_TRUE);
+	sfd = create_and_bind(tgt_port, B_TRUE, B_FALSE);
 	if (sfd == -1) {
 		return;
 	}
@@ -596,7 +597,7 @@ start:
 	replica_io_addr.sin_addr.s_addr = inet_addr(mgmt_ack->ip);
 	replica_io_addr.sin_port = htons(mgmt_ack->port);
 retry:
-	io_sfd = create_and_bind("", B_FALSE);
+	io_sfd = create_and_bind("", B_FALSE, B_FALSE);
 	if (io_sfd == -1) {
 		printf("Socket creation failed with errno:%d\n", errno);
 		goto start;
@@ -607,13 +608,14 @@ retry:
 		printf("Failed to connect to replica-IO port"
 		    " with errno:%d\n", errno);
 		close(io_sfd);
+		sleep(1);
 		goto retry;
 	}
 	printf("Connect to replica IO port is successfully\n");
 
 	writer_args.sfd[0] = reader_args[0].sfd[0] = io_sfd;
 
-	io_sfd1 = create_and_bind("", B_FALSE);
+	io_sfd1 = create_and_bind("", B_FALSE, B_FALSE);
 	if (io_sfd1 == -1) {
 		printf("Socket creation failed with errno:%d\n", errno);
 		goto start;
@@ -623,6 +625,7 @@ retry:
 	if (rc == -1) {
 		printf("Failed to connect to replica-IO port"
 		    " with errno:%d\n", errno);
+		sleep(1);
 		close(io_sfd1);
 		goto retry;
 	}

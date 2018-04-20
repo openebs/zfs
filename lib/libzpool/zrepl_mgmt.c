@@ -14,6 +14,8 @@
 
 __thread char  tinfo[20] =  {0};
 clockid_t clockid;
+void (*zinfo_create_hook)(zvol_info_t *, nvlist_t *);
+void (*zinfo_destroy_hook)(zvol_info_t *);
 
 SLIST_HEAD(, zvol_info_s) zvol_list;
 SLIST_HEAD(, zvol_info_s) stale_zv_list;
@@ -26,7 +28,7 @@ SLIST_HEAD(, zvol_info_s) stale_zv_list;
 static int uzfs_zinfo_free(zvol_info_t *zinfo);
 
 int
-create_and_bind(const char *port, int bind_needed)
+create_and_bind(const char *port, int bind_needed, boolean_t nonblock)
 {
 	int s, sfd;
 	struct addrinfo hints = {0, };
@@ -38,12 +40,16 @@ create_and_bind(const char *port, int bind_needed)
 
 	s = getaddrinfo(NULL, port, &hints, &result);
 	if (s != 0) {
-		printf("getaddrinfo failed with error\n");
+		perror("getaddrinfo");
 		return (-1);
 	}
 
 	for (rp = result; rp != NULL; rp = rp->ai_next) {
-		sfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+		int flags = rp->ai_socktype;
+
+		if (nonblock)
+			flags |= SOCK_NONBLOCK;
+		sfd = socket(rp->ai_family, flags, rp->ai_protocol);
 		if (sfd == -1) {
 			continue;
 		}
@@ -232,7 +238,7 @@ uzfs_zinfo_destroy(const char *name, spa_t *spa)
 }
 
 int
-uzfs_zinfo_init(void *zv, const char *ds_name)
+uzfs_zinfo_init(void *zv, const char *ds_name, nvlist_t *create_props)
 {
 
 	zvol_info_t 	*zinfo;
@@ -253,6 +259,9 @@ uzfs_zinfo_init(void *zv, const char *ds_name)
 	/* Update zvol list */
 	uzfs_insert_zinfo_list(zinfo);
 
+	if (zinfo_create_hook)
+		(*zinfo_create_hook)(zinfo, create_props);
+
 	printf("uzfs_zinfo_init in success path\n");
 	return (0);
 }
@@ -260,6 +269,9 @@ uzfs_zinfo_init(void *zv, const char *ds_name)
 static int
 uzfs_zinfo_free(zvol_info_t *zinfo)
 {
+	if (zinfo_destroy_hook)
+		(*zinfo_destroy_hook)(zinfo);
+
 	taskq_destroy(zinfo->uzfs_zvol_taskq);
 	(void) uzfs_zinfo_destroy_mutex(zinfo);
 	ASSERT(STAILQ_EMPTY(&zinfo->complete_queue));

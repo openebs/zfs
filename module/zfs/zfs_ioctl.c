@@ -3399,7 +3399,7 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 	nvlist_free(zct.zct_zplprops);
 
 #if !defined(_KERNEL)
-	(void) uzfs_zvol_create_cb((char *)fsname, NULL);
+	(void) uzfs_zvol_create_cb((char *)fsname, nvprops);
 #endif
 	/*
 	 * It would be nice to do this atomically.

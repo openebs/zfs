@@ -297,8 +297,6 @@ uzfs_read_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 			md_ent = uzfs_metadata_append(zv, metadata, nmetas,
 			    md_head, md_ent);
 			kmem_free(metadata, metablk.m_len);
-			if (error != 0)
-				goto exit;
 		}
 		offset += bytes;
 		read += bytes;

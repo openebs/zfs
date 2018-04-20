@@ -435,6 +435,7 @@ uzfs_zvol_create_cb(const char *ds_name, void *arg)
 
 	zvol_state_t	*zv = NULL;
 	int 		error = -1;
+	nvlist_t	*nvprops = arg;
 
 	printf("ds_name %s\n", ds_name);
 
@@ -444,7 +445,7 @@ uzfs_zvol_create_cb(const char *ds_name, void *arg)
 		return (error);
 	}
 
-	if (uzfs_zinfo_init(zv, ds_name) != 0) {
+	if (uzfs_zinfo_init(zv, ds_name, nvprops) != 0) {
 		printf("Failed in uzfs_zinfo_init\n");
 		return (error);
 	}
@@ -498,10 +499,13 @@ uzfs_spa_init(spa_t *spa)
 		cv_init(&us->cv, NULL, CV_DEFAULT, NULL);
 		spa->spa_us = us;
 		mutex_enter(&us->mtx);
+		spa->spa_us = us;
 		us->update_txg_tid = zk_thread_create(NULL, 0,
 		    (thread_func_t)uzfs_update_txg_zap_thread, spa, 0, NULL,
 		    TS_RUN, 0, PTHREAD_CREATE_DETACHED);
 		mutex_exit(&us->mtx);
+	} else {
+		spa->spa_us = us;
 	}
 }
 

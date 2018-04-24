@@ -565,7 +565,8 @@ static uint64_t gen_sequence_num(void)
 /*
  * Dispatch command to replica.
  */
-static int fio_repl_queue(struct thread_data *td, struct io_u *io_u)
+static enum fio_q_status fio_repl_queue(struct thread_data *td,
+    struct io_u *io_u)
 {
 	struct netio_data *nd = td->io_ops_data;
 	zvol_io_hdr_t hdr;
@@ -628,7 +629,7 @@ end:
 	if (io_u->error) {
 		free(io_ent);
 		td_verror(td, io_u->error, "xfer");
-		return (-1);
+		return (FIO_Q_COMPLETED);
 	}
 	io_ent->io_next = nd->io_inprog;
 	nd->io_inprog = io_ent;

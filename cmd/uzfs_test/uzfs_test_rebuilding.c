@@ -32,6 +32,7 @@
 
 extern void make_vdev(char *path);
 extern void populate_string(char *buf, uint64_t size);
+extern void uzfs_test_import_pool(char *pool_name);
 
 spa_t *spa1, *spa2;
 zvol_state_t *zvol1, *zvol2;
@@ -538,6 +539,7 @@ open_pool_and_dataset(spa_t **spa, zvol_info_t **zinfo, char *pool_name,
 {
 	int err;
 
+	uzfs_test_import_pool(pool_name);
 	err = uzfs_open_pool(pool_name, spa);
 	if (err != 0) {
 		printf("pool(%s) open errored.. %d\n", pool_name, err);

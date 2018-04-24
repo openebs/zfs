@@ -6,6 +6,7 @@ run_sync_test()
 	echo "running sync test with sync:standard, bs:4K and no log device"
 	log_must setup_uzfs_test nolog 4096 $UZFS_TEST_VOLSIZE standard uzfs_sync_pool1 \
 		    uzfs_sync_vol1 uzfs_test_sync_vdev1
+	log_must export_pool uzfs_sync_pool1
 	for i in {1..10}
 	do
 		sudo $UZFS_TEST -S -w -T 1 -p uzfs_sync_pool1 -d uzfs_sync_vol1 | grep uzfs_sync_data > $TMPDIR/uzfs_sync_data
@@ -25,6 +26,7 @@ run_sync_test()
 	echo "running sync test with sync:standard, bs:4k and log device"
 	log_must setup_uzfs_test log 4096 $UZFS_TEST_VOLSIZE standard uzfs_sync_pool1 \
 		    uzfs_sync_vol1 uzfs_test_sync_vdev1 uzfs_test_sync_log1
+	log_must export_pool uzfs_sync_pool1
 	for i in {1..10}
 	do
 		sudo $UZFS_TEST -S -l -p uzfs_sync_pool1 -d uzfs_sync_vol1 -T 1 -w | grep uzfs_sync_data > $TMPDIR/uzfs_sync_data
@@ -44,6 +46,7 @@ run_sync_test()
 	echo "running sync test with sync:standard, bs:64k and no log device"
 	log_must setup_uzfs_test nolog 65536 $UZFS_TEST_VOLSIZE standard uzfs_sync_pool1 \
 	    uzfs_sync_vol1 uzfs_test_sync_vdev1
+	log_must export_pool uzfs_sync_pool1
 	for i in {1..10}
 	do
 		sudo $UZFS_TEST -S -i 8192 -p uzfs_sync_pool1 -d uzfs_sync_vol1 -b 65536 -T 1 -w | grep uzfs_sync_data > $TMPDIR/uzfs_sync_data
@@ -63,6 +66,7 @@ run_sync_test()
 	echo "running sync test with sync:standard, bs=64k and log device"
 	log_must setup_uzfs_test log 65536 $UZFS_TEST_VOLSIZE standard uzfs_sync_pool1 \
 	    uzfs_sync_vol1 uzfs_test_sync_vdev1 uzfs_test_sync_log1
+	log_must export_pool uzfs_sync_pool1
 	for i in {1..10}
 	do
 		sudo $UZFS_TEST -S -i 8192 -b 65536 -p uzfs_sync_pool1 -d uzfs_sync_vol1 -l -T 1 -w | grep uzfs_sync_data > $TMPDIR/uzfs_sync_data

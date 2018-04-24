@@ -25,6 +25,7 @@
 #include <uzfs_test.h>
 #include <math.h>
 #include <zrepl_mgmt.h>
+#include <libzfs.h>
 
 int total_time_in_sec = 60;
 int log_device = 0;
@@ -39,6 +40,7 @@ uint32_t uzfs_test_id = 0;
 uint32_t create = 0;
 char *pool = "testp";
 char *ds = "ds0";
+char *pool_dir = "/tmp/";
 int max_iops = 0;
 zfs_rlock_t zrl;
 char *data;
@@ -426,7 +428,8 @@ static void usage(int num)
 	    " -l(for log device) -m <metadata to verify during replay>"
 	    " -p <pool name> -s(for sync on) -S(for silent)"
 	    " -V <data to verify during replay> -w(for write during replay)"
-	    " -T <test id>\n");
+	    " -T <test id> "
+	    "-x(directory to scan for pool import default:/tmp/)\n");
 
 	printf("Test id:\n");
 
@@ -500,11 +503,12 @@ static void process_options(int argc, char **argv)
 	uint64_t num_tests = sizeof (uzfs_tests) / sizeof (uzfs_tests[0]);
 	uint64_t vol_blocks;
 
-	while ((opt = getopt(argc, argv, "a:b:cd:i:lm:p:sSt:v:V:wT:n:"))
+	while ((opt = getopt(argc, argv, "a:b:cd:i:lm:p:sSt:v:V:wT:n:x:"))
 	    != EOF) {
 		switch (opt) {
 			case 'd':
 			case 'p':
+			case 'x':
 				break;
 			default:
 				if (optarg != NULL)
@@ -564,6 +568,9 @@ static void process_options(int argc, char **argv)
 			case 'n':
 				test_iterations = val;
 				break;
+			case 'x':
+				pool_dir = optarg;
+				break;
 			default:
 				usage(0);
 		}
@@ -599,9 +606,44 @@ static void process_options(int argc, char **argv)
 }
 
 void
-open_pool(spa_t **spa)
+uzfs_test_import_pool(char *pool_name)
 {
 	int err;
+	libzfs_handle_t *hdl = libzfs_init();
+	importargs_t importargs = {0};
+	nvlist_t *config = NULL;
+	nvlist_t *props = NULL;
+
+	importargs.path = &pool_dir;
+	importargs.paths = 1;
+	importargs.scan = B_TRUE;
+	importargs.cachefile = NULL;
+
+	if ((err = zpool_tryimport(hdl, pool_name, &config, &importargs))
+	    != 0) {
+		printf("cannot import pool:%s, %s\n", pool_name,
+		    libzfs_error_description(hdl));
+		libzfs_fini(hdl);
+		exit(1);
+	}
+
+	if ((err = spa_import(pool_name, config, props, ZFS_IMPORT_VERBATIM))
+	    != 0) {
+		printf("failed import %s\n", strerror(err));
+		libzfs_fini(hdl);
+		exit(1);
+	}
+
+	libzfs_fini(hdl);
+}
+
+void
+open_pool(spa_t **spa)
+{
+	int err = 0;
+
+	uzfs_test_import_pool(pool);
+
 	err = uzfs_open_pool(pool, spa);
 	if (err != 0) {
 		printf("pool open errored.. %d\n", err);

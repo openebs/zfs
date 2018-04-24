@@ -7122,7 +7122,7 @@ spa_evict_all(void)
 
 		if (spa->spa_state != POOL_STATE_UNINITIALIZED) {
 			spa_unload(spa);
-#ifdef _UZFS
+#ifndef	_KERNEL
 			uzfs_spa_fini(spa);
 #endif
 			spa_deactivate(spa);

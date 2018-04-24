@@ -502,8 +502,6 @@ uzfs_spa_init(spa_t *spa)
 		    (thread_func_t)uzfs_update_txg_zap_thread, spa, 0, NULL,
 		    TS_RUN, 0, PTHREAD_CREATE_DETACHED);
 		mutex_exit(&us->mtx);
-	} else {
-		spa->spa_us = us;
 	}
 }
 

@@ -71,7 +71,7 @@ script:
         travis_wait 60 sudo bash ./tests/cbtest/script/test_uzfs.sh -T all || travis_terminate 1;
       else
         sudo /sbin/modprobe zfs;
-        true || travis_wait 10 /sbin/ztest || travis_terminate 1;
+        travis_wait 10 /sbin/ztest || travis_terminate 1;
       fi
 after_failure:
     - find /var/tmp/test_results/current/log -type f -name '*' -printf "%f\n" -exec cut -c -$ZFS_TEST_TRAVIS_LOG_MAX_LENGTH {} \;

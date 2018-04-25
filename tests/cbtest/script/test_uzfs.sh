@@ -936,9 +936,9 @@ run_uzfs_test()
 	cleanup_uzfs_test uzfs_pool5 uzfs_test_vdev5
 	cleanup_uzfs_test uzfs_pool6 uzfs_test_vdev6
 
-	log_must setup_uzfs_test nolog 4096 $UZFS_TEST_VOLSIZE standard uzfs_pool6 uzfs_vol6 uzfs_test_vdev6
-	log_must export_pool uzfs_pool6
-	$UZFS_TEST -t 30 -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
+	log_must setup_uzfs_test nolog 4096 $UZFS_TEST_VOLSIZE standard uzfs_pool06 uzfs_vol06 uzfs_test_vdev06
+	log_must export_pool uzfs_pool06
+	log_must $UZFS_TEST -t 30 -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
 	     -p uzfs_pool6 -d uzfs_vol6 -T 2 &
 	pid1=$!
 
@@ -961,7 +961,7 @@ run_uzfs_test()
 
 	log_must_not greater $ios1 $ios2
 
-	cleanup_uzfs_test uzfs_pool6 uzfs_test_vdev6
+	cleanup_uzfs_test uzfs_pool06 uzfs_test_vdev06
 	cleanup_uzfs_test uzfs_pool7 uzfs_test_vdev7 uzfs_test_log7
 	cleanup_uzfs_test uzfs_pool8 uzfs_test_vdev8 uzfs_test_log8
 

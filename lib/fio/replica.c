@@ -729,7 +729,7 @@ static int fio_repl_getevents(struct thread_data *td, unsigned int min,
     unsigned int max, const struct timespec fio_unused *t)
 {
 	struct netio_data *nd = td->io_ops_data;
-	int ret, count = 0;
+	int ret, read_error = 0, count = 0;
 	unsigned int i;
 	struct fio_file *f;
 	int timeout = -1;
@@ -753,7 +753,7 @@ static int fio_repl_getevents(struct thread_data *td, unsigned int min,
 		pfds[i].events = POLLIN;
 	}
 
-	while (count < min) {
+	while (!read_error && count < min) {
 		ret = poll(pfds, td->o.nr_files, timeout);
 		if (ret < 0) {
 			td_verror(td, errno, "poll");
@@ -766,13 +766,14 @@ static int fio_repl_getevents(struct thread_data *td, unsigned int min,
 				io_list_entry_t *ent;
 
 				ent = read_repl_reply(td, pfds[i].fd);
-				if (ent == NULL)
-					continue;
-
-				nd->io_completed[count++] = ent->io_u;
-				free(ent);
-				if (count >= max)
-					goto end;
+				if (ent == NULL) {
+					read_error = 1;
+				} else {
+					nd->io_completed[count++] = ent->io_u;
+					free(ent);
+					if (count >= max)
+						goto end;
+				}
 			}
 		}
 	}

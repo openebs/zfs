@@ -814,10 +814,14 @@ cleanup_uzfs_test()
 	fi
 
 	log_must $ZPOOL destroy $pool_name 2> /dev/null
+	log_must $ZPOOL labelclear -f $TMPDIR/$vdev_file 2> /dev/null
+	log_must dd if=/dev/zero of=$TMPDIR/$vdev_file bs=1M count=100
 
 	destroy_disk $TMPDIR/$vdev_file
 	if [ $# -eq 3 ]; then
 		log_file=$3
+		log_must $ZPOOL labelclear -f $TMPDIR/$log_file 2> /dev/null
+		log_must dd if=/dev/zero of=$TMPDIR/$log_file bs=1M count=100
 		destroy_disk $TMPDIR/$log_file
 	fi
 }
@@ -939,7 +943,7 @@ run_uzfs_test()
 	log_must setup_uzfs_test nolog 4096 $UZFS_TEST_VOLSIZE standard uzfs_pool06 uzfs_vol06 uzfs_test_vdev06
 	log_must export_pool uzfs_pool06
 	log_must $UZFS_TEST -t 30 -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
-	     -p uzfs_pool6 -d uzfs_vol6 -T 2 &
+	     -p uzfs_pool06 -d uzfs_vol06 -T 2 &
 	pid1=$!
 
 	log_must setup_uzfs_test log 4096 $UZFS_TEST_VOLSIZE disabled uzfs_pool7 uzfs_vol7 uzfs_test_vdev7 uzfs_test_log7

@@ -754,6 +754,7 @@ static int fio_repl_getevents(struct thread_data *td, unsigned int min,
 	}
 
 	while (!read_error && count < min) {
+		assert(count < td->o.iodepth);
 		ret = poll(pfds, td->o.nr_files, timeout);
 		if (ret < 0) {
 			td_verror(td, errno, "poll");
@@ -769,6 +770,7 @@ static int fio_repl_getevents(struct thread_data *td, unsigned int min,
 				if (ent == NULL) {
 					read_error = 1;
 				} else {
+					assert(nd->io_completed[count] == NULL);
 					nd->io_completed[count++] = ent->io_u;
 					free(ent);
 					if (count >= max)
@@ -786,8 +788,9 @@ end:
 static struct io_u *fio_repl_event(struct thread_data *td, int event)
 {
 	struct netio_data *nd = td->io_ops_data;
-
-	return (nd->io_completed[event]);
+	struct io_u *io_u = nd->io_completed[event];
+	nd->io_completed[event] = NULL;
+	return (io_u);
 }
 
 struct ioengine_ops ioengine = {

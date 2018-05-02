@@ -687,7 +687,8 @@ uzfs_zvol_io_ack_sender(void *arg)
 		    zio_cmd->hdr.opcode, zio_cmd->hdr.io_seq);
 
 		/* account for space taken by metadata headers */
-		if (zio_cmd->hdr.opcode == ZVOL_OPCODE_READ) {
+		if (zio_cmd->hdr.status == ZVOL_OP_STATUS_OK &&
+		    zio_cmd->hdr.opcode == ZVOL_OPCODE_READ) {
 			md_len = 0;
 			for (metadata_desc_t *md = zio_cmd->metadata_desc;
 			    md != NULL;
@@ -709,15 +710,8 @@ uzfs_zvol_io_ack_sender(void *arg)
 			goto exit;
 		}
 
-		switch (zio_cmd->hdr.opcode) {
-			case ZVOL_OPCODE_HANDSHAKE:
-			case ZVOL_OPCODE_WRITE:
-			case ZVOL_OPCODE_SYNC:
-			case ZVOL_OPCODE_REBUILD_STEP_DONE:
-				zinfo->write_req_ack_cnt++;
-				/* Send handsake ack */
-				break;
-			case ZVOL_OPCODE_READ:
+		if (zio_cmd->hdr.opcode == ZVOL_OPCODE_READ) {
+			if (zio_cmd->hdr.status == ZVOL_OP_STATUS_OK) {
 				/* Send data read from disk */
 				rc = uzfs_send_reads(zio_cmd->conn, zio_cmd);
 				if (rc == -1) {
@@ -725,12 +719,10 @@ uzfs_zvol_io_ack_sender(void *arg)
 					    errno);
 					goto exit;
 				}
-				zinfo->read_req_ack_cnt++;
-				break;
-
-			default:
-				VERIFY(!"Should be a valid opcode");
-				break;
+			}
+			zinfo->read_req_ack_cnt++;
+		} else {
+			zinfo->write_req_ack_cnt++;
 		}
 		zio_cmd_free(&zio_cmd);
 	}

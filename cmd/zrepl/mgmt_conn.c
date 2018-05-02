@@ -559,8 +559,10 @@ uzfs_zvol_rebuild_dw_replica_start(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	zvol_info_t		*zinfo = NULL;
 
 	for (; rebuild_op_cnt > 0; rebuild_op_cnt--, mack++) {
-		printf("Replica %s at %s:%u helping in rebuild\n",
-		    mack->volname, mack->ip, mack->port);
+		if (mack->volname[0] != '\0') {
+			printf("Replica %s at %s:%u helping in rebuild\n",
+			    mack->volname, mack->ip, mack->port);
+		}
 		if (zinfo == NULL) {
 			zinfo = uzfs_zinfo_lookup(mack->dw_volname);
 			if (zinfo == NULL) {

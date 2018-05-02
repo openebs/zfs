@@ -222,10 +222,11 @@ uzfs_zvol_worker(void *arg)
 			break;
 	}
 
-	if (rc < 0) {
+	if (rc != 0) {
 		ZREPL_ERRLOG("Zvol op_code :%d failed with "
 		    "error: %d\n", hdr->opcode, errno);
 		hdr->status = ZVOL_OP_STATUS_FAILED;
+		hdr->len = 0;
 	} else {
 		hdr->status = ZVOL_OP_STATUS_OK;
 	}

@@ -38,6 +38,9 @@
 #include <zrepl_prot.h>
 #include "gtest_utils.h"
 
+#define	POOL_SIZE	(100 * 1024 * 1024)
+#define	ZVOL_SIZE	(10 * 1024 * 1024)
+
 using namespace GtestUtils;
 
 /*
@@ -234,7 +237,7 @@ public:
 			throw std::system_error(errno, std::system_category(),
 			    "Cannot create vdev file");
 
-		rc = ftruncate(fd, 100 * 1024 * 1024);
+		rc = ftruncate(fd, POOL_SIZE);
 		close(fd);
 		if (rc != 0)
 			throw std::system_error(errno, std::system_category(),
@@ -245,8 +248,8 @@ public:
 
 	void createZvol(std::string name, std::string arg = "") {
 		execCmd("zfs",
-		    std::string("create -sV 10m -o volblocksize=4k ") +
-		    arg + " " + m_name + "/" + name);
+		    std::string("create -sV ") + std::to_string(ZVOL_SIZE) +
+		    " -o volblocksize=4k " + arg + " " + m_name + "/" + name);
 	}
 
 	void destroyZvol(std::string name) {
@@ -449,10 +452,11 @@ protected:
 	}
 
 	/*
-	 * Send command to read data and read reply header. Reading payload is
-	 * left to the caller.
+	 * Send command to read data and read reply header. Evaluating reply
+	 * and reading payload is left to the caller.
 	 */
-	void read_data_start(size_t offset, int len, zvol_io_hdr_t *hdr_inp)
+	void read_data_start(size_t offset, int len, zvol_io_hdr_t *hdr_inp,
+	    bool rebuild_flag=false)
 	{
 		zvol_io_hdr_t hdr_out;
 		int rc;
@@ -463,13 +467,13 @@ protected:
 		hdr_out.io_seq = ++m_ioseq;
 		hdr_out.offset = offset;
 		hdr_out.len = len;
+		hdr_out.flags = (rebuild_flag) ? ZVOL_OP_FLAG_REBUILD : 0;
 
 		rc = write(m_data_fd, &hdr_out, sizeof (hdr_out));
 		ASSERT_EQ(rc, sizeof (hdr_out));
 		rc = read(m_data_fd, hdr_inp, sizeof (*hdr_inp));
 		ASSERT_EQ(rc, sizeof (*hdr_inp));
 		ASSERT_EQ(hdr_inp->opcode, ZVOL_OPCODE_READ);
-		ASSERT_EQ(hdr_inp->status, ZVOL_OP_STATUS_OK);
 		ASSERT_EQ(hdr_inp->io_seq, m_ioseq);
 		ASSERT_EQ(hdr_inp->offset, offset);
 	}
@@ -592,11 +596,40 @@ TEST_F(ZreplHandshakeTest, HandshakeUnknownZvol) {
 	ASSERT_EQ(hdr_in.len, 0);
 }
 
+TEST_F(ZreplHandshakeTest, UnknownOpcode) {
+	zvol_io_hdr_t hdr_out, hdr_in;
+	int rc;
+
+	hdr_out.version = REPLICA_VERSION;
+	hdr_out.opcode = (zvol_op_code_t) 255;
+	hdr_out.status = ZVOL_OP_STATUS_OK;
+	hdr_out.io_seq = 0;
+	hdr_out.offset = 0;
+	hdr_out.len = m_zvol_name.length() + 1;
+
+	rc = write(m_control_fd, &hdr_out, sizeof (hdr_out));
+	ASSERT_ERRNO("write", rc >= 0);
+	ASSERT_EQ(rc, sizeof (hdr_out));
+	rc = write(m_control_fd, m_zvol_name.c_str(), hdr_out.len);
+	ASSERT_ERRNO("write", rc >= 0);
+	ASSERT_EQ(rc, hdr_out.len);
+
+	rc = read(m_control_fd, &hdr_in, sizeof (hdr_in));
+	ASSERT_ERRNO("read", rc >= 0);
+	ASSERT_EQ(rc, sizeof (hdr_in));
+	EXPECT_EQ(hdr_in.version, REPLICA_VERSION);
+	EXPECT_EQ(hdr_in.opcode, 255);
+	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_FAILED);
+	EXPECT_EQ(hdr_in.io_seq, 0);
+	EXPECT_EQ(hdr_in.offset, 0);
+	ASSERT_EQ(hdr_in.len, 0);
+}
+
 /*
  * Write two blocks with the same io_num and third one with a different io_num
  * and test that read returns two metadata chunks.
  */
-TEST_F(ZreplDataTest, ReadBlocks) {
+TEST_F(ZreplDataTest, WriteAndReadBlocksWithIonum) {
 	zvol_io_hdr_t hdr_in;
 	struct zvol_io_rw_hdr read_hdr;
 	int rc;
@@ -645,6 +678,7 @@ TEST_F(ZreplDataTest, ReadBlocks) {
 
 	/* read all blocks at once and check IO nums */
 	read_data_start(0, 3 * sizeof (buf), &hdr_in);
+	ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
 	ASSERT_EQ(hdr_in.len, 2 * sizeof (read_hdr) + 3 * sizeof (buf));
 
 	rc = read(m_data_fd, &read_hdr, sizeof (read_hdr));
@@ -675,16 +709,17 @@ TEST_F(ZreplDataTest, ReadBlocks) {
 	ASSERT_EQ(rc, 0);
 }
 
-/* Read two blocks without metadata */
+/* Read two blocks without metadata from the end of zvol */
 TEST_F(ZreplDataTest, ReadBlockWithoutMeta) {
 	zvol_io_hdr_t hdr_in;
 	struct zvol_io_rw_hdr read_hdr;
 	int rc;
 	char buf[4096];
-	size_t offset = 1024 * sizeof (buf);
+	size_t offset = ZVOL_SIZE - 2 * sizeof (buf);
 
 	for (int i = 0; i < 2; i++) {
 		read_data_start(offset, sizeof (buf), &hdr_in);
+		ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
 		ASSERT_EQ(hdr_in.len, sizeof (read_hdr) + sizeof (buf));
 
 		rc = read(m_data_fd, &read_hdr, sizeof (read_hdr));
@@ -697,6 +732,269 @@ TEST_F(ZreplDataTest, ReadBlockWithoutMeta) {
 		ASSERT_EQ(rc, read_hdr.len);
 		offset += sizeof (buf);
 	}
+}
+
+/*
+ * Issue a sync request. We don't have a way to test that the data were really
+ * sync'd but at least we test the basic command flow.
+ */
+TEST_F(ZreplDataTest, WriteAndSync) {
+	zvol_io_hdr_t hdr_out, hdr_in;
+	char buf[4096];
+	int rc;
+
+	init_buf(buf, sizeof (buf), "cStor-data");
+	write_data(buf, 0, sizeof (buf), ++m_ioseq);
+	rc = read(m_data_fd, &hdr_in, sizeof (hdr_in));
+	ASSERT_ERRNO("read", rc >= 0);
+	ASSERT_EQ(rc, sizeof (hdr_in));
+	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_WRITE);
+	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
+	EXPECT_EQ(hdr_in.io_seq, m_ioseq);
+
+	hdr_out.version = REPLICA_VERSION;
+	hdr_out.opcode = ZVOL_OPCODE_SYNC;
+	hdr_out.status = ZVOL_OP_STATUS_OK;
+	hdr_out.io_seq = ++m_ioseq;
+	hdr_out.offset = 0;
+	hdr_out.len = 0;
+	hdr_out.flags = 0;
+
+	rc = write(m_data_fd, &hdr_out, sizeof (hdr_out));
+	ASSERT_ERRNO("write", rc >= 0);
+	ASSERT_EQ(rc, sizeof (hdr_out));
+
+	rc = read(m_data_fd, &hdr_in, sizeof (hdr_in));
+	ASSERT_ERRNO("read", rc >= 0);
+	ASSERT_EQ(rc, sizeof (hdr_in));
+	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_SYNC);
+	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
+	EXPECT_EQ(hdr_in.io_seq, m_ioseq);
+	EXPECT_EQ(hdr_in.offset, 0);
+	EXPECT_EQ(hdr_in.len, 0);
+}
+
+TEST_F(ZreplDataTest, UnknownOpcode) {
+	zvol_io_hdr_t hdr_out, hdr_in;
+	int rc;
+
+	hdr_out.version = REPLICA_VERSION;
+	hdr_out.opcode = (zvol_op_code_t) 255;
+	hdr_out.status = ZVOL_OP_STATUS_OK;
+	hdr_out.io_seq = ++m_ioseq;
+	hdr_out.offset = 0;
+	hdr_out.len = 0;
+	hdr_out.flags = 0;
+
+	rc = write(m_control_fd, &hdr_out, sizeof (hdr_out));
+	ASSERT_ERRNO("write", rc >= 0);
+	ASSERT_EQ(rc, sizeof (hdr_out));
+
+	rc = read(m_control_fd, &hdr_in, sizeof (hdr_in));
+	ASSERT_ERRNO("read", rc >= 0);
+	ASSERT_EQ(rc, sizeof (hdr_in));
+	EXPECT_EQ(hdr_in.opcode, 255);
+	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_FAILED);
+	EXPECT_EQ(hdr_in.io_seq, m_ioseq);
+}
+
+TEST_F(ZreplDataTest, ReadInvalidOffset) {
+	zvol_io_hdr_t hdr_in;
+	int rc;
+
+	// unaligned offset
+	read_data_start(33, 4096, &hdr_in);
+	ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_FAILED);
+	ASSERT_EQ(hdr_in.len, 0);
+
+	// offset past the end of zvol
+	read_data_start(ZVOL_SIZE + 4096, 4096, &hdr_in);
+	ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_FAILED);
+	ASSERT_EQ(hdr_in.len, 0);
+}
+
+TEST_F(ZreplDataTest, ReadInvalidLength) {
+	zvol_io_hdr_t hdr_in;
+	int rc;
+
+	// unaligned length
+	read_data_start(0, 4097, &hdr_in);
+	ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_FAILED);
+	ASSERT_EQ(hdr_in.len, 0);
+
+	// length past the end of zvol
+	read_data_start(ZVOL_SIZE - 4096, 2 * 4096, &hdr_in);
+	ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_FAILED);
+	ASSERT_EQ(hdr_in.len, 0);
+}
+
+TEST_F(ZreplDataTest, WriteInvalidOffset) {
+	zvol_io_hdr_t hdr_in;
+	char buf[4096];
+	int rc;
+
+	// Writing last block of zvol should succeed
+	init_buf(buf, sizeof (buf), "cStor-data");
+	write_data(buf, ZVOL_SIZE - sizeof (buf), sizeof (buf), 333);
+	rc = read(m_data_fd, &hdr_in, sizeof (hdr_in));
+	ASSERT_ERRNO("read", rc >= 0);
+	ASSERT_EQ(rc, sizeof (hdr_in));
+	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_WRITE);
+	EXPECT_EQ(hdr_in.io_seq, m_ioseq);
+	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
+
+	// Writing past the end of zvol should fail
+	write_data(buf, ZVOL_SIZE, sizeof (buf), 334);
+	rc = read(m_data_fd, &hdr_in, sizeof (hdr_in));
+	ASSERT_ERRNO("read", rc >= 0);
+	ASSERT_EQ(rc, sizeof (hdr_in));
+	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_WRITE);
+	EXPECT_EQ(hdr_in.io_seq, m_ioseq);
+	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_FAILED);
+}
+
+TEST_F(ZreplDataTest, WriteInvalidLength) {
+	zvol_io_hdr_t hdr_in;
+	char buf[2 * 4096];
+	int rc;
+
+	init_buf(buf, sizeof (buf), "cStor-data");
+
+	write_data(buf, ZVOL_SIZE - 4096, sizeof (buf), 334);
+	rc = read(m_data_fd, &hdr_in, sizeof (hdr_in));
+	ASSERT_ERRNO("read", rc >= 0);
+	ASSERT_EQ(rc, sizeof (hdr_in));
+	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_WRITE);
+	EXPECT_EQ(hdr_in.io_seq, m_ioseq);
+	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_FAILED);
+}
+
+/*
+ * Metadata ionum should be returned only when zvol is degraded (rebuild
+ * not finished) or when explicitly requested by ZVOL_OP_FLAG_REBUILD flag.
+ */
+TEST_F(ZreplDataTest, RebuildFlag) {
+	zvol_io_hdr_t hdr_in, hdr_out;
+	struct zvol_io_rw_hdr read_hdr;
+	struct zvol_io_rw_hdr write_hdr;
+	struct zrepl_status_ack status;
+	struct mgmt_ack mgmt_ack;
+	char buf[4096];
+	int rc;
+
+	/* write a data block with known ionum */
+	init_buf(buf, sizeof (buf), "cStor-data");
+	write_data(buf, 0, sizeof (buf), 654);
+	rc = read(m_data_fd, &hdr_in, sizeof (hdr_in));
+	ASSERT_ERRNO("read", rc >= 0);
+	ASSERT_EQ(rc, sizeof (hdr_in));
+	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_WRITE);
+	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
+	EXPECT_EQ(hdr_in.io_seq, m_ioseq);
+	EXPECT_EQ(hdr_in.offset, 0);
+	ASSERT_EQ(hdr_in.len, sizeof (buf) + sizeof (write_hdr));
+
+	/* Get zvol status before rebuild */
+	hdr_out.version = REPLICA_VERSION;
+	hdr_out.opcode = ZVOL_OPCODE_REPLICA_STATUS;
+	hdr_out.status = ZVOL_OP_STATUS_OK;
+	hdr_out.io_seq = ++m_ioseq;
+	hdr_out.offset = 0;
+	hdr_out.len = m_zvol_name.length() + 1;
+	hdr_out.flags = 0;
+	rc = write(m_control_fd, &hdr_out, sizeof (hdr_out));
+	ASSERT_ERRNO("write", rc >= 0);
+	ASSERT_EQ(rc, sizeof (hdr_out));
+	rc = write(m_control_fd, m_zvol_name.c_str(), hdr_out.len);
+	ASSERT_ERRNO("write", rc >= 0);
+	ASSERT_EQ(rc, hdr_out.len);
+	rc = read(m_control_fd, &hdr_in, sizeof (hdr_in));
+	ASSERT_ERRNO("read", rc >= 0);
+	ASSERT_EQ(rc, sizeof (hdr_in));
+	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_REPLICA_STATUS);
+	EXPECT_EQ(hdr_in.io_seq, m_ioseq);
+	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
+	EXPECT_EQ(hdr_in.len, sizeof (status));
+	rc = read(m_control_fd, &status, sizeof (status));
+	ASSERT_ERRNO("read", rc >= 0);
+	ASSERT_EQ(rc, sizeof (status));
+	EXPECT_EQ(status.state, ZVOL_STATUS_DEGRADED);
+	EXPECT_EQ(status.rebuild_status, ZVOL_REBUILDING_INIT);
+
+	/* transition the zvol to online state */
+	hdr_out.version = REPLICA_VERSION;
+	hdr_out.opcode = ZVOL_OPCODE_START_REBUILD;
+	hdr_out.status = ZVOL_OP_STATUS_OK;
+	hdr_out.io_seq = ++m_ioseq;
+	hdr_out.offset = 0;
+	hdr_out.len = sizeof (mgmt_ack);
+	hdr_out.flags = 0;
+	rc = write(m_control_fd, &hdr_out, sizeof (hdr_out));
+	ASSERT_ERRNO("write", rc >= 0);
+	ASSERT_EQ(rc, sizeof (hdr_out));
+	// Hack to tell the replica that it is the only replica
+	//  -> rebuild will immediately finish
+	mgmt_ack.volname[0] = '\0';
+	mgmt_ack.ip[0] = '\0';
+	mgmt_ack.port = 0;
+	strncpy(mgmt_ack.dw_volname, m_zvol_name.c_str(),
+	    sizeof (mgmt_ack.dw_volname));
+	rc = write(m_control_fd, &mgmt_ack, sizeof (mgmt_ack));
+	ASSERT_ERRNO("write", rc >= 0);
+	ASSERT_EQ(rc, sizeof (mgmt_ack));
+
+	/* Get zvol status after rebuild */
+	hdr_out.version = REPLICA_VERSION;
+	hdr_out.opcode = ZVOL_OPCODE_REPLICA_STATUS;
+	hdr_out.status = ZVOL_OP_STATUS_OK;
+	hdr_out.io_seq = ++m_ioseq;
+	hdr_out.offset = 0;
+	hdr_out.len = m_zvol_name.length() + 1;
+	hdr_out.flags = 0;
+	rc = write(m_control_fd, &hdr_out, sizeof (hdr_out));
+	ASSERT_ERRNO("write", rc >= 0);
+	ASSERT_EQ(rc, sizeof (hdr_out));
+	rc = write(m_control_fd, m_zvol_name.c_str(), hdr_out.len);
+	ASSERT_ERRNO("write", rc >= 0);
+	ASSERT_EQ(rc, hdr_out.len);
+	rc = read(m_control_fd, &hdr_in, sizeof (hdr_in));
+	ASSERT_ERRNO("read", rc >= 0);
+	ASSERT_EQ(rc, sizeof (hdr_in));
+	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_REPLICA_STATUS);
+	EXPECT_EQ(hdr_in.io_seq, m_ioseq);
+	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
+	EXPECT_EQ(hdr_in.len, sizeof (status));
+	rc = read(m_control_fd, &status, sizeof (status));
+	ASSERT_ERRNO("read", rc >= 0);
+	ASSERT_EQ(rc, sizeof (status));
+	EXPECT_EQ(status.state, ZVOL_STATUS_HEALTHY);
+	EXPECT_EQ(status.rebuild_status, ZVOL_REBUILDING_DONE);
+
+	/* read the block without rebuild flag */
+	read_data_start(0, sizeof (buf), &hdr_in, false);
+	ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
+	ASSERT_EQ(hdr_in.len, sizeof (read_hdr) + sizeof (buf));
+	rc = read(m_data_fd, &read_hdr, sizeof (read_hdr));
+	ASSERT_ERRNO("read", rc >= 0);
+	ASSERT_EQ(rc, sizeof (read_hdr));
+	ASSERT_EQ(read_hdr.io_num, 0);
+	ASSERT_EQ(read_hdr.len, sizeof (buf));
+	rc = read(m_data_fd, buf, sizeof (buf));
+	ASSERT_ERRNO("read", rc >= 0);
+	ASSERT_EQ(rc, sizeof (buf));
+
+	/* read the block with rebuild flag */
+	read_data_start(0, sizeof (buf), &hdr_in, true);
+	ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
+	ASSERT_EQ(hdr_in.len, sizeof (read_hdr) + sizeof (buf));
+	rc = read(m_data_fd, &read_hdr, sizeof (read_hdr));
+	ASSERT_ERRNO("read", rc >= 0);
+	ASSERT_EQ(rc, sizeof (read_hdr));
+	ASSERT_EQ(read_hdr.io_num, 654);
+	ASSERT_EQ(read_hdr.len, sizeof (buf));
+	rc = read(m_data_fd, buf, sizeof (buf));
+	ASSERT_ERRNO("read", rc >= 0);
+	ASSERT_EQ(rc, sizeof (buf));
 }
 
 /*

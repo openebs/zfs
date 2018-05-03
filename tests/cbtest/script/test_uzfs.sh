@@ -890,6 +890,10 @@ run_uzfs_test()
 {
 	log_must_not $UZFS_TEST
 	local pid1 pid2 pid3 pid4 pid5
+	local sync_pid
+
+	log_must run_sync_test &
+	sync_pid=$!
 
 	log_must setup_uzfs_test nolog 4096 $UZFS_TEST_VOLSIZE disabled uzfs_pool1 uzfs_vol1 uzfs_test_vdev1
 	log_must export_pool uzfs_pool1
@@ -1034,16 +1038,13 @@ run_uzfs_test()
 	cleanup_uzfs_test uzfs_pool14 uzfs_test_vdev14 uzfs_test_log14
 	cleanup_uzfs_test uzfs_pool16 uzfs_test_vdev16
 
-	log_must run_sync_test &
-	pid1=$!
-
 	log_must setup_uzfs_test log 65536 $UZFS_TEST_VOLSIZE standard uzfs_pool15 uzfs_vol15 uzfs_test_vdev15 uzfs_test_log15
 	log_must export_pool uzfs_pool15
 	log_must $UZFS_TEST -t 30 -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
 	    -p uzfs_pool15 -d uzfs_vol15 -l -i 8192 -b 65536 -T 2 &
-	pid2=$!
+	pid1=$!
 
-	wait $pid1 $pid2
+	wait $pid1 $sync_pid
 	cleanup_uzfs_test uzfs_pool15 uzfs_test_vdev15 uzfs_test_log15
 
 	return 0
@@ -1129,10 +1130,7 @@ run_zrepl_test()
 
 run_zvol_test()
 {
-	local ztest_pid
-
-	log_must $ZTEST &
-	ztest_pid=$!
+	log_must nice -n -20 $ZTEST -VVVVV
 
 	run_uzfs_test
 	run_dmu_test
@@ -1142,8 +1140,6 @@ run_zvol_test()
 	log_must $GTEST_EXPORT
 	log_must $GTEST_ZREPL_PROT
 	start_zrepl
-
-	wait $ztest_pid
 }
 
 run_rebuild_test()

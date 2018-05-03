@@ -56,6 +56,7 @@ typedef struct zvol_rebuild_info {
 	zvol_rebuild_status_t zv_rebuild_status; /* zvol rebuilding status */
 	uint64_t rebuild_bytes;
 	uint16_t rebuild_cnt;
+	uint16_t rebuild_done_cnt;
 } zvol_rebuild_info_t;
 
 /*
@@ -94,6 +95,8 @@ typedef struct zvol_state zvol_state_t;
 	(zv->rebuild_info.zv_rebuild_status == ZVOL_REBUILDING_IN_PROGRESS)
 #define	ZVOL_IS_REBUILDED(zv)	\
 	(zv->rebuild_info.zv_rebuild_status == ZVOL_REBUILDING_DONE)
+#define	ZVOL_IS_REBUILDING_FAILED(zv)	\
+	(zv->rebuild_info.zv_rebuild_status == ZVOL_REBUILDING_FAILED)
 
 extern int zvol_get_data(void *arg, lr_write_t *lr, char *buf, zio_t *zio);
 

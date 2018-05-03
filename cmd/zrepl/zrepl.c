@@ -185,13 +185,14 @@ uzfs_zvol_io_receiver(void *arg)
 
 		if (hdr.opcode == ZVOL_OPCODE_HANDSHAKE) {
 			zinfo = uzfs_zinfo_lookup(zio_cmd->buf);
-			zio_cmd_free(&zio_cmd);
 			if (zinfo == NULL) {
 				ZREPL_ERRLOG("Volume/LUN: %s not found",
-				    zinfo->name);
+				    (char *)zio_cmd->buf);
+				zio_cmd_free(&zio_cmd);
 				goto exit;
 			}
 
+			zio_cmd_free(&zio_cmd);
 			(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
 			if (zinfo->is_io_ack_sender_created) {
 				ZREPL_ERRLOG("Multiple handshake on IO port "
@@ -218,6 +219,12 @@ uzfs_zvol_io_receiver(void *arg)
 			continue;
 		}
 
+		if (zio_cmd->hdr.opcode == ZVOL_OPCODE_WRITE) {
+			(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
+			zinfo->running_io_seq = zio_cmd->hdr.io_seq;
+			(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
+		}
+
 		/* Take refcount for uzfs_zvol_worker to work on it */
 		uzfs_zinfo_take_refcnt(zinfo, B_FALSE);
 		zio_cmd->zv = zinfo;
@@ -226,6 +233,8 @@ uzfs_zvol_io_receiver(void *arg)
 	}
 exit:
 	if (zinfo != NULL) {
+		ZREPL_LOG("uzfs_zvol_io_receiver thread exiting, volume:%s\n",
+		    zinfo->name);
 		(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
 		zinfo->conn_closed = B_TRUE;
 		/*
@@ -246,9 +255,9 @@ exit:
 		}
 		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 		uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
+	} else {
+		ZREPL_LOG("uzfs_zvol_io_receiver thread exiting\n");
 	}
-
-	ZREPL_LOG("uzfs_zvol_io_receiver thread exiting\n");
 	zk_thread_exit();
 }
 
@@ -388,13 +397,16 @@ read_socket:
 	}
 
 exit:
-	if (zinfo != NULL)
+	if (zinfo != NULL) {
+		ZREPL_LOG("uzfs_zvol_rebuild_scanner thread exiting,"
+		    " volume:%s\n", zinfo->name);
 		uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
+	} else {
+		printf("uzfs_zvol_rebuild_scanner thread exiting\n");
+	}
 
 	if (fd != -1)
 		close(fd);
-
-	printf("uzfs_zvol_rebuild_scanner thread exiting\n");
 	zk_thread_exit();
 }
 
@@ -682,7 +694,6 @@ uzfs_zvol_io_ack_sender(void *arg)
 		STAILQ_REMOVE_HEAD(&zinfo->complete_queue, cmd_link);
 		(void) pthread_mutex_unlock(&zinfo->complete_queue_mutex);
 
-		// ASSERT3P(zio_cmd->conn, ==, fd);
 		ZREPL_LOG("ACK for op:%d with seq-id %ld\n",
 		    zio_cmd->hdr.opcode, zio_cmd->hdr.io_seq);
 
@@ -742,9 +753,10 @@ exit:
 		zio_cmd_free(&zio_cmd);
 	}
 	zinfo->is_io_ack_sender_created = B_FALSE;
+	ZREPL_LOG("uzfs_zvol_io_ack_sender thread exiting, volume:%s\n",
+	    zinfo->name);
 	uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
 
-	ZREPL_LOG("uzfs_zvol_io_ack_sender thread exiting\n");
 	zk_thread_exit();
 }
 

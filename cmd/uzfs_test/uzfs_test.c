@@ -616,8 +616,10 @@ uzfs_test_import_pool(char *pool_name)
 
 	importargs.path = &pool_dir;
 	importargs.paths = 1;
-	importargs.scan = B_TRUE;
+	importargs.scan = B_FALSE;
 	importargs.cachefile = NULL;
+	importargs.unique = B_TRUE;
+	importargs.poolname = pool_name;
 
 	if ((err = zpool_tryimport(hdl, pool_name, &config, &importargs))
 	    != 0) {

@@ -26,6 +26,7 @@
 #define	ZREPL_MGMT_H
 
 #include <pthread.h>
+#include <syslog.h>
 #include <sys/queue.h>
 #include <uzfs_io.h>
 #include "zrepl_prot.h"
@@ -37,6 +38,10 @@ extern "C" {
 
 #define	uZFS_ZVOL_WORKERS_MAX 128
 #define	uZFS_ZVOL_WORKERS_DEFAULT 6
+#define	ZFS_PROP_TARGET_IP	"com.cloudbyte:targetip"
+
+#define	REBUILD_IO_SERVER_PORT	"3233"
+#define	IO_SERVER_PORT	"3232"
 
 extern kmutex_t zvol_list_mutex;
 struct zvol_io_cmd_s;
@@ -77,6 +82,8 @@ typedef struct zvol_info_s {
 
 	/* Will be used to singal ack-sender to exit */
 	uint8_t		conn_closed;
+	/* Pointer to mgmt connection for this zinfo */
+	void		*mgmt_conn;
 
 	/* Perfromance counter */
 
@@ -93,6 +100,9 @@ typedef struct thread_args_s {
 	int fd;
 } thread_args_t;
 
+extern void (*zinfo_create_hook)(zvol_info_t *, nvlist_t *);
+extern void (*zinfo_destroy_hook)(zvol_info_t *);
+
 typedef struct zvol_io_cmd_s {
 	STAILQ_ENTRY(zvol_io_cmd_s) cmd_link;
 	zvol_io_hdr_t 	hdr;
@@ -107,7 +117,8 @@ typedef struct zvol_rebuild_s {
 	int		fd;
 } zvol_rebuild_t;
 
-extern int uzfs_zinfo_init(void *zv, const char *ds_name);
+extern int uzfs_zinfo_init(void *zv, const char *ds_name,
+    nvlist_t *create_props);
 extern zvol_info_t *uzfs_zinfo_lookup(const char *name);
 extern void uzfs_zinfo_drop_refcnt(zvol_info_t *zinfo, int locked);
 extern void uzfs_zinfo_take_refcnt(zvol_info_t *zinfo, int locked);
@@ -118,28 +129,25 @@ void uzfs_zvol_get_last_committed_io_no(zvol_state_t *zv,
     uint64_t *io_seq);
 void uzfs_zvol_store_last_committed_io_no(zvol_state_t *zv,
     uint64_t io_seq);
-extern int create_and_bind(const char *port, int bind_needed);
+extern int create_and_bind(const char *port, int bind_needed,
+    boolean_t nonblocking);
 
 #define	ZREPL_LOG(fmt, ...)  syslog(LOG_NOTICE,				\
-		"%-18.18s:%4d: %-20.20s: " fmt, __func__, __LINE__,	\
-    tinfo, ##__VA_ARGS__)
+		"%-18.18s:%4d: " fmt, __func__, __LINE__, ##__VA_ARGS__)
 
 #define	ZREPL_NOTICELOG(fmt, ...) syslog(LOG_NOTICE,			\
-		"%-18.18s:%4d: %-20.20s: " fmt, __func__, __LINE__,	\
-    tinfo, ##__VA_ARGS__)
+		"%-18.18s:%4d: " fmt, __func__, __LINE__, ##__VA_ARGS__)
 
 #define	ZREPL_ERRLOG(fmt, ...) syslog(LOG_ERR,				\
-		"%-18.18s:%4d: %-20.20s: " fmt, __func__, __LINE__,	\
-    tinfo, ##__VA_ARGS__)
+		"%-18.18s:%4d: " fmt, __func__, __LINE__, ##__VA_ARGS__)
 
 #define	ZREPL_WARNLOG(fmt, ...) syslog(LOG_ERR,				\
-		"%-18.18s:%4d: %-20.20s: " fmt, __func__, __LINE__,	\
-    tinfo, ##__VA_ARGS__)
+		"%-18.18s:%4d: " fmt, __func__, __LINE__, ##__VA_ARGS__)
 
 #define	ZREPL_TRACELOG(FLAG, fmt, ...)					\
 	do {								\
-		syslog(LOG_NOTICE, "%-18.18s:%4d: %-20.20s: "		\
-		    fmt, __func__, __LINE__, tinfo, ##__VA_ARGS__);	\
+		syslog(LOG_NOTICE, "%-18.18s:%4d: "		\
+		    fmt, __func__, __LINE__, ##__VA_ARGS__);	\
 	} while (0)
 
 #ifdef	__cplusplus

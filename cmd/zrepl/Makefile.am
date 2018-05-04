@@ -12,7 +12,9 @@ DEFAULT_INCLUDES += \
 sbin_PROGRAMS = zrepl
 
 zrepl_SOURCES = \
-	zrepl.c
+	zrepl.c \
+	mgmt_conn.c \
+	data_conn.c
 
 zrepl_LDADD = \
 	$(top_builddir)/lib/libnvpair/libnvpair.la \
@@ -20,3 +22,5 @@ zrepl_LDADD = \
 	$(top_builddir)/lib/libzpool/libzpool.la \
 	$(top_builddir)/lib/libzfs/libzfs.la \
 	$(top_builddir)/lib/libzfs_core/libzfs_core.la
+
+EXTRA_DIST = data_conn.h mgmt_conn.h

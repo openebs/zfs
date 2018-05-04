@@ -23,6 +23,7 @@
 #define	_UZFS_IO_H
 
 #include <sys/zil.h>
+#include <sys/uzfs_zvol.h>
 
 #ifdef __cplusplus
 extern "C" {

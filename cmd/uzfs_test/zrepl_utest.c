@@ -1132,6 +1132,7 @@ status_check1:
 	p++; p++;
 	bcopy(mgmt_ack, p, sizeof (mgmt_ack_t));
 
+	int original_port = 0;
 	p = mgmt_ack_ds3;
 	for (i = 0; i < 3; i++) {
 		/* Modify downgrade replica and set it to ds3 */
@@ -1142,6 +1143,7 @@ status_check1:
 		printf("Rebuilding Port: %d\n", p->port);
 		if (i == 2) {
 			/* For ds2, assign wrong port, so that rebuild fail */
+			original_port = p->port;
 			p->port = 9999;
 		}
 		p++;
@@ -1171,6 +1173,41 @@ status_check2:
 	}
 
 	printf("Rebuilding failed on Replica:%s\n", ds3);
+
+	/* Lets retry to rebuild on ds3 with correct info */
+	p = mgmt_ack_ds3;
+	for (i = 0; i < 3; i++) {
+		if (i == 2) {
+			/* For ds2, re-assign right port */
+			p->port = original_port;
+		}
+		p++;
+	}
+
+	/*
+	 * Start rebuild process on downgraded replica ds3
+	 * by sharing IP and rebuild_Port info with ds3.
+	 */
+	rc = zrepl_utest_replica_rebuild_start(new_fd, mgmt_ack_ds3,
+	    sizeof (mgmt_ack_t) * 3);
+	if (rc == -1) {
+		goto exit;
+	}
+	/*
+	 * Check rebuild status of ds3.
+	 */
+status_check3:
+	count = zrepl_utest_get_replica_status(ds3, new_fd, &status_ack);
+	if (count == -1) {
+		goto exit;
+	}
+
+	if (status_ack.state != ZVOL_STATUS_HEALTHY) {
+		sleep(1);
+		goto status_check3;
+	}
+
+	printf("Replica:%s is healthy now\n", ds3);
 exit:
 	if (sfd != -1)
 		close(sfd);

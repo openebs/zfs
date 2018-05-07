@@ -306,11 +306,11 @@ uzfs_zvol_rebuild_dw_replica(void *arg)
 	}
 
 next_step:
-#if 0
+
 	if (ZVOL_IS_REBUILDING_FAILED(zinfo->zv)) {
 		goto exit;
 	}
-#endif
+
 	if (offset >= ZVOL_VOLUME_SIZE(zvol_state)) {
 		hdr.opcode = ZVOL_OPCODE_REBUILD_COMPLETE;
 		rc = uzfs_zvol_socket_write(sfd, (char *)&hdr, sizeof (hdr));
@@ -346,11 +346,11 @@ next_step:
 	}
 
 	while (1) {
-#if 0
+
 		if (ZVOL_IS_REBUILDING_FAILED(zinfo->zv)) {
 			goto exit;
 		}
-#endif
+
 		rc = uzfs_zvol_socket_read(sfd, (char *)&hdr, sizeof (hdr));
 		if (rc != 0) {
 			ZREPL_ERRLOG("Socket read failed, err: %d\n", errno);

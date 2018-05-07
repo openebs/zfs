@@ -716,8 +716,12 @@ uzfs_zvol_io_ack_sender(void *arg)
 		    (char *)&zio_cmd->hdr, sizeof (zio_cmd->hdr));
 		if (rc == -1) {
 			ZREPL_ERRLOG("socket write err :%d\n", errno);
+			if (zio_cmd->conn == fd) {
+				zio_cmd_free(&zio_cmd);
+				goto exit;
+			}
 			zio_cmd_free(&zio_cmd);
-			goto exit;
+			continue;
 		}
 
 		switch (zio_cmd->hdr.opcode) {
@@ -734,7 +738,8 @@ uzfs_zvol_io_ack_sender(void *arg)
 				if (rc == -1) {
 					ZREPL_ERRLOG("socket write err :%d\n",
 					    errno);
-					goto exit;
+					if (zio_cmd->conn == fd)
+						goto exit;
 				}
 				zinfo->read_req_ack_cnt++;
 				break;

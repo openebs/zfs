@@ -816,10 +816,14 @@ cleanup_uzfs_test()
 	fi
 
 	log_must $ZPOOL destroy $pool_name 2> /dev/null
+	log_must $ZPOOL labelclear -f $TMPDIR/$vdev_file 2> /dev/null
+	log_must dd if=/dev/zero of=$TMPDIR/$vdev_file bs=1M count=100
 
 	destroy_disk $TMPDIR/$vdev_file
 	if [ $# -eq 3 ]; then
 		log_file=$3
+		log_must $ZPOOL labelclear -f $TMPDIR/$log_file 2> /dev/null
+		log_must dd if=/dev/zero of=$TMPDIR/$log_file bs=1M count=100
 		destroy_disk $TMPDIR/$log_file
 	fi
 }
@@ -896,6 +900,10 @@ run_uzfs_test()
 {
 	log_must_not $UZFS_TEST
 	local pid1 pid2 pid3 pid4 pid5
+	local sync_pid
+
+	log_must run_sync_test &
+	sync_pid=$!
 
 	log_must setup_uzfs_test nolog 4096 $UZFS_TEST_VOLSIZE disabled uzfs_pool1 uzfs_vol1 uzfs_test_vdev1
 	log_must export_pool uzfs_pool1
@@ -936,7 +944,13 @@ run_uzfs_test()
 	    -a $UZFS_TEST_VOLSIZE_IN_NUM -s -T 2 > $TMPDIR/uzfs_test2.out &
 	pid2=$!
 
-	wait $pid1 $pid2
+	log_must setup_uzfs_test nolog 4096 $UZFS_TEST_VOLSIZE standard uzfs_pool06 uzfs_vol06 uzfs_test_vdev06
+	log_must export_pool uzfs_pool06
+	log_must $UZFS_TEST -t 30 -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
+	     -p uzfs_pool06 -d uzfs_vol06 -T 2 &
+	pid3=$!
+
+	wait $pid1 $pid2 $pid3
         [[ $? -ne 0 ]] && { echo "test failed.."; cat $TMPDIR/uzfs_test*.out; return 1; }
 
 	ios1=$(cat /tmp/uzfs_test1.out  | grep "Total write IOs" | awk '{print $4}')
@@ -945,52 +959,24 @@ run_uzfs_test()
 
 	cleanup_uzfs_test uzfs_pool5 uzfs_test_vdev5
 	cleanup_uzfs_test uzfs_pool6 uzfs_test_vdev6
-
-	log_must setup_uzfs_test nolog 4096 $UZFS_TEST_VOLSIZE standard uzfs_pool6 uzfs_vol6 uzfs_test_vdev6
-	log_must export_pool uzfs_pool6
-	$UZFS_TEST -t 30 -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
-	     -p uzfs_pool6 -d uzfs_vol6 -T 2 &
-	pid1=$!
+	cleanup_uzfs_test uzfs_pool06 uzfs_test_vdev06
 
 	log_must setup_uzfs_test log 4096 $UZFS_TEST_VOLSIZE disabled uzfs_pool7 uzfs_vol7 uzfs_test_vdev7 uzfs_test_log7
 	log_must export_pool uzfs_pool7
 	$UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
 	    -p uzfs_pool7 -d uzfs_vol7 -l -T 2 > $TMPDIR/uzfs_test1.out &
-	pid2=$!
+	pid1=$!
 
 	log_must setup_uzfs_test log 4096 $UZFS_TEST_VOLSIZE always uzfs_pool8 uzfs_vol8 uzfs_test_vdev8 uzfs_test_log8
 	log_must export_pool uzfs_pool8
 	$UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
 	    -p uzfs_pool8 -d uzfs_vol8 -s -l -T 2 > $TMPDIR/uzfs_test2.out &
-	pid3=$!
-	wait $pid1 $pid3 $pid3
-        [[ $? -ne 0 ]] && { echo "test failed.."; cat $TMPDIR/uzfs_test*.out; return 1; }
-
-	ios1=$(cat /tmp/uzfs_test1.out  | grep "Total write IOs" | awk '{print $4}')
-	ios2=$(cat /tmp/uzfs_test2.out  | grep "Total write IOs" | awk '{print $4}')
-
-	log_must_not greater $ios1 $ios2
-
-	cleanup_uzfs_test uzfs_pool6 uzfs_test_vdev6
-	cleanup_uzfs_test uzfs_pool7 uzfs_test_vdev7 uzfs_test_log7
-	cleanup_uzfs_test uzfs_pool8 uzfs_test_vdev8 uzfs_test_log8
+	pid2=$!
 
 	log_must setup_uzfs_test log 4096 $UZFS_TEST_VOLSIZE standard uzfs_pool9 uzfs_vol9 uzfs_test_vdev9 uzfs_test_log9
 	log_must export_pool uzfs_pool9
 	log_must $UZFS_TEST -t 30 -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
 	    -p uzfs_pool9 -d uzfs_vol9 -l -T 2 &
-	pid1=$!
-
-	log_must setup_uzfs_test nolog 65536 $UZFS_TEST_VOLSIZE disabled uzfs_pool10 uzfs_vol10 uzfs_test_vdev10
-	log_must export_pool uzfs_pool10
-	$UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
-	    -p uzfs_pool10 -d uzfs_vol10 -i 8192 -b 65536 -T 2 > $TMPDIR/uzfs_test1.out &
-	pid2=$!
-
-	log_must setup_uzfs_test nolog 65536 $UZFS_TEST_VOLSIZE always uzfs_pool11 uzfs_vol11 uzfs_test_vdev11
-	log_must export_pool uzfs_pool11
-	$UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
-	    -p uzfs_pool11 -d uzfs_vol11 -s -i 8192 -b 65536 -T 2 > $TMPDIR/uzfs_test2.out &
 	pid3=$!
 
 	wait $pid1 $pid2 $pid3
@@ -1000,54 +986,76 @@ run_uzfs_test()
 	ios2=$(cat /tmp/uzfs_test2.out  | grep "Total write IOs" | awk '{print $4}')
 
 	log_must_not greater $ios1 $ios2
+
+	cleanup_uzfs_test uzfs_pool7 uzfs_test_vdev7 uzfs_test_log7
+	cleanup_uzfs_test uzfs_pool8 uzfs_test_vdev8 uzfs_test_log8
 	cleanup_uzfs_test uzfs_pool9 uzfs_test_vdev9 uzfs_test_log9
-	cleanup_uzfs_test uzfs_pool10 uzfs_test_vdev10
-	cleanup_uzfs_test uzfs_pool11 uzfs_test_vdev11
+
+	log_must setup_uzfs_test nolog 65536 $UZFS_TEST_VOLSIZE disabled uzfs_pool10 uzfs_vol10 uzfs_test_vdev10
+	log_must export_pool uzfs_pool10
+	$UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
+	    -p uzfs_pool10 -d uzfs_vol10 -i 8192 -b 65536 -T 2 > $TMPDIR/uzfs_test1.out &
+	pid1=$!
+
+	log_must setup_uzfs_test nolog 65536 $UZFS_TEST_VOLSIZE always uzfs_pool11 uzfs_vol11 uzfs_test_vdev11
+	log_must export_pool uzfs_pool11
+	$UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
+	    -p uzfs_pool11 -d uzfs_vol11 -s -i 8192 -b 65536 -T 2 > $TMPDIR/uzfs_test2.out &
+	pid2=$!
 
 	log_must setup_uzfs_test nolog 65536 $UZFS_TEST_VOLSIZE standard uzfs_pool12 uzfs_vol12 uzfs_test_vdev12
 	log_must export_pool uzfs_pool12
 	log_must $UZFS_TEST -t 30 -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
 	    -p uzfs_pool12 -d uzfs_vol12 -i 8192 -b 65536 -T 2 &
-	pid1=$!
+	pid3=$!
+
+	wait $pid1 $pid2 $pid3
+        [[ $? -ne 0 ]] && { echo "test failed.."; cat $TMPDIR/uzfs_test*.out; return 1; }
+
+	ios1=$(cat /tmp/uzfs_test1.out  | grep "Total write IOs" | awk '{print $4}')
+	ios2=$(cat /tmp/uzfs_test2.out  | grep "Total write IOs" | awk '{print $4}')
+
+	log_must_not greater $ios1 $ios2
+	cleanup_uzfs_test uzfs_pool10 uzfs_test_vdev10
+	cleanup_uzfs_test uzfs_pool11 uzfs_test_vdev11
+	cleanup_uzfs_test uzfs_pool12 uzfs_test_vdev12
 
 	log_must setup_uzfs_test log 65536 $UZFS_TEST_VOLSIZE disabled uzfs_pool13 uzfs_vol13 uzfs_test_vdev13 uzfs_test_log13
 	log_must export_pool uzfs_pool13
 	$UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
 	    -p uzfs_pool13 -d uzfs_vol13 -l -i 8192 -b 65536 -T 2 > $TMPDIR/uzfs_test1.out &
-	pid2=$!
+	pid1=$!
 
 	log_must setup_uzfs_test log 65536 $UZFS_TEST_VOLSIZE always uzfs_pool14 uzfs_vol14 uzfs_test_vdev14 uzfs_test_log14
 	log_must export_pool uzfs_pool14
 	$UZFS_TEST -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
 	    -p uzfs_pool14 -d uzfs_vol14 -s -l -i 8192 -b 65536 -T 2 > $TMPDIR/uzfs_test2.out &
-	pid3=$!
-
-	log_must setup_uzfs_test log 65536 $UZFS_TEST_VOLSIZE standard uzfs_pool15 uzfs_vol15 uzfs_test_vdev15 uzfs_test_log15
-	log_must export_pool uzfs_pool15
-	log_must $UZFS_TEST -t 30 -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
-	    -p uzfs_pool15 -d uzfs_vol15 -l -i 8192 -b 65536 -T 2 &
-	pid4=$!
+	pid2=$!
 
 	log_must setup_uzfs_test nolog 4096 $UZFS_TEST_VOLSIZE standard uzfs_pool16 uzfs_vol16 uzfs_test_vdev16
 	log_must export_pool uzfs_pool16
 	log_must $UZFS_TEST -t 10 -T 0 -n 10 -p uzfs_pool16 -d uzfs_vol16 &
-	pid5=$!
+	pid3=$!
 
-	log_must run_sync_test &
-	pid6=$!
-
-	wait $pid1 $pid2 $pid3 $pid4 $pid5 $pid6
+	wait $pid1 $pid2 $pid3
         [[ $? -ne 0 ]] && { echo "test failed.."; cat $TMPDIR/uzfs_test*.out; return 1; }
 
 	ios1=$(cat /tmp/uzfs_test1.out  | grep "Total write IOs" | awk '{print $4}')
 	ios2=$(cat /tmp/uzfs_test2.out  | grep "Total write IOs" | awk '{print $4}')
 	log_must_not greater $ios1 $ios2
 
-	cleanup_uzfs_test uzfs_pool12 uzfs_test_vdev12
 	cleanup_uzfs_test uzfs_pool13 uzfs_test_vdev13 uzfs_test_log13
 	cleanup_uzfs_test uzfs_pool14 uzfs_test_vdev14 uzfs_test_log14
-	cleanup_uzfs_test uzfs_pool15 uzfs_test_vdev15 uzfs_test_log15
 	cleanup_uzfs_test uzfs_pool16 uzfs_test_vdev16
+
+	log_must setup_uzfs_test log 65536 $UZFS_TEST_VOLSIZE standard uzfs_pool15 uzfs_vol15 uzfs_test_vdev15 uzfs_test_log15
+	log_must export_pool uzfs_pool15
+	log_must $UZFS_TEST -t 30 -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
+	    -p uzfs_pool15 -d uzfs_vol15 -l -i 8192 -b 65536 -T 2 &
+	pid1=$!
+
+	wait $pid1 $sync_pid
+	cleanup_uzfs_test uzfs_pool15 uzfs_test_vdev15 uzfs_test_log15
 
 	return 0
 }
@@ -1132,10 +1140,7 @@ run_zrepl_test()
 
 run_zvol_test()
 {
-	local ztest_pid
-
-	log_must $ZTEST &
-	ztest_pid=$!
+	log_must nice -n -20 $ZTEST -VVVVV
 
 	run_uzfs_test
 	run_dmu_test
@@ -1145,8 +1150,6 @@ run_zvol_test()
 	log_must $GTEST_EXPORT
 	log_must $GTEST_ZREPL_PROT
 	start_zrepl
-
-	wait $ztest_pid
 }
 
 run_rebuild_test()

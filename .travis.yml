@@ -55,7 +55,7 @@ install:
     - cd ../zfs
     - sh autogen.sh
     - if [ $ZFS_BUILD_TAGS = 0 ]; then
-        ./configure --enable-code-coverage=yes --enable-debug --enable-uzfs=yes --with-jemalloc --with-fio=$PWD/../fio || travis_terminate 1;
+        ./configure --with-config=user --enable-code-coverage=yes --enable-debug --enable-uzfs=yes --with-jemalloc --with-fio=$PWD/../fio || travis_terminate 1;
         make -j4;
       else
         ./configure --enable-code-coverage=yes --enable-debug || travis_terminate 1;

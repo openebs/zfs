@@ -103,8 +103,9 @@ uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 
 	rl = zfs_range_lock(&zv->zv_range_lock, offset, len, RL_WRITER);
 
-	if (is_rebuild &&
-	    ZVOL_IS_DEGRADED(zv) && ZVOL_IS_REBUILDING(zv)) {
+	if (is_rebuild) {
+		VERIFY(ZVOL_IS_DEGRADED(zv) && (ZVOL_IS_REBUILDING(zv) ||
+		    ZVOL_IS_REBUILDING_FAILED(zv)));
 		count = uzfs_get_nonoverlapping_ondisk_blks(zv, offset,
 		    len, metadata, (void **)&chunk_io);
 		if (!count)
@@ -118,16 +119,13 @@ chunk_io:
 
 			zv->rebuild_info.rebuild_bytes += len;
 			count--;
-	} else {
-		VERIFY(is_rebuild == 0);
 	}
 
 	while (offset < end && offset < volsize) {
 		if (len_in_first_aligned_block != 0) {
 			bytes = len_in_first_aligned_block;
 			len_in_first_aligned_block = 0;
-		}
-		else
+		} else
 			bytes = (len < blocksize) ? len : blocksize;
 
 		if (bytes > (volsize - offset))

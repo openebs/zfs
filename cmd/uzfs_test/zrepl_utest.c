@@ -16,6 +16,8 @@
 
 char *tgt_port = "6060";
 char *ds1 = "ds1";
+char *ds2 = "ds2";
+char *ds3 = "ds3";
 static uint64_t last_io_seq_sent;
 
 struct data_io {
@@ -44,6 +46,223 @@ zrepl_verify_data(char *p, int size)
 		if (p[i] != 'C') {
 			return (-1);
 		}
+	}
+	return (0);
+}
+
+int
+zrepl_compare_data(char *buf1, char *buf2, int size)
+{
+
+	int i;
+
+	for (i = 0; i < size; i++) {
+		if (buf1[i] != buf2[i]) {
+			return (-1);
+		}
+	}
+	return (0);
+}
+
+int
+zrepl_utest_mgmt_hs_io_conn(char *volname, int mgmt_fd)
+{
+	int			rc = 0;
+	int			io_fd = 0;
+	mgmt_ack_t		*mgmt_ack;
+	zvol_io_hdr_t		hdr;
+	struct sockaddr_in	replica_io_addr;
+
+	bzero(&hdr, sizeof (hdr));
+	mgmt_ack = umem_alloc(sizeof (mgmt_ack_t), UMEM_NOFAIL);
+
+	hdr.version = REPLICA_VERSION;
+	hdr.opcode = ZVOL_OPCODE_HANDSHAKE;
+	hdr.len = strlen(volname) + 1;
+
+	rc = write(mgmt_fd, (void *)&hdr, sizeof (zvol_io_hdr_t));
+	if (rc == -1) {
+		printf("During handshake, Write error\n");
+		return (rc);
+	}
+
+	rc = write(mgmt_fd, volname, hdr.len);
+	if (rc == -1) {
+		printf("During volname send, Write error\n");
+		return (rc);
+	}
+
+	rc = read(mgmt_fd, (void *)&hdr, sizeof (zvol_io_hdr_t));
+	if (rc == -1) {
+		printf("During HDR read, Read error\n");
+		return (rc);
+	}
+
+	if (hdr.status == ZVOL_OP_STATUS_FAILED) {
+		printf("Header status is failed\n");
+		return (-1);
+	}
+
+	rc = read(mgmt_fd, (void *)mgmt_ack, hdr.len);
+	if (rc == -1) {
+		printf("During mgmt Read error\n");
+		return (rc);
+	}
+
+	printf("Volume name:%s\n", mgmt_ack->volname);
+	printf("IP address:%s\n", mgmt_ack->ip);
+	printf("Port:%d\n", mgmt_ack->port);
+	printf("\n");
+
+	bzero((char *)&replica_io_addr, sizeof (replica_io_addr));
+
+	replica_io_addr.sin_family = AF_INET;
+	replica_io_addr.sin_addr.s_addr = inet_addr(mgmt_ack->ip);
+	replica_io_addr.sin_port = htons(mgmt_ack->port);
+
+	/* Data connection for ds0 */
+	io_fd = create_and_bind("", B_FALSE, B_FALSE);
+	if (io_fd == -1) {
+		printf("Socket creation failed with errno:%d\n", errno);
+		return (io_fd);
+	}
+
+	rc = connect(io_fd, (struct sockaddr *)&replica_io_addr,
+	    sizeof (replica_io_addr));
+	if (rc == -1) {
+		printf("Failed to connect to replica-IO port"
+		    " with errno:%d\n", errno);
+		close(io_fd);
+		return (-1);
+	}
+
+	rc = write(io_fd, (void *)&hdr, sizeof (zvol_io_hdr_t));
+	if (rc == -1) {
+		printf("During handshake, Write error\n");
+		return (rc);
+	}
+
+	rc = write(io_fd, volname, hdr.len);
+	if (rc == -1) {
+		printf("During volname send, Write error\n");
+		return (rc);
+	}
+	printf("Data-IO connection to volume:%s passed\n", volname);
+	return (io_fd);
+}
+
+int
+zrepl_utest_prepare_for_rebuild(char *healthy_vol, char *dw_vol,
+    int mgmt_fd, mgmt_ack_t *mgmt_ack)
+{
+
+	int		rc = 0;
+	zvol_io_hdr_t	hdr;
+
+	hdr.version = REPLICA_VERSION;
+	hdr.opcode = ZVOL_OPCODE_PREPARE_FOR_REBUILD;
+	hdr.len = strlen(healthy_vol) + 1;
+
+	rc = write(mgmt_fd, (void *)&hdr, sizeof (zvol_io_hdr_t));
+	if (rc == -1) {
+		printf("Prepare_for_rebuild: sending hdr failed\n");
+		return (rc);
+	}
+
+	rc = write(mgmt_fd, healthy_vol, hdr.len);
+	if (rc == -1) {
+		printf("Prepare_for_rebuild: sending volname failed\n");
+		return (rc);
+	}
+
+
+	rc = read(mgmt_fd, (void *)&hdr, sizeof (zvol_io_hdr_t));
+	if (rc == -1) {
+		printf("Prepare_for_rebuild: error in hdr read\n");
+		return (rc);
+	}
+
+	rc = read(mgmt_fd, (void *)mgmt_ack, hdr.len);
+	if (rc == -1) {
+		printf("Prepare_for_rebuild: error in mgmt_ack read\n");
+		return (rc);
+	}
+
+	/* Copy dw_vol name in mgmt_ack */
+	strncpy(mgmt_ack->dw_volname, dw_vol,
+	    sizeof (mgmt_ack->dw_volname));
+	printf("Replica being rebuild is: %s\n", mgmt_ack->dw_volname);
+	printf("Replica helping rebuild is: %s\n", mgmt_ack->volname);
+	printf("Rebuilding IP address: %s\n", mgmt_ack->ip);
+	printf("Rebuilding Port: %d\n", mgmt_ack->port);
+	return (0);
+}
+
+int
+zrepl_utest_get_replica_status(char *volname, int fd,
+    zrepl_status_ack_t *status_ack)
+{
+	int count = 0;
+	zvol_io_hdr_t hdr;
+
+	bzero(&hdr, sizeof (hdr));
+	hdr.version = REPLICA_VERSION;
+	hdr.opcode = ZVOL_OPCODE_REPLICA_STATUS;
+	hdr.len = strlen(volname) + 1;
+
+	printf("Check health status of volume:%s\n", volname);
+	count = write(fd, (void *)&hdr, sizeof (zvol_io_hdr_t));
+	if (count == -1) {
+		printf("Health status: sending hdr failed\n");
+		return (-1);
+	}
+
+	count = write(fd, volname, hdr.len);
+	if (count == -1) {
+		printf("Health status: sending volname failed\n");
+		return (-1);
+	}
+
+	count = read(fd, (void *)&hdr, sizeof (zvol_io_hdr_t));
+	if (count == -1) {
+		printf("Health status: error in hdr read\n");
+		return (-1);
+	}
+
+	if (hdr.status != ZVOL_OP_STATUS_OK) {
+		printf("Health status: response failed\n");
+		return (-1);
+	}
+
+	count = read(fd, (void *)status_ack, sizeof (zrepl_status_ack_t));
+	if (count == -1) {
+		printf("Health status: error in statuc_ack read\n");
+		return (-1);
+	}
+	return (0);
+}
+
+int
+zrepl_utest_replica_rebuild_start(int fd, mgmt_ack_t *mgmt_ack,
+    int size)
+{
+	int count = 0;
+	zvol_io_hdr_t hdr;
+
+	bzero(&hdr, sizeof (hdr));
+	hdr.version = REPLICA_VERSION;
+	hdr.opcode = ZVOL_OPCODE_START_REBUILD;
+	hdr.len = size;
+	count = write(fd, (void *)&hdr, sizeof (zvol_io_hdr_t));
+	if (count == -1) {
+		printf("rebuild_start: sending hdr failed\n");
+		return (count);
+	}
+
+	count = write(fd, (char *)mgmt_ack, hdr.len);
+	if (count == -1) {
+		printf("rebuild_start: sending volname failed\n");
+		return (count);
 	}
 	return (0);
 }
@@ -163,40 +382,6 @@ writer_thread(void *arg)
 	io = kmem_alloc((sizeof (struct data_io) +
 	    warg->io_block_size), KM_SLEEP);
 	printf("Dataset generation start........... \n");
-
-	io->hdr.version = REPLICA_VERSION;
-	io->hdr.opcode = ZVOL_OPCODE_HANDSHAKE;
-	io->hdr.len    = strlen(ds) + 1;
-	strncpy(io->buf, ds, io->hdr.len);
-
-	count = write(sfd, (void *)&(io->hdr), sizeof (zvol_io_hdr_t));
-	if (count == -1) {
-		printf("Sending HDR failed\n");
-		goto exit;
-	}
-
-	count = write(sfd, (void *)(io->buf), io->hdr.len);
-	if (count == -1) {
-		printf("Sending volname is failed\n");
-		goto exit;
-	}
-
-	if (warg->rebuild_test == B_TRUE) {
-		io->hdr.len    = strlen(ds1) + 1;
-		strncpy(io->buf, ds1, io->hdr.len);
-
-		count = write(sfd1, (void *)&(io->hdr), sizeof (zvol_io_hdr_t));
-		if (count == -1) {
-			printf("Sending HDR failed\n");
-			goto exit;
-		}
-
-		count = write(sfd1, (void *)(io->buf), io->hdr.len);
-		if (count == -1) {
-			printf("Sending volname is failed\n");
-			goto exit;
-		}
-	}
 	bzero(io, sizeof (struct data_io));
 	populate(io->buf, warg->io_block_size);
 
@@ -301,23 +486,153 @@ exit:
 	zk_thread_exit();
 }
 
+static void
+replica_data_verify_thread(void *arg)
+{
+
+	int i = 0;
+	char *p;
+	char *buf1;
+	char *buf2;
+	int sfd, sfd1;
+	int count = 0;
+	int nbytes = 0;
+	int read_bytes = 0;
+	kmutex_t *mtx;
+	kcondvar_t *cv;
+	zvol_io_hdr_t hdr;
+	struct zvol_io_rw_hdr *read_hdr1;
+	struct zvol_io_rw_hdr *read_hdr2;
+	int *threads_done;
+	worker_args_t *warg = (worker_args_t *)arg;
+
+	sfd = warg->sfd[0];
+	sfd1 = warg->sfd[1];
+	mtx = warg->mtx;
+	cv = warg->cv;
+	threads_done = warg->threads_done;
+
+	/* Read and validate data */
+	i = 0;
+	nbytes = 0;
+	while (i < warg->max_iops) {
+		bzero(&hdr, sizeof (zvol_io_hdr_t));
+
+		/* Construct hdr for read request */
+		hdr.version = REPLICA_VERSION;
+		hdr.opcode = ZVOL_OPCODE_READ;
+		hdr.io_seq = i;
+		hdr.len    = warg->io_block_size;
+		hdr.offset = nbytes;
+
+		/* Read request to replica ds0 */
+		count = write(sfd, (void *)&hdr, sizeof (zvol_io_hdr_t));
+		if (count == -1) {
+			printf("Write error\n");
+			break;
+		}
+
+		/* Read request to replica ds1 */
+		count = write(sfd1, (void *)&hdr, sizeof (zvol_io_hdr_t));
+		if (count == -1) {
+			printf("Write error\n");
+			break;
+		}
+
+		nbytes += warg->io_block_size;
+		i++;
+
+		/* Read hdr from replica ds0(sfd) */
+		count = read(sfd, &hdr, sizeof (zvol_io_hdr_t));
+		if (count != sizeof (zvol_io_hdr_t)) {
+			printf("Header read error\n");
+			break;
+		}
+
+		read_bytes = hdr.len;
+		buf1 = kmem_alloc(read_bytes, KM_SLEEP);
+		p = buf1;
+
+		/* Read data from replica ds0(sfd) */
+		while (read_bytes) {
+			count = read(sfd, (void *)p, nbytes);
+			if (count < 0) {
+				printf("\n");
+				printf("Read error in reader_thread "
+				    "reading data\n");
+			}
+			p += count;
+			read_bytes -= count;
+		}
+
+		/* Read hdr from replica ds1(sfd1) */
+		count = read(sfd1, &hdr, sizeof (zvol_io_hdr_t));
+		if (count != sizeof (zvol_io_hdr_t)) {
+			printf("Meta data header read error\n");
+			break;
+		}
+
+		read_bytes = hdr.len;
+		buf2 = kmem_alloc(read_bytes, KM_SLEEP);
+		p = buf2;
+
+		/* Read data from replica ds1(sfd1) */
+		while (read_bytes) {
+			count = read(sfd1, (void *)p, nbytes);
+			if (count < 0) {
+				printf("\n");
+				printf("Read error in reader_thread "
+				    "reading data\n");
+			}
+			p += count;
+			read_bytes -= count;
+		}
+
+		read_hdr1 = (struct zvol_io_rw_hdr *)buf1;
+		read_hdr2 = (struct zvol_io_rw_hdr *)buf2;
+		/* Compare io_num, should be same */
+		if (read_hdr1->io_num != read_hdr2->io_num) {
+			ASSERT(!"IO Number mismatch\n");
+		}
+
+		/* Compare len, should be same */
+		if (read_hdr1->len != read_hdr2->len) {
+			ASSERT(!"IO length mismatch\n");
+		}
+
+		count = zrepl_compare_data(buf1 +
+		    sizeof (struct zvol_io_rw_hdr),
+		    buf2 + sizeof (struct zvol_io_rw_hdr), read_hdr1->len);
+		if (count != 0) {
+			ASSERT(!"Data mistmach mismatch\n");
+		}
+
+		kmem_free(buf1, hdr.len);
+		kmem_free(buf2, hdr.len);
+	}
+
+	mutex_enter(mtx);
+	*threads_done = *threads_done + 1;
+	cv_signal(cv);
+	mutex_exit(mtx);
+	zk_thread_exit();
+}
+
 void
 zrepl_utest(void *arg)
 {
 	kmutex_t mtx;
 	kcondvar_t cv;
-	int count, sfd, rc;
+	int sfd, rc;
 	int  io_sfd, new_fd;
 	int threads_done = 0;
 	int num_threads = 0;
-	int wrong_message = 1;
 	kthread_t *reader;
 	kthread_t *writer;
 	socklen_t in_len;
-	zvol_io_hdr_t hdr;
 	mgmt_ack_t mgmt_ack;
+	zrepl_status_ack_t status_ack;
 	struct sockaddr in_addr;
-	struct sockaddr_in replica_io_addr;
 	worker_args_t writer_args, reader_args;
 
 	io_block_size = 4096;
@@ -359,85 +674,48 @@ zrepl_utest(void *arg)
 	}
 	printf("Listen was successful\n");
 
-start:
 	in_len = sizeof (in_addr);
 	new_fd = accept(sfd, &in_addr, &in_len);
 	if (new_fd == -1) {
 		printf("Unable to accept\n");
 		goto exit;
 	}
-	printf("Connection accepted from replica successful\n");
 
-	hdr.version = REPLICA_VERSION;
-	if (wrong_message) {
-		hdr.opcode = -1;
-		wrong_message = 0;
-	} else {
-		hdr.opcode = ZVOL_OPCODE_HANDSHAKE;
-	}
-	hdr.len = strlen(ds)+1;
-	printf("Op code sent %d with len:%ld\n", hdr.opcode, hdr.len);
-
-	count = write(new_fd, (void *)&hdr, sizeof (zvol_io_hdr_t));
-	if (count == -1) {
-		printf("During hand shake Write error\n");
-		goto exit;
-	}
-	printf("header has been sent with count %d\n", count);
-
-	count = write(new_fd, ds, hdr.len);
-	if (count == -1) {
-		printf("During name send Write error\n");
-		goto exit;
-	}
-	printf("Volname has been sent with count %d\n", count);
-
-	count = read(new_fd, (void *)&hdr, sizeof (zvol_io_hdr_t));
-	if (count == -1) {
-		printf("During hdr Read error\n");
-		goto exit;
-	}
-	printf("Header has read with count %d\n", count);
-
-	if (hdr.status == ZVOL_OP_STATUS_FAILED) {
-		close(new_fd);
-		printf("Header status is failed\n");
-		goto start;
-	}
-
-	count = read(new_fd, (void *)&mgmt_ack, sizeof (mgmt_ack));
-	if (count == -1) {
-		printf("During mgmt Read error\n");
-		goto exit;
-	}
-
-	printf("Vol name: %s\n", mgmt_ack.volname);
-	printf("IP address: %s\n", mgmt_ack.ip);
-	printf("Port: %d\n", mgmt_ack.port);
-
-	bzero((char *)&replica_io_addr, sizeof (replica_io_addr));
-
-	replica_io_addr.sin_family = AF_INET;
-	replica_io_addr.sin_addr.s_addr = inet_addr(mgmt_ack.ip);
-	replica_io_addr.sin_port = htons(mgmt_ack.port);
-retry:
-	io_sfd = create_and_bind("", B_FALSE, B_FALSE);
+	printf("Connection accepted from replica successfully\n");
+	io_sfd = zrepl_utest_mgmt_hs_io_conn(ds, new_fd);
 	if (io_sfd == -1) {
-		printf("Socket creation failed with errno:%d\n", errno);
-		goto start;
+		goto exit;
 	}
-	rc = connect(io_sfd, (struct sockaddr *)&replica_io_addr,
-	    sizeof (replica_io_addr));
-	if (rc == -1) {
-		printf("Failed to connect to replica-IO port"
-		    " with errno:%d\n", errno);
-		close(io_sfd);
-		sleep(1);
-		goto retry;
-	}
-	printf("Connect to replica IO port is successfully\n");
+
 
 	writer_args.sfd[0] = reader_args.sfd[0] = io_sfd;
+	rc = zrepl_utest_get_replica_status(ds, new_fd, &status_ack);
+	if (rc == -1) {
+		goto exit;
+	}
+
+	if (status_ack.state != ZVOL_STATUS_HEALTHY) {
+		printf("Volume:%s health status: NOT_HEALTHY\n", ds);
+		strncpy(mgmt_ack.dw_volname, ds, sizeof (mgmt_ack.dw_volname));
+		strncpy(mgmt_ack.volname, "", sizeof (mgmt_ack.volname));
+		rc = zrepl_utest_replica_rebuild_start(new_fd, &mgmt_ack,
+		    sizeof (mgmt_ack_t));
+		if (rc == -1) {
+			goto exit;
+		}
+	}
+
+check_status:
+	rc = zrepl_utest_get_replica_status(ds, new_fd, &status_ack);
+	if (rc == -1) {
+		goto exit;
+	}
+
+	if (status_ack.state != ZVOL_STATUS_HEALTHY) {
+		sleep(1);
+		goto check_status;
+	}
+	printf("Volume:%s health status: HEALTHY\n", ds);
 	writer = zk_thread_create(NULL, 0,
 	    (thread_func_t)writer_thread, &writer_args, 0, NULL,
 	    TS_RUN, 0, PTHREAD_CREATE_DETACHED);
@@ -466,34 +744,66 @@ exit:
 	}
 }
 
+/*
+ * Rebuilding downgraded replica test case. It covers following case:
+ * =====Rebuild success case=====
+ * Details:
+ * - Two replicas, ds0 a healthy while ds1 will be downgrade replica
+ * - Replica ds0 is marked as healthy replica in the beginning
+ * - 10K IOs of size 4k pumped into ds0
+ * - 5k IOs of size 4k (with same data) will be pumped into ds1
+ * - Trigger rebuild workflow on ds1 using IP + Rebuild_port of ds0
+ * - Wait for ds1 to be marked healthy
+ * - Now read each block from ds0 and ds1, compare IO_seq and data.
+ *
+ * =====Multiple Rebuild success case=====
+ * Details:
+ * - Two replicas ds0 and ds1 are healthy
+ * - ds2 downgrade replica
+ * - Trigger rebuild workflow on ds2 using IP + Rebuild_port of ds0 & ds1
+ * - Rebuild will be triggered successfully on ds0 & ds1
+ * - Wait till ds2 become healthy
+ *
+ * =====Rebuild failure case=====
+ * - Replicas ds0i, ds1 and ds2 are healthy
+ * - ds3 downgrade replica
+ * - Trigger rebuild workflow on ds3 using IP + Rebuild_port of ds0, ds1 and ds2
+ * - Pass wrong IP address for ds2 so that connection got failed
+ * - Rebuild will be triggered successfully on ds0 and ds1 but would fail on ds2
+ * - Since rebuild would fail on ds2, all rebuild operation happening in
+ *   parallel should be stopped and ds2 should be left in downgrade mode.
+ */
 void
 zrepl_rebuild_test(void *arg)
 {
 	kmutex_t mtx;
 	kcondvar_t cv;
-	int count, sfd, rc;
-	int  io_sfd, io_sfd1, new_fd;
+	int i, count, sfd, rc, mgmt_fd;
+	int  ds0_io_sfd, ds1_io_sfd;
+	int  ds2_io_sfd, ds3_io_sfd;
 	int threads_done = 0;
 	int num_threads = 0;
-	int wrong_message = 1;
 	kthread_t *reader[2];
 	kthread_t *writer;
 	socklen_t in_len;
-	zvol_io_hdr_t hdr;
+	mgmt_ack_t *p = NULL;
 	mgmt_ack_t *mgmt_ack = NULL;
+	mgmt_ack_t *mgmt_ack_ds1 = NULL;
+	mgmt_ack_t *mgmt_ack_ds2 = NULL;
+	mgmt_ack_t *mgmt_ack_ds3 = NULL;
 	struct sockaddr in_addr;
 	zrepl_status_ack_t status_ack;
-	struct sockaddr_in replica_io_addr;
 	worker_args_t writer_args, reader_args[2];
 
 	io_block_size = 4096;
 	active_size = 0;
-	max_iops = 10000;
+	max_iops = 2000;
 	pool = "testp";
 	ds = "ds0";
 	ds1 = "ds1";
 
-	io_sfd = io_sfd1 = new_fd = sfd = -1;
+	ds0_io_sfd = ds1_io_sfd = mgmt_fd = sfd = -1;
+	ds2_io_sfd = ds3_io_sfd = -1;
 	mutex_init(&mtx, NULL, MUTEX_DEFAULT, NULL);
 	cv_init(&cv, NULL, CV_DEFAULT, NULL);
 
@@ -518,7 +828,7 @@ zrepl_rebuild_test(void *arg)
 	reader_args[1].cv = &cv;
 	reader_args[1].io_block_size = io_block_size;
 	reader_args[1].active_size = active_size;
-	reader_args[1].max_iops = max_iops/2;
+	reader_args[1].max_iops = max_iops / 2;
 	reader_args[1].rebuild_test = B_TRUE;
 
 	sfd = create_and_bind(tgt_port, B_TRUE, B_FALSE);
@@ -533,218 +843,128 @@ zrepl_rebuild_test(void *arg)
 	}
 	printf("Listen was successful\n");
 
-start:
+
 	in_len = sizeof (in_addr);
-	new_fd = accept(sfd, &in_addr, &in_len);
-	if (new_fd == -1) {
+	mgmt_fd = accept(sfd, &in_addr, &in_len);
+	if (mgmt_fd == -1) {
 		printf("Unable to accept\n");
 		goto exit;
 	}
-	printf("Connection accepted from replica successful\n");
+	printf("Connection accepted from replica successfully\n");
 
-	hdr.version = REPLICA_VERSION;
-	if (wrong_message) {
-		hdr.opcode = -1;
-		wrong_message = 0;
-	} else {
-		hdr.opcode = ZVOL_OPCODE_HANDSHAKE;
-	}
-	hdr.len = strlen(ds)+1;
-	printf("Op code sent %d with len:%ld\n", hdr.opcode, hdr.len);
-
-	count = write(new_fd, (void *)&hdr, sizeof (zvol_io_hdr_t));
-	if (count == -1) {
-		printf("During hand shake Write error\n");
+	/* Mgmt Handshake and IO-conn for replica ds0 */
+	ds0_io_sfd = zrepl_utest_mgmt_hs_io_conn(ds, mgmt_fd);
+	if (ds0_io_sfd == -1) {
 		goto exit;
 	}
-	printf("header has been sent with count %d\n", count);
 
-	count = write(new_fd, ds, hdr.len);
-	if (count == -1) {
-		printf("During name send Write error\n");
+	writer_args.sfd[0] = reader_args[0].sfd[0] = ds0_io_sfd;
+
+	/* Mgmt Handshake and IO-conn for replica ds1 */
+	ds1_io_sfd = zrepl_utest_mgmt_hs_io_conn(ds1, mgmt_fd);
+	if (ds1_io_sfd == -1) {
 		goto exit;
 	}
-	printf("Volname has been sent with count %d\n", count);
+	writer_args.sfd[1] = reader_args[1].sfd[0] = ds1_io_sfd;
 
-	count = read(new_fd, (void *)&hdr, sizeof (zvol_io_hdr_t));
-	if (count == -1) {
-		printf("During hdr Read error\n");
+	/* Mgmt Handshake and IO-conn for replica ds2 */
+	ds2_io_sfd = zrepl_utest_mgmt_hs_io_conn(ds2, mgmt_fd);
+	if (ds2_io_sfd == -1) {
 		goto exit;
 	}
-	printf("Header has read with count %d\n", count);
 
-	if (hdr.status == ZVOL_OP_STATUS_FAILED) {
-		close(new_fd);
-		printf("Header status is failed\n");
-		goto start;
+	/* Mgmt Handshake and IO-conn for replica ds3 */
+	ds3_io_sfd = zrepl_utest_mgmt_hs_io_conn(ds3, mgmt_fd);
+	if (ds3_io_sfd == -1) {
+		goto exit;
 	}
 
+	/* Check status of replica ds0 */
+	rc = zrepl_utest_get_replica_status(ds, mgmt_fd, &status_ack);
+	if (rc == -1) {
+		goto exit;
+	}
+
+	/*
+	 * If replica ds0 status is not healthy then trigger rebuild
+	 * on ds0, without any target(healthy replica).
+	 */
 	mgmt_ack = umem_alloc(sizeof (mgmt_ack_t), UMEM_NOFAIL);
+	if (status_ack.state != ZVOL_STATUS_HEALTHY) {
+		printf("Volume:%s health status: NOT_HEALTHY\n", ds);
+		strncpy(mgmt_ack->dw_volname, ds,
+		    sizeof (mgmt_ack->dw_volname));
+		strncpy(mgmt_ack->volname, "", sizeof (mgmt_ack->volname));
+		rc = zrepl_utest_replica_rebuild_start(mgmt_fd, mgmt_ack,
+		    sizeof (mgmt_ack_t));
+		if (rc == -1) {
+			goto exit;
+		}
+	}
 
-	count = read(new_fd, (void *)mgmt_ack, hdr.len);
-	if (count == -1) {
-		printf("During mgmt Read error\n");
+check_status:
+	rc = zrepl_utest_get_replica_status(ds, mgmt_fd, &status_ack);
+	if (rc == -1) {
 		goto exit;
 	}
 
-	printf("Vol name: %s\n", mgmt_ack->volname);
-	printf("IP address: %s\n", mgmt_ack->ip);
-	printf("Port: %d\n", mgmt_ack->port);
-
-	bzero((char *)&replica_io_addr, sizeof (replica_io_addr));
-
-	replica_io_addr.sin_family = AF_INET;
-	replica_io_addr.sin_addr.s_addr = inet_addr(mgmt_ack->ip);
-	replica_io_addr.sin_port = htons(mgmt_ack->port);
-retry:
-	io_sfd = create_and_bind("", B_FALSE, B_FALSE);
-	if (io_sfd == -1) {
-		printf("Socket creation failed with errno:%d\n", errno);
-		goto start;
-	}
-	rc = connect(io_sfd, (struct sockaddr *)&replica_io_addr,
-	    sizeof (replica_io_addr));
-	if (rc == -1) {
-		printf("Failed to connect to replica-IO port"
-		    " with errno:%d\n", errno);
-		close(io_sfd);
+	if (status_ack.state != ZVOL_STATUS_HEALTHY) {
 		sleep(1);
-		goto retry;
+		goto check_status;
 	}
-	printf("Connect to replica IO port is successfully\n");
+	printf("Volume:%s health status: HEALTHY\n", ds);
 
-	writer_args.sfd[0] = reader_args[0].sfd[0] = io_sfd;
-
-	io_sfd1 = create_and_bind("", B_FALSE, B_FALSE);
-	if (io_sfd1 == -1) {
-		printf("Socket creation failed with errno:%d\n", errno);
-		goto start;
-	}
-	rc = connect(io_sfd1, (struct sockaddr *)&replica_io_addr,
-	    sizeof (replica_io_addr));
-	if (rc == -1) {
-		printf("Failed to connect to replica-IO port"
-		    " with errno:%d\n", errno);
-		sleep(1);
-		close(io_sfd1);
-		goto retry;
-	}
-	printf("Connect to replica IO port is successfully\n");
-
-	writer_args.sfd[1] = reader_args[1].sfd[0] = io_sfd1;
+	/* Start writing data to both replicas */
 	writer = zk_thread_create(NULL, 0,
 	    (thread_func_t)writer_thread, &writer_args, 0, NULL,
 	    TS_RUN, 0, PTHREAD_CREATE_DETACHED);
 	num_threads++;
-	printf("Write_func thread created successfully\n");
 
 	reader[0] = zk_thread_create(NULL, 0, (thread_func_t)reader_thread,
 	    &reader_args[0], 0, NULL, TS_RUN, 0, PTHREAD_CREATE_DETACHED);
 	num_threads++;
-	printf("Reader_func thread-0 created successfully\n");
 
 	reader[1] = zk_thread_create(NULL, 0, (thread_func_t)reader_thread,
 	    &reader_args[1], 0, NULL, TS_RUN, 0, PTHREAD_CREATE_DETACHED);
 	num_threads++;
-	printf("Reader_func thread-1 created successfully\n");
+
+	/* Let's wait for threads to be done */
 	mutex_enter(&mtx);
 	while (threads_done != num_threads)
 		cv_wait(&cv, &mtx);
 	mutex_exit(&mtx);
-	cv_destroy(&cv);
-	mutex_destroy(&mtx);
-	/* Start rebuilding operation */
+	num_threads = threads_done = 0;
+
+	/* Start rebuilding operation on ds1 from ds0 */
+
 	/*
-	 * Step1: Send ZVOL_OPCODE_PREPARE_FOR_REBUILD message to
-	 * healthy replica and get rebuild_io port and ip from healthy
-	 * replica. ds0 is healthy replica in this case.
+	 * Send ZVOL_OPCODE_PREPARE_FOR_REBUILD op_code
+	 * to healthy replica ds0 and get rebuild_io port
+	 * and ip from healthy replica ds0.
 	 */
-	hdr.version = REPLICA_VERSION;
-	hdr.opcode = ZVOL_OPCODE_PREPARE_FOR_REBUILD;
-	hdr.len = strlen(ds)+1;
-	count = write(new_fd, (void *)&hdr, sizeof (zvol_io_hdr_t));
+	mgmt_ack_ds1 = umem_alloc(sizeof (mgmt_ack_t), UMEM_NOFAIL);
+	count = zrepl_utest_prepare_for_rebuild(ds, ds1, mgmt_fd,
+	    mgmt_ack_ds1);
 	if (count == -1) {
 		printf("Prepare_for_rebuild: sending hdr failed\n");
 		goto exit;
 	}
 
-	count = write(new_fd, ds, hdr.len);
-	if (count == -1) {
-		printf("Prepare_for_rebuild: sending volname failed\n");
-		goto exit;
-	}
-
-
-	count = read(new_fd, (void *)&hdr, sizeof (zvol_io_hdr_t));
-	if (count == -1) {
-		printf("Prepare_for_rebuild: error in hdr read\n");
-		goto exit;
-	}
-
-	count = read(new_fd, (void *)mgmt_ack, hdr.len);
-	if (count == -1) {
-		printf("Prepare_for_rebuild: error in mgmt_ack read\n");
-		goto exit;
-	}
-
-	strncpy(mgmt_ack->dw_volname, ds1, sizeof (mgmt_ack->dw_volname));
-	printf("Healthy replica: %s\n", mgmt_ack->volname);
-	printf("Rebuilding IP address: %s\n", mgmt_ack->ip);
-	printf("Rebuilding Port: %d\n", mgmt_ack->port);
-	printf("Downgraded replica: %s\n", mgmt_ack->dw_volname);
 	/*
-	 * Step2: Send Rebuild IP address and Port to downgrade
-	 * replica. In this case ds1 is downgraded replica.
+	 * Start rebuild process on downgraded replica ds1
+	 * by sharing IP and rebuild_Port info with ds1.
 	 */
-	hdr.version = REPLICA_VERSION;
-	hdr.opcode = ZVOL_OPCODE_START_REBUILD;
-	hdr.len = sizeof (mgmt_ack_t);
-	count = write(new_fd, (void *)&hdr, sizeof (zvol_io_hdr_t));
-	if (count == -1) {
-		printf("Start_rebuild: sending hdr failed\n");
+	rc = zrepl_utest_replica_rebuild_start(mgmt_fd, mgmt_ack_ds1,
+	    sizeof (mgmt_ack_t));
+	if (rc == -1) {
 		goto exit;
 	}
-
-	count = write(new_fd, (char *)mgmt_ack, hdr.len);
-	if (count == -1) {
-		printf("start_rebuild: sending volname failed\n");
-		goto exit;
-	}
-	printf("Rebuilding on volume:%s started ....\n", ds1);
 	/*
-	 * Step3: Check rebuild status of ds1.
+	 * Check rebuild status of of downgrade replica ds1.
 	 */
 status_check:
-	printf("Lets wait for healthy status of volume:%s\n", ds1);
-	hdr.version = REPLICA_VERSION;
-	hdr.opcode = ZVOL_OPCODE_REPLICA_STATUS;
-	hdr.len = strlen(ds1) + 1;
-	count = write(new_fd, (void *)&hdr, sizeof (zvol_io_hdr_t));
+	count = zrepl_utest_get_replica_status(ds1, mgmt_fd, &status_ack);
 	if (count == -1) {
-		printf("Rebuild_status: sending hdr failed\n");
-		goto exit;
-	}
-
-	count = write(new_fd, ds1, hdr.len);
-	if (count == -1) {
-		printf("Rebuild_status: sending volname failed\n");
-		goto exit;
-	}
-
-	count = read(new_fd, (void *)&hdr, sizeof (zvol_io_hdr_t));
-	if (count == -1) {
-		printf("Rebuild_status: error in hdr read\n");
-		goto exit;
-	}
-
-	if (hdr.status != ZVOL_OP_STATUS_OK) {
-		printf("Rebuild_status: response failed\n");
-		goto exit;
-	}
-
-	count = read(new_fd, (void *)&status_ack, hdr.len);
-	if (count == -1) {
-		printf("Rebuild_status: error in mgmt_ack read\n");
 		goto exit;
 	}
 
@@ -752,22 +972,209 @@ status_check:
 		sleep(1);
 		goto status_check;
 	}
+	printf("Replica:%s is healthy now\n", ds1);
+
+	/* Verify if the data is same on both replica or not */
+	writer = zk_thread_create(NULL, 0,
+	    (thread_func_t)replica_data_verify_thread, &writer_args, 0, NULL,
+	    TS_RUN, 0, PTHREAD_CREATE_DETACHED);
+	num_threads++;
+	mutex_enter(&mtx);
+	while (threads_done != num_threads)
+		cv_wait(&cv, &mtx);
+	mutex_exit(&mtx);
+	cv_destroy(&cv);
+	mutex_destroy(&mtx);
+
+	/* Start rebuilding operation on ds2 from ds0 and ds1 */
+
+	/*
+	 * mgmt_ack has IP + Rebuild_port for ds0, copy it
+	 * to mgmt_ack_ds2, send ZVOL_OPCODE_PREPARE_FOR_REBUILD
+	 * op_code to healthy replicas ds1, get rebuild_io port
+	 * and ip. Copy it to mgmt_ack_ds2.
+	 */
+	mgmt_ack_ds2 = umem_alloc(sizeof (mgmt_ack_t) * 2, UMEM_NOFAIL);
+	p = mgmt_ack_ds2;
+	count = zrepl_utest_prepare_for_rebuild(ds, ds2, mgmt_fd, p);
+	if (count == -1) {
+		printf("Prepare_for_rebuild: sending hdr failed\n");
+		goto exit;
+	}
+	p++;
+	count = zrepl_utest_prepare_for_rebuild(ds1, ds2, mgmt_fd, p);
+	if (count == -1) {
+		printf("Prepare_for_rebuild: sending hdr failed\n");
+		goto exit;
+	}
+
+	p = mgmt_ack_ds2;
+	for (i = 0; i < 2; i++) {
+		printf("Replica being rebuild is: %s\n", p->dw_volname);
+		printf("Replica helping rebuild is: %s\n", p->volname);
+		printf("Rebuilding IP address: %s\n", p->ip);
+		printf("Rebuilding Port: %d\n", p->port);
+		p++;
+	}
+
+	/*
+	 * Start rebuild process on downgraded replica ds2
+	 * by sharing IP and rebuild_Port info with ds2.
+	 */
+	rc = zrepl_utest_replica_rebuild_start(mgmt_fd, mgmt_ack_ds2,
+	    sizeof (mgmt_ack_t) * 2);
+	if (rc == -1) {
+		goto exit;
+	}
+	/*
+	 * Check rebuild status of ds2.
+	 */
+status_check1:
+	count = zrepl_utest_get_replica_status(ds2, mgmt_fd, &status_ack);
+	if (count == -1) {
+		goto exit;
+	}
+
+	if (status_ack.state != ZVOL_STATUS_HEALTHY) {
+		sleep(1);
+		goto status_check1;
+	}
+	printf("Replica:%s is healthy now\n", ds2);
+
+	/* Start rebuilding operation on ds3 from ds0, ds1 and ds2 */
+
+	/*
+	 * Copy mgmt_ack_ds2 to mgmt_ack_ds3, mgmt_ack_ds2 has
+	 * IP + rebuild_port info of ds0, ds1. Send
+	 * ZVOL_OPCODE_PREPARE_FOR_REBUILD op_code ds2.
+	 * Copy that too to mgmt_ack_ds3.
+	 */
+	mgmt_ack_ds3 = umem_alloc(sizeof (mgmt_ack_t) * 3, UMEM_NOFAIL);
+
+	p = mgmt_ack_ds3;
+	count = zrepl_utest_prepare_for_rebuild(ds, ds3, mgmt_fd, p);
+	if (count == -1) {
+		printf("Prepare_for_rebuild: sending hdr failed\n");
+		goto exit;
+	}
+	p++;
+	count = zrepl_utest_prepare_for_rebuild(ds1, ds3, mgmt_fd, p);
+	if (count == -1) {
+		printf("Prepare_for_rebuild: sending hdr failed\n");
+		goto exit;
+	}
+	p++;
+	count = zrepl_utest_prepare_for_rebuild(ds2, ds3, mgmt_fd, p);
+	if (count == -1) {
+		printf("Prepare_for_rebuild: sending hdr failed\n");
+		goto exit;
+	}
+
+	int original_port = 0;
+	p = mgmt_ack_ds3;
+	for (i = 0; i < 3; i++) {
+		if (i == 2) {
+			/* For ds2, assign wrong port, so that rebuild fail */
+			original_port = p->port;
+			p->port = 9999;
+		}
+		printf("Replica being rebuild is: %s\n", p->dw_volname);
+		printf("Replica helping rebuild is: %s\n", p->volname);
+		printf("Rebuilding IP address: %s\n", p->ip);
+		printf("Rebuilding Port: %d\n", p->port);
+		p++;
+	}
+
+	/*
+	 * Start rebuild process on downgraded replica ds3
+	 * by sharing IP and rebuild_Port info with ds3.
+	 */
+	rc = zrepl_utest_replica_rebuild_start(mgmt_fd, mgmt_ack_ds3,
+	    sizeof (mgmt_ack_t) * 3);
+	if (rc == -1) {
+		goto exit;
+	}
+	/*
+	 * Check rebuild status of ds3.
+	 */
+status_check2:
+	count = zrepl_utest_get_replica_status(ds3, mgmt_fd, &status_ack);
+	if (count == -1) {
+		goto exit;
+	}
+
+	if (status_ack.rebuild_status != ZVOL_REBUILDING_FAILED) {
+		sleep(1);
+		goto status_check2;
+	}
+
+	printf("Rebuilding failed on Replica:%s\n", ds3);
+	sleep(10);
+
+	printf("\n\n");
+	/* Lets retry to rebuild on ds3 with correct info */
+	p = mgmt_ack_ds3;
+	for (i = 0; i < 3; i++) {
+		if (i == 2) {
+			/* For ds2, re-assign right port */
+			p->port = original_port;
+		}
+		printf("Replica being rebuild is: %s\n", p->dw_volname);
+		printf("Replica helping rebuild is: %s\n", p->volname);
+		printf("Rebuilding IP address: %s\n", p->ip);
+		printf("Rebuilding Port: %d\n", p->port);
+		p++;
+	}
+
+	/*
+	 * Start rebuild process on downgraded replica ds3
+	 * by sharing IP and rebuild_Port info with ds3.
+	 */
+	rc = zrepl_utest_replica_rebuild_start(mgmt_fd, mgmt_ack_ds3,
+	    sizeof (mgmt_ack_t) * 3);
+	if (rc == -1) {
+		goto exit;
+	}
+	/*
+	 * Check rebuild status of ds3.
+	 */
+status_check3:
+	count = zrepl_utest_get_replica_status(ds3, mgmt_fd, &status_ack);
+	if (count == -1) {
+		goto exit;
+	}
+
+	if (status_ack.state != ZVOL_STATUS_HEALTHY) {
+		sleep(1);
+		goto status_check3;
+	}
+
+	printf("Replica:%s is healthy now\n", ds3);
 exit:
-	printf("Replica is healthy now\n");
-	if (sfd != -1) {
+	if (sfd != -1)
 		close(sfd);
-	}
 
-	if (new_fd != -1) {
-		close(new_fd);
-	}
+	if (mgmt_fd != -1)
+		close(mgmt_fd);
 
-	if (io_sfd != -1)
-		close(io_sfd);
+	if (ds0_io_sfd != -1)
+		close(ds0_io_sfd);
 
-	if (io_sfd1 != -1)
-		close(io_sfd1);
+	if (ds1_io_sfd != -1)
+		close(ds1_io_sfd);
+
+	if (ds2_io_sfd != -1)
+		close(ds2_io_sfd);
+
+	if (ds3_io_sfd != -1)
+		close(ds3_io_sfd);
 
 	if (mgmt_ack != NULL)
 		umem_free(mgmt_ack, sizeof (mgmt_ack_t));
+	if (mgmt_ack_ds1 != NULL)
+		umem_free(mgmt_ack_ds1, sizeof (mgmt_ack_t));
+	if (mgmt_ack_ds2 != NULL)
+		umem_free(mgmt_ack_ds2, sizeof (mgmt_ack_t) * 2);
+	if (mgmt_ack_ds3 != NULL)
+		umem_free(mgmt_ack_ds3, sizeof (mgmt_ack_t) * 3);
 }

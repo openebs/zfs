@@ -316,6 +316,9 @@ uzfs_zinfo_update_io_seq_for_all_volumes(void)
 		if (uzfs_zvol_get_status(zinfo->zv) == ZVOL_STATUS_HEALTHY) {
 			uzfs_zvol_store_last_committed_io_no(zinfo->zv,
 			    zinfo->checkpointed_io_seq);
+			(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
+			zinfo->checkpointed_io_seq = zinfo->running_io_seq;
+			(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 		}
 	}
 	(void) mutex_exit(&zvol_list_mutex);

@@ -61,13 +61,19 @@ typedef struct zvol_info_s {
 	zvol_state_t	*zv;
 	int 		refcnt;
 	int		is_io_ack_sender_created;
+	uint64_t	running_io_seq;
 	uint64_t	checkpointed_io_seq;
 	taskq_t		*uzfs_zvol_taskq;	/* Taskq for minor management */
 
 	/* Thread sync related */
 
-	/* For protection of complete_queue */
+	/*
+	 * For protection of:
+	 * 1. is_io_ack_sender_created
+	 * 2. running_io_seq
+	 */
 	pthread_mutex_t	zinfo_mutex;
+	/* For protection of complete_queue */
 	pthread_mutex_t	complete_queue_mutex;
 	pthread_cond_t	io_ack_cond;
 

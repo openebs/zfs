@@ -579,6 +579,7 @@ uzfs_zvol_rebuild_dw_replica_start(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 			 */
 			if ((strcmp(mack->volname, "")) == 0) {
 				zinfo->zv->rebuild_info.rebuild_cnt = 0;
+				zinfo->zv->rebuild_info.rebuild_done_cnt = 0;
 				/* Mark replica healthy now */
 				uzfs_zvol_set_rebuild_status(zinfo->zv,
 				    ZVOL_REBUILDING_DONE);
@@ -589,20 +590,28 @@ uzfs_zvol_rebuild_dw_replica_start(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 				uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
 				break;
 			}
+			uzfs_zvol_set_rebuild_status(zinfo->zv,
+			    ZVOL_REBUILDING_IN_PROGRESS);
 		} else {
 			uzfs_zinfo_take_refcnt(zinfo, B_FALSE);
 		}
 
 		io_sfd = create_and_bind("", B_FALSE, B_FALSE);
 		if (io_sfd < 0) {
-			printf("Rebuild IO socket create and bind failed\n");
+			/* Fail this rebuild process entirely */
+			fprintf(stderr, "Rebuild IO socket create and bind"
+			    " failed on volume: %s\n", zinfo->name);
+			uzfs_zvol_set_rebuild_status(zinfo->zv,
+			    ZVOL_REBUILDING_FAILED);
 			uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
-			continue;
+			break;
 		}
 
 		thrd_arg = kmem_alloc(sizeof (rebuild_thread_arg_t), KM_SLEEP);
 		thrd_arg->zinfo = zinfo;
 		thrd_arg->fd = io_sfd;
+		thrd_arg->port = mack->port;
+		strlcpy(thrd_arg->ip, mack->ip, MAX_IP_LEN);
 		strlcpy(thrd_arg->zvol_name, mack->volname, MAXNAMELEN);
 		thrd_info = zk_thread_create(NULL, 0,
 		    uzfs_zvol_rebuild_dw_replica, thrd_arg, 0, NULL, TS_RUN, 0,

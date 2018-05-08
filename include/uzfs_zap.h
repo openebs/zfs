@@ -22,6 +22,8 @@
 #ifndef	_UZFS_ZAP_H
 #define	_UZFS_ZAP_H
 
+#include <sys/spa.h>
+
 typedef struct {
 	char *key; 	/* zap key to update */
 	uint64_t value;	/* value to update against zap key */
@@ -29,8 +31,6 @@ typedef struct {
 } uzfs_zap_kv_t;
 
 #define	LAST_ITER_TXG	"last_iter_txg"
-
-extern long long txg_update_interval_time;
 
 /*
  * Here, allocation/freeing of kv_array needs to be handled by
@@ -42,5 +42,6 @@ int uzfs_update_zap_entries(void *zv, const uzfs_zap_kv_t **kv_array,
 int uzfs_read_zap_entry(void *zv, uzfs_zap_kv_t *entry);
 int uzfs_read_last_iter_txg(void *spa, uint64_t *val);
 void uzfs_update_txg_zap_thread(void *s);
+void uzfs_update_txg_interval(spa_t *spa, uint32_t timeout);
 
 #endif

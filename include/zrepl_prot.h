@@ -40,6 +40,9 @@ extern "C" {
  * version number. If replica does not support the version, then it replies
  * with "version mismatch" error, puts supported version in version field
  * and closes the connection.
+ *
+ * If you modify the struct definitions in this file make sure they are
+ * properly aligned (and packed).
  */
 
 #define	REPLICA_VERSION	1
@@ -50,10 +53,14 @@ extern "C" {
 #define	ZVOL_OP_FLAG_REBUILD 0x01
 
 enum zvol_op_code {
+	// Used to obtain info about a zvol on mgmt connection
 	ZVOL_OPCODE_HANDSHAKE = 0,
+	// Following 4 requests are used on data connection
+	ZVOL_OPCODE_OPEN,
 	ZVOL_OPCODE_READ,
 	ZVOL_OPCODE_WRITE,
 	ZVOL_OPCODE_SYNC,
+	// Following commands apply to mgmt connection
 	ZVOL_OPCODE_UNMAP,
 	ZVOL_OPCODE_REPLICA_STATUS,
 	ZVOL_OPCODE_PREPARE_FOR_REBUILD,
@@ -97,6 +104,14 @@ struct zvol_io_hdr {
 } __attribute__((packed));
 
 typedef struct zvol_io_hdr zvol_io_hdr_t;
+
+struct open_payload {
+	uint32_t	block_size;	// used block size for rw in bytes
+	uint32_t	timeout;	// replica timeout in seconds
+	char		volname[MAX_NAME_LEN];
+} __attribute__((packed));
+
+typedef struct open_payload open_payload_t;
 
 /*
  * Payload data send in response to handshake on control connection. It tells

@@ -43,7 +43,9 @@ extern "C" {
 #define	REBUILD_IO_SERVER_PORT	"3233"
 #define	IO_SERVER_PORT	"3232"
 
+SLIST_HEAD(zvol_list, zvol_info_s);
 extern kmutex_t zvol_list_mutex;
+extern struct zvol_list zvol_list;
 struct zvol_io_cmd_s;
 
 typedef enum zvol_info_state_e {
@@ -61,20 +63,19 @@ typedef struct zvol_info_s {
 	zvol_state_t	*zv;
 	int 		refcnt;
 	int		is_io_ack_sender_created;
-	uint64_t	running_io_seq;
-	uint64_t	checkpointed_io_seq;
+	uint32_t	timeout;	/* iSCSI timeout val for this zvol */
+	uint64_t	running_ionum;
+	uint64_t	checkpointed_ionum;
+	time_t		checkpointed_time;	/* time of the last chkpoint */
+	uint32_t	update_ionum_interval;	/* how often to update io seq */
 	taskq_t		*uzfs_zvol_taskq;	/* Taskq for minor management */
 
 	/* Thread sync related */
 
 	/*
-	 * For protection of:
-	 * 1. is_io_ack_sender_created
-	 * 2. running_io_seq
+	 * For protection of all fields accessed concurrently in this struct
 	 */
 	pthread_mutex_t	zinfo_mutex;
-	/* For protection of complete_queue */
-	pthread_mutex_t	complete_queue_mutex;
 	pthread_cond_t	io_ack_cond;
 
 	pthread_t 	io_receiver_thread;
@@ -130,9 +131,7 @@ extern void uzfs_zinfo_drop_refcnt(zvol_info_t *zinfo, int locked);
 extern void uzfs_zinfo_take_refcnt(zvol_info_t *zinfo, int locked);
 extern void uzfs_zinfo_replay_zil_all(void);
 extern int uzfs_zinfo_destroy(const char *ds_name, spa_t *spa);
-extern void uzfs_zinfo_update_io_seq_for_all_volumes(void);
-void uzfs_zvol_get_last_committed_io_no(zvol_state_t *zv,
-    uint64_t *io_seq);
+uint64_t uzfs_zvol_get_last_committed_io_no(zvol_state_t *zv);
 void uzfs_zvol_store_last_committed_io_no(zvol_state_t *zv,
     uint64_t io_seq);
 extern int create_and_bind(const char *port, int bind_needed,

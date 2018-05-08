@@ -22,6 +22,7 @@
  * Copyright (c) 2018 Cloudbyte. All rights reserved.
  */
 
+#include <sys/prctl.h>
 #include <netdb.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -34,6 +35,9 @@
 #include "data_conn.h"
 
 #define	ZVOL_REBUILD_STEP_SIZE  (128 * 1024 * 1024) // 128MB
+
+static kcondvar_t timer_cv;
+static kmutex_t timer_mtx;
 
 /*
  * Allocate zio command along with
@@ -48,7 +52,7 @@ zio_cmd_alloc(zvol_io_hdr_t *hdr, int fd)
 	bcopy(hdr, &zio_cmd->hdr, sizeof (zio_cmd->hdr));
 	if ((hdr->opcode == ZVOL_OPCODE_READ) ||
 	    (hdr->opcode == ZVOL_OPCODE_WRITE) ||
-	    (hdr->opcode == ZVOL_OPCODE_HANDSHAKE)) {
+	    (hdr->opcode == ZVOL_OPCODE_OPEN)) {
 		zio_cmd->buf = kmem_zalloc(sizeof (char) * hdr->len, KM_SLEEP);
 	}
 
@@ -67,7 +71,7 @@ zio_cmd_free(zvol_io_cmd_t **cmd)
 	switch (opcode) {
 		case ZVOL_OPCODE_READ:
 		case ZVOL_OPCODE_WRITE:
-		case ZVOL_OPCODE_HANDSHAKE:
+		case ZVOL_OPCODE_OPEN:
 			if (zio_cmd->buf != NULL) {
 				kmem_free(zio_cmd->buf, zio_cmd->hdr.len);
 			}
@@ -136,6 +140,7 @@ uzfs_submit_writes(zvol_info_t *zinfo, zvol_io_cmd_t *zio_cmd)
 	size_t	data_offset = hdr->offset;
 	size_t	remain = hdr->len;
 	int	rc = 0;
+	uint64_t running_ionum;
 	is_rebuild = hdr->flags & ZVOL_OP_FLAG_REBUILD;
 
 	while (remain > 0) {
@@ -154,6 +159,13 @@ uzfs_submit_writes(zvol_info_t *zinfo, zvol_io_cmd_t *zio_cmd)
 		    write_hdr->len, &metadata, is_rebuild);
 		if (rc != 0)
 			break;
+		/* Update the highest ionum used for checkpointing */
+		running_ionum = zinfo->running_ionum;
+		while (running_ionum < write_hdr->io_num) {
+			atomic_cas_64(&zinfo->running_ionum, running_ionum,
+			    write_hdr->io_num);
+			running_ionum = zinfo->running_ionum;
+		}
 
 		datap += write_hdr->len;
 		remain -= write_hdr->len;
@@ -237,7 +249,12 @@ uzfs_zvol_worker(void *arg)
 		goto drop_refcount;
 	}
 
-	(void) pthread_mutex_lock(&zinfo->complete_queue_mutex);
+	(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
+	if (!zinfo->is_io_ack_sender_created) {
+		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
+		zio_cmd_free(&zio_cmd);
+		goto drop_refcount;
+	}
 	STAILQ_INSERT_TAIL(&zinfo->complete_queue, zio_cmd, cmd_link);
 	if (write) {
 		zinfo->write_req_received_cnt++;
@@ -248,8 +265,7 @@ uzfs_zvol_worker(void *arg)
 	if (zinfo->io_ack_waiting) {
 		rc = pthread_cond_signal(&zinfo->io_ack_cond);
 	}
-
-	(void) pthread_mutex_unlock(&zinfo->complete_queue_mutex);
+	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 
 drop_refcount:
 	uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
@@ -264,7 +280,7 @@ uzfs_zvol_rebuild_dw_replica(void *arg)
 	int		rc = 0;
 	int		sfd = -1;
 	uint64_t	offset = 0;
-	uint64_t	checkpointed_io_seq;
+	uint64_t	checkpointed_ionum;
 	zvol_info_t	*zinfo = NULL;
 	zvol_state_t	*zvol_state;
 	zvol_io_cmd_t	*zio_cmd = NULL;
@@ -285,7 +301,7 @@ uzfs_zvol_rebuild_dw_replica(void *arg)
 	}
 
 	/* Set state in-progess state now */
-	uzfs_zvol_get_last_committed_io_no(zinfo->zv, &checkpointed_io_seq);
+	checkpointed_ionum = uzfs_zvol_get_last_committed_io_no(zinfo->zv);
 	zvol_state = zinfo->zv;
 	bzero(&hdr, sizeof (hdr));
 	hdr.status = ZVOL_OP_STATUS_OK;
@@ -327,6 +343,7 @@ next_step:
 			uzfs_zvol_set_rebuild_status(zinfo->zv,
 			    ZVOL_REBUILDING_DONE);
 			uzfs_zvol_set_status(zinfo->zv, ZVOL_STATUS_HEALTHY);
+			uzfs_update_ionum_interval(zinfo, 0);
 		}
 		ZREPL_ERRLOG("Rebuilding on Replica:%s completed\n",
 		    zinfo->name);
@@ -336,7 +353,7 @@ next_step:
 		hdr.status = ZVOL_OP_STATUS_OK;
 		hdr.version = REPLICA_VERSION;
 		hdr.opcode = ZVOL_OPCODE_REBUILD_STEP;
-		hdr.checkpointed_io_seq = checkpointed_io_seq;
+		hdr.checkpointed_io_seq = checkpointed_ionum;
 		hdr.offset = offset;
 		hdr.len = ZVOL_REBUILD_STEP_SIZE;
 		rc = uzfs_zvol_socket_write(sfd, (char *)&hdr, sizeof (hdr));
@@ -402,4 +419,72 @@ exit:
 	uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
 
 	zk_thread_exit();
+}
+
+void
+uzfs_zvol_timer_thread(void)
+{
+	zvol_info_t *zinfo;
+	time_t min_interval;
+	time_t now, next_check;
+
+	mutex_init(&timer_mtx, NULL, MUTEX_DEFAULT, NULL);
+	cv_init(&timer_cv, NULL, CV_DEFAULT, NULL);
+	prctl(PR_SET_NAME, "zvol_timer", 0, 0, 0);
+
+	mutex_enter(&timer_mtx);
+	while (1) {
+		min_interval = 600;  // we check intervals at least every 10mins
+		mutex_enter(&zvol_list_mutex);
+		now = time(NULL);
+		SLIST_FOREACH(zinfo, &zvol_list, zinfo_next) {
+			if (uzfs_zvol_get_status(zinfo->zv) ==
+			    ZVOL_STATUS_HEALTHY) {
+				next_check = zinfo->checkpointed_time +
+				    zinfo->update_ionum_interval;
+				if (next_check <= now) {
+					fprintf(stderr, "Checkpointing ionum "
+					    "%lu on %s\n",
+					    zinfo->checkpointed_ionum,
+					    zinfo->name);
+					uzfs_zvol_store_last_committed_io_no(
+					    zinfo->zv,
+					    zinfo->checkpointed_ionum);
+					zinfo->checkpointed_ionum =
+					    zinfo->running_ionum;
+					zinfo->checkpointed_time = now;
+					next_check = now +
+					    zinfo->update_ionum_interval;
+				}
+				if (min_interval > next_check - now)
+					min_interval = next_check - now;
+			}
+		}
+		mutex_exit(&zvol_list_mutex);
+
+		(void) cv_timedwait(&timer_cv, &timer_mtx, ddi_get_lbolt() +
+		    SEC_TO_TICK(min_interval));
+	}
+	mutex_exit(&timer_mtx);
+	mutex_destroy(&timer_mtx);
+	cv_destroy(&timer_cv);
+}
+
+/*
+ * Update interval and wake up timer thread so that it can adjust to the new
+ * value. If timeout is zero, then we just wake up the timer thread (used in
+ * case when zvol state is changed to make timer thread aware of it).
+ */
+void
+uzfs_update_ionum_interval(zvol_info_t *zinfo, uint32_t timeout)
+{
+	mutex_enter(&timer_mtx);
+	if (zinfo->update_ionum_interval == timeout) {
+		mutex_exit(&timer_mtx);
+		return;
+	}
+	if (timeout != 0)
+		zinfo->update_ionum_interval = timeout;
+	cv_signal(&timer_cv);
+	mutex_exit(&timer_mtx);
 }

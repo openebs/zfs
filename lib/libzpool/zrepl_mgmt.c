@@ -17,8 +17,8 @@ clockid_t clockid;
 void (*zinfo_create_hook)(zvol_info_t *, nvlist_t *);
 void (*zinfo_destroy_hook)(zvol_info_t *);
 
-SLIST_HEAD(, zvol_info_s) zvol_list;
-SLIST_HEAD(, zvol_info_s) stale_zv_list;
+struct zvol_list zvol_list;
+struct zvol_list stale_zv_list;
 
 #define	SLIST_FOREACH_SAFE(var, head, field, tvar)			\
 	for ((var) = SLIST_FIRST((head));				\
@@ -128,13 +128,13 @@ uzfs_remove_zinfo_list(zvol_info_t *zinfo)
 {
 
 	SLIST_REMOVE(&zvol_list, zinfo, zvol_info_s, zinfo_next);
+	(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
 	zinfo->state = ZVOL_INFO_STATE_OFFLINE;
 	/* Send signal to ack_sender thread about offline */
-	(void) pthread_mutex_lock(&zinfo->complete_queue_mutex);
 	if (zinfo->io_ack_waiting) {
 		(void) pthread_cond_signal(&zinfo->io_ack_cond);
 	}
-	(void) pthread_mutex_unlock(&zinfo->complete_queue_mutex);
+	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 	/* Base refcount is droped here */
 	uzfs_zinfo_drop_refcnt(zinfo, B_TRUE);
 }
@@ -181,7 +181,6 @@ static void
 uzfs_zinfo_init_mutex(zvol_info_t *zinfo)
 {
 
-	(void) pthread_mutex_init(&zinfo->complete_queue_mutex, NULL);
 	(void) pthread_mutex_init(&zinfo->zinfo_mutex, NULL);
 	(void) pthread_cond_init(&zinfo->io_ack_cond, NULL);
 }
@@ -190,7 +189,6 @@ static void
 uzfs_zinfo_destroy_mutex(zvol_info_t *zinfo)
 {
 
-	(void) pthread_mutex_destroy(&zinfo->complete_queue_mutex);
 	(void) pthread_mutex_destroy(&zinfo->zinfo_mutex);
 	(void) pthread_cond_destroy(&zinfo->io_ack_cond);
 }
@@ -257,6 +255,8 @@ uzfs_zinfo_init(void *zv, const char *ds_name, nvlist_t *create_props)
 
 	strlcpy(zinfo->name, ds_name, MAXNAMELEN);
 	zinfo->zv = zv;
+	/* iSCSI target will overwrite this value during handshake */
+	zinfo->update_ionum_interval = 6000;
 	/* Update zvol list */
 	uzfs_insert_zinfo_list(zinfo);
 
@@ -282,16 +282,16 @@ uzfs_zinfo_free(zvol_info_t *zinfo)
 	return (0);
 }
 
-void
-uzfs_zvol_get_last_committed_io_no(zvol_state_t *zv, uint64_t *io_seq)
+uint64_t
+uzfs_zvol_get_last_committed_io_no(zvol_state_t *zv)
 {
 	uzfs_zap_kv_t zap;
 	zap.key = "io_seq";
 	zap.value = 0;
-	zap.size = sizeof (*io_seq);
+	zap.size = sizeof (uint64_t);
 
 	uzfs_read_zap_entry(zv, &zap);
-	*io_seq = zap.value;
+	return (zap.value);
 }
 
 void
@@ -306,21 +306,4 @@ uzfs_zvol_store_last_committed_io_no(zvol_state_t *zv, uint64_t io_seq)
 	kv_array[0] = &zap;
 	VERIFY0(uzfs_update_zap_entries(zv,
 	    (const uzfs_zap_kv_t **) kv_array, 1));
-}
-
-void
-uzfs_zinfo_update_io_seq_for_all_volumes(void)
-{
-	zvol_info_t *zinfo;
-	(void) mutex_enter(&zvol_list_mutex);
-	SLIST_FOREACH(zinfo, &zvol_list, zinfo_next) {
-		if (uzfs_zvol_get_status(zinfo->zv) == ZVOL_STATUS_HEALTHY) {
-			uzfs_zvol_store_last_committed_io_no(zinfo->zv,
-			    zinfo->checkpointed_io_seq);
-			(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
-			zinfo->checkpointed_io_seq = zinfo->running_io_seq;
-			(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
-		}
-	}
-	(void) mutex_exit(&zvol_list_mutex);
 }

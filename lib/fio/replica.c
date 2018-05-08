@@ -78,6 +78,7 @@ struct repl_options {
 	unsigned int nodelay;
 	unsigned int window_size;
 	unsigned int mss;
+	unsigned int metadata_bs;
 	const char *address;
 };
 
@@ -128,6 +129,16 @@ static struct fio_option options[] = {
 		.off1	= offsetof(struct repl_options, mss),
 		.minval	= 0,
 		.help	= "Set TCP maximum segment size",
+		.category = FIO_OPT_C_ENGINE,
+		.group	= FIO_OPT_G_NETIO,
+	},
+	{
+		.name	= "metadata_block_size",
+		.lname	= "Metadata granularity",
+		.type	= FIO_OPT_INT,
+		.off1	= offsetof(struct repl_options, metadata_bs),
+		.minval	= 512,
+		.help	= "Set granularity of metadata book keeping records",
 		.category = FIO_OPT_C_ENGINE,
 		.group	= FIO_OPT_G_NETIO,
 	},
@@ -245,10 +256,12 @@ static int write_to_socket(int fd, const void *buf, size_t nbytes, int more)
 	return (0);
 }
 
-static int write_handshake(struct thread_data *td, int fd, const char *volname)
+static int do_handshake(struct thread_data *td, const char *volname,
+    mgmt_ack_t *mgmt_ack)
 {
 	ssize_t rc;
 	zvol_io_hdr_t hdr;
+	uint16_t vers;
 	int volname_size = strlen(volname) + 1;
 
 	hdr.version = REPLICA_VERSION;
@@ -258,33 +271,23 @@ static int write_handshake(struct thread_data *td, int fd, const char *volname)
 	hdr.offset = 0;
 	hdr.len = volname_size;
 
-	rc = write_to_socket(fd, &hdr, sizeof (hdr), 1);
+	rc = write_to_socket(mgmt_conn, &hdr, sizeof (hdr), 1);
 	if (rc != 0) {
 		td_verror(td, rc, "write");
 		return (-1);
 	}
-	rc = write_to_socket(fd, volname, volname_size, 0);
+	rc = write_to_socket(mgmt_conn, volname, volname_size, 0);
 	if (rc != 0) {
 		td_verror(td, rc, "write");
 		return (-1);
 	}
 
-	return (0);
-}
-
-static int read_handshake(struct thread_data *td, int fd, mgmt_ack_t *mgmt_ack,
-    const char *volname)
-{
-	uint16_t vers;
-	ssize_t rc;
-	zvol_io_hdr_t hdr;
-
-	rc = read_from_socket(fd, &hdr, sizeof (vers));
+	rc = read_from_socket(mgmt_conn, &hdr, sizeof (vers));
 	if (hdr.version != REPLICA_VERSION) {
 		log_err("repl: Incompatible replica version %d\n", hdr.version);
 		return (-1);
 	}
-	rc = read_from_socket(fd, ((char *)&hdr) + sizeof (vers),
+	rc = read_from_socket(mgmt_conn, ((char *)&hdr) + sizeof (vers),
 	    sizeof (hdr) - sizeof (vers));
 	if (rc != 0) {
 		td_verror(td, rc, "read");
@@ -306,9 +309,62 @@ static int read_handshake(struct thread_data *td, int fd, mgmt_ack_t *mgmt_ack,
 		return (-1);
 	}
 
-	rc = read_from_socket(fd, mgmt_ack, hdr.len);
+	rc = read_from_socket(mgmt_conn, mgmt_ack, hdr.len);
 	if (rc != 0) {
 		td_verror(td, rc, "read");
+		return (-1);
+	}
+
+	return (0);
+}
+
+static int open_zvol(struct thread_data *td, int fd, const char *volname)
+{
+	struct repl_options *o = td->eo;
+	ssize_t rc;
+	zvol_io_hdr_t hdr;
+	open_payload_t open_pd;
+	int volname_size = strlen(volname) + 1;
+
+	hdr.version = REPLICA_VERSION;
+	hdr.opcode = ZVOL_OPCODE_OPEN;
+	hdr.status = 0;
+	hdr.io_seq = 0;
+	hdr.offset = 0;
+	hdr.len = sizeof (open_pd);
+
+	// we use the smallest possible bs for metadata granularity, this still
+	// allows us to use arbitrary larger bs for IO
+	open_pd.block_size = (o->metadata_bs) ? o->metadata_bs : 512;
+	open_pd.timeout = 120;
+	strncpy(open_pd.volname, volname, sizeof (open_pd.volname));
+
+	rc = write_to_socket(fd, &hdr, sizeof (hdr), 1);
+	if (rc != 0) {
+		td_verror(td, rc, "write");
+		return (-1);
+	}
+	rc = write_to_socket(fd, &open_pd, hdr.len, 0);
+	if (rc != 0) {
+		td_verror(td, rc, "write");
+		return (-1);
+	}
+
+	rc = read_from_socket(fd, &hdr, sizeof (hdr));
+	if (hdr.version != REPLICA_VERSION) {
+		log_err("repl: Incompatible replica version %d\n", hdr.version);
+		return (-1);
+	}
+	if (hdr.opcode != ZVOL_OPCODE_OPEN) {
+		log_err("repl: Unexpected replica op code %d\n", hdr.opcode);
+		return (-1);
+	}
+	if (hdr.status != ZVOL_OP_STATUS_OK) {
+		log_err("repl: Open of zvol %s failed\n", volname);
+		return (-1);
+	}
+	if (hdr.len != 0) {
+		log_err("repl: Unexpected open zvol payload");
 		return (-1);
 	}
 
@@ -386,12 +442,7 @@ static int get_data_endpoint(struct thread_data *td, const char *volname,
 	pthread_mutex_lock(&mgmt_mtx);
 
 	// send volume name we want to open to replica
-	if (write_handshake(td, mgmt_conn, volname) != 0) {
-		pthread_mutex_unlock(&mgmt_mtx);
-		return (1);
-	}
-	// read data connection address
-	if (read_handshake(td, mgmt_conn, &mgmt_ack, volname) != 0) {
+	if (do_handshake(td, volname, &mgmt_ack) != 0) {
 		pthread_mutex_unlock(&mgmt_mtx);
 		return (1);
 	}
@@ -463,7 +514,7 @@ static int fio_repl_open_file(struct thread_data *td, struct fio_file *f)
 		close(f->fd);
 		return (1);
 	}
-	log_info("repl: handshaking on data connection for volume %s\n",
+	log_info("repl: opening zvol %s on data connection\n",
 	    f->file_name);
 	if (connect(f->fd, (struct sockaddr *)&addr, sizeof (addr)) < 0) {
 		td_verror(td, errno, "connect");
@@ -472,7 +523,7 @@ static int fio_repl_open_file(struct thread_data *td, struct fio_file *f)
 	}
 
 	// send volume name we want to open to replica
-	if (write_handshake(td, f->fd, f->file_name) != 0) {
+	if (open_zvol(td, f->fd, f->file_name) != 0) {
 		close(f->fd);
 		return (1);
 	}

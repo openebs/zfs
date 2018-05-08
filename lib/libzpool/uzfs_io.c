@@ -20,6 +20,7 @@
  */
 
 #include <sys/dmu_objset.h>
+#include <sys/zap.h>
 #include <sys/uzfs_zvol.h>
 #include <uzfs_rebuilding.h>
 #include <sys/dsl_dataset.h>
@@ -76,6 +77,13 @@ uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 	uint64_t orig_offset = offset;
 	char *mdata = NULL, *tmdata = NULL, *tmdataend = NULL;
 
+	/*
+	 * If trying IO on fresh zvol before metadata granularity is set return
+	 * error.
+	 */
+	if (zv->zv_metavolblocksize == 0)
+		return (EINVAL);
+	ASSERT3P(zv->zv_metavolblocksize, !=, 0);
 	if (!IS_P2ALIGNED(offset, zv->zv_metavolblocksize) ||
 	    !IS_P2ALIGNED(len, zv->zv_metavolblocksize) ||
 	    len == 0)
@@ -245,6 +253,12 @@ uzfs_read_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 	blk_metadata_t *metadata;
 	int nmetas;
 
+	/*
+	 * If trying IO on fresh zvol before metadata granularity is set return
+	 * error.
+	 */
+	if (zv->zv_metavolblocksize == 0)
+		return (EINVAL);
 	if (!IS_P2ALIGNED(offset, zv->zv_metavolblocksize) ||
 	    !IS_P2ALIGNED(len, zv->zv_metavolblocksize) ||
 	    len == 0)
@@ -365,11 +379,19 @@ uzfs_read_metadata(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 	uint64_t blocksize = zv->zv_volmetablocksize;
 	uint64_t len_in_first_aligned_block, bytes, read = 0;
 	uint64_t end = offset + len;
-	uint64_t metaobjectsize = (zv->zv_volsize / zv->zv_metavolblocksize) *
-	    zv->zv_volmetadatasize;
+	uint64_t metaobjectsize;
 	uint64_t r_offset = P2ALIGN(offset, blocksize);
 	int ret = 0;
 
+	/*
+	 * If trying IO on fresh zvol before metadata granularity is set return
+	 * error.
+	 */
+	if (zv->zv_metavolblocksize == 0)
+		return (EINVAL);
+	ASSERT3P(zv->zv_metavolblocksize, !=, 0);
+	metaobjectsize = (zv->zv_volsize / zv->zv_metavolblocksize) *
+	    zv->zv_volmetadatasize;
 	len_in_first_aligned_block = (blocksize - (offset - r_offset));
 	if (len_in_first_aligned_block > len)
 		len_in_first_aligned_block = len;
@@ -401,4 +423,36 @@ uzfs_read_metadata(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 		*r = read;
 
 	return (ret);
+}
+
+/*
+ * Update metadata granularity. This is done when zvol is opened the first time
+ * (based on value sent from iSCSI target) and afterwards the granularity must
+ * not change.
+ */
+int
+uzfs_update_metadata_granularity(zvol_state_t *zv, uint64_t block_size)
+{
+	int error;
+	dmu_tx_t *tx;
+
+	if (block_size == zv->zv_metavolblocksize)
+		return (0);	/* nothing to update */
+	if (block_size > zv->zv_volblocksize)
+		return (-1);
+	if (zv->zv_volblocksize % block_size != 0)
+		return (-1);
+
+	tx = dmu_tx_create(zv->zv_objset);
+	dmu_tx_hold_zap(tx, ZVOL_ZAP_OBJ, TRUE, NULL);
+	error = dmu_tx_assign(tx, TXG_WAIT);
+	if (error != 0) {
+		dmu_tx_abort(tx);
+		return (-1);
+	}
+	VERIFY0(zap_update(zv->zv_objset, ZVOL_ZAP_OBJ, "metavolblocksize",
+	    8, 1, &block_size, tx));
+	dmu_tx_commit(tx);
+	zv->zv_metavolblocksize = block_size;
+	return (0);
 }

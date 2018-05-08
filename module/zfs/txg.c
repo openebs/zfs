@@ -113,9 +113,6 @@ static void txg_quiesce_thread(dsl_pool_t *dp);
 
 int zfs_txg_timeout = 5;	/* max seconds worth of delta per txg */
 
-extern void uzfs_spa_init(spa_t *spa);
-extern void uzfs_spa_fini(spa_t *spa);
-
 /*
  * Prepare the txg subsystem.
  */
@@ -220,13 +217,6 @@ txg_sync_start(dsl_pool_t *dp)
 	    dp, 0, &p0, TS_RUN, defclsyspri);
 
 	mutex_exit(&tx->tx_sync_lock);
-
-#ifndef _KERNEL
-	/*
-	 * initialize uZFS spa
-	 */
-	uzfs_spa_init(dp->dp_spa);
-#endif
 }
 
 static void
@@ -275,12 +265,6 @@ txg_sync_stop(dsl_pool_t *dp)
 	 */
 	ASSERT(tx->tx_threads == 2);
 
-#ifndef _KERNEL
-	/*
-	 * tear down uZFS spa
-	 */
-	uzfs_spa_fini(dp->dp_spa);
-#endif
 	/*
 	 * We need to ensure that we've vacated the deferred space_maps.
 	 */

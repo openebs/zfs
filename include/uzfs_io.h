@@ -63,6 +63,8 @@ int uzfs_read_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 
 extern void uzfs_flush_data(zvol_state_t *zv);
 
+int uzfs_update_metadata_granularity(zvol_state_t *zv, uint64_t block_size);
+
 /*
  * API to set/get rebuilding status
  *

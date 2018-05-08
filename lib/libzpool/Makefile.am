@@ -19,7 +19,6 @@ USER_C = \
 	taskq.c \
 	util.c \
 	uzfs_io.c \
-	uzfs_task.c \
 	uzfs_mgmt.c \
 	uzfs_rebuilding.c \
 	uzfs_test_mgmt.c \

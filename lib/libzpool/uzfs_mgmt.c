@@ -24,21 +24,14 @@
 #include <sys/dsl_prop.h>
 #include <sys/uzfs_zvol.h>
 #include <sys/stat.h>
-#include <uzfs.h>
+#include <sys/spa_impl.h>
 #include <zrepl_mgmt.h>
 #include <uzfs_mgmt.h>
 #include <uzfs_io.h>
 #include <uzfs_zap.h>
+
 static int uzfs_fd_rand = -1;
 kmutex_t zvol_list_mutex;
-/*
- * Pool tasks that need to be done during pool open and close
- */
-uzfs_pool_task_funcs_t uzfs_pool_tasks[UZFS_POOL_MAX_TASKS] = {
-	{ post_open_pool, post_close_pool },
-	{ create_txg_update_thread, close_txg_update_thread },
-	{ dummy_pool_task, pre_close_pool }
-};
 
 static nvlist_t *
 make_root(char *path, int ashift, int log)
@@ -123,13 +116,6 @@ uzfs_init(void)
 void
 uzfs_close_pool(spa_t *spa)
 {
-
-//	for (int i = (UZFS_POOL_MAX_TASKS - 1); i >= 0; i--) {
-//		if (uzfs_spa(spa)->tasks_initialized[i] == B_TRUE) {
-//			uzfs_spa(spa)->tasks_initialized[i] = B_FALSE;
-//			uzfs_pool_tasks[i].close_func(spa);
-//		}
-//	}
 	spa_close(spa, "UZFS_SPA_TAG");
 }
 
@@ -146,21 +132,6 @@ uzfs_open_pool(char *name, spa_t **s)
 		goto ret;
 	}
 
-//	if (spa->spa_us != NULL) {
-//		spa_close(spa, "UZFS_SPA_TAG");
-//		spa = NULL;
-//		err = EEXIST;
-//		goto ret;
-//	}
-//	for (i = 0; i < UZFS_POOL_MAX_TASKS; i++) {
-//		err = uzfs_pool_tasks[i].open_func(spa);
-//		if (err != 0) {
-//			uzfs_close_pool(spa);
-//			spa = NULL;
-//			goto ret;
-//		}
-//		uzfs_spa(spa)->tasks_initialized[i] = B_TRUE;
-//	}
 ret:
 	*s = spa;
 	return (err);
@@ -223,7 +194,7 @@ ret:
  */
 int
 uzfs_zvol_create_meta(objset_t *os, uint64_t block_size,
-    uint64_t meta_block_size, uint64_t meta_vol_block_size, dmu_tx_t *tx)
+    uint64_t meta_block_size, dmu_tx_t *tx)
 {
 	uint64_t metadatasize;
 	int error;
@@ -238,13 +209,6 @@ uzfs_zvol_create_meta(objset_t *os, uint64_t block_size,
 	metadatasize = sizeof (blk_metadata_t);
 	error = zap_update(os, ZVOL_ZAP_OBJ, "metadatasize", 8, 1,
 	    &metadatasize, tx);
-	if (error != 0)
-		return (error);
-
-	if (meta_vol_block_size > block_size)
-		meta_vol_block_size = block_size;
-	error = zap_update(os, ZVOL_ZAP_OBJ, "metavolblocksize", 8, 1,
-	    &meta_vol_block_size, tx);
 	if (error != 0)
 		return (error);
 
@@ -277,7 +241,7 @@ uzfs_objset_create_cb(objset_t *new_os, void *arg, cred_t *cr, dmu_tx_t *tx)
 	VERIFY(error == 0);
 
 	error = uzfs_zvol_create_meta(new_os, props->block_size,
-	    props->meta_block_size, props->meta_vol_block_size, tx);
+	    props->meta_block_size, tx);
 	VERIFY(error == 0);
 }
 
@@ -400,8 +364,9 @@ free_ret:
 
 	error = zap_lookup(os, ZVOL_ZAP_OBJ, "metavolblocksize", 8, 1,
 	    &meta_vol_block_size);
+	/* ok if doesn't exist, it is initialized after zvol creation */
 	if (error)
-		goto disown_free;
+		meta_vol_block_size = 0;
 
 	error = zap_lookup(os, ZVOL_ZAP_OBJ, "metadatasize", 8, 1,
 	    &meta_data_size);
@@ -475,7 +440,6 @@ uzfs_create_dataset(spa_t *spa, char *ds_name, uint64_t vol_size,
 	properties.vol_size = vol_size;
 	properties.block_size = block_size;
 	properties.meta_block_size = block_size;
-	properties.meta_vol_block_size = 512;
 
 	error = dmu_objset_create(name, DMU_OST_ZVOL, 0,
 	    uzfs_objset_create_cb, &properties);
@@ -562,16 +526,15 @@ uzfs_zvol_create_minors(spa_t *spa, const char *name, boolean_t async)
 	taskqid_t id;
 	char *pool_name;
 
-	pool_name = (char *)kmem_zalloc(sizeof (char) * MAXNAMELEN, KM_SLEEP);
+	if (strrchr(name, '@') != NULL)
+		return;
 
+	pool_name = kmem_zalloc(MAXNAMELEN, KM_SLEEP);
 	strncpy(pool_name, name, MAXNAMELEN);
-
-	if (strrchr(name, '@') == NULL) {
-		id = taskq_dispatch(spa->spa_zvol_taskq,
-		    uzfs_zvol_create_minors_impl, (void *)pool_name, TQ_SLEEP);
-		if ((async == B_FALSE) && (id != TASKQID_INVALID))
-			taskq_wait_id(spa->spa_zvol_taskq, id);
-	}
+	id = taskq_dispatch(spa->spa_zvol_taskq,
+	    uzfs_zvol_create_minors_impl, (void *)pool_name, TQ_SLEEP);
+	if ((async == B_FALSE) && (id != TASKQID_INVALID))
+		taskq_wait_id(spa->spa_zvol_taskq, id);
 }
 
 /* uZFS Zvol destroy call back function */
@@ -607,61 +570,6 @@ uzfs_fini(void)
 	kernel_fini();
 	if (uzfs_fd_rand != -1)
 		close(uzfs_fd_rand);
-}
-
-/*
- * uzfs_spa_init and fini functions should be called during spa init and
- * de-init phases
- */
-void
-uzfs_spa_init(spa_t *spa)
-{
-	uzfs_spa_t *us = NULL;
-	if (spa->spa_mode & FWRITE) {
-		us = (uzfs_spa_t *)kmem_zalloc(sizeof (uzfs_spa_t), KM_SLEEP);
-		mutex_init(&us->mtx, NULL, MUTEX_DEFAULT, NULL);
-		cv_init(&us->cv, NULL, CV_DEFAULT, NULL);
-		spa->spa_us = us;
-		mutex_enter(&us->mtx);
-		spa->spa_us = us;
-		us->update_txg_tid = zk_thread_create(NULL, 0,
-		    (thread_func_t)uzfs_update_txg_zap_thread, spa, 0, NULL,
-		    TS_RUN, 0, PTHREAD_CREATE_DETACHED);
-		mutex_exit(&us->mtx);
-	} else {
-		spa->spa_us = us;
-	}
-}
-
-void
-uzfs_spa_fini(spa_t *spa)
-{
-	struct timespec ts;
-	if (spa->spa_us == NULL)
-		return;
-
-	uzfs_spa_t *us = spa->spa_us;
-
-	if (us->close_pool)
-		return;
-
-	mutex_enter(&us->mtx);
-	us->close_pool = 1;
-	cv_signal(&us->cv);
-	mutex_exit(&us->mtx);
-	mutex_exit(&spa_namespace_lock);
-
-	ts.tv_sec = 0;
-	ts.tv_nsec = 100000000;
-
-	while (us->update_txg_tid != NULL)
-		nanosleep(&ts, NULL);
-
-	mutex_enter(&spa_namespace_lock);
-	mutex_destroy(&us->mtx);
-	cv_destroy(&us->cv);
-	spa->spa_us = NULL;
-	kmem_free(us, sizeof (uzfs_spa_t));
 }
 
 int

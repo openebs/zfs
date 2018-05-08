@@ -78,7 +78,6 @@
 #include <sys/dsl_destroy.h>
 #include <sys/zvol.h>
 #include <uzfs_mgmt.h>
-#include <uzfs.h>
 #ifdef	_KERNEL
 #include <sys/fm/protocol.h>
 #include <sys/fm/util.h>

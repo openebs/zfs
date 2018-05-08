@@ -18,9 +18,16 @@
  *
  * CDDL HEADER END
  */
-
 /*
  * Copyright (c) 2018 CloudByte, Inc. All rights reserved.
+ */
+
+/*
+ * Common characteristic of the tests in this file is that they test zrepl
+ * protocol by issuing commands to independent zrepl process over TCP
+ * (this is important distinction from the case when zrepl is instantiated
+ * on behalf of the test process itself). Hence all we can test here is the
+ * network API. We cannot test any of the uzfs library API directly here.
  */
 
 #include <gtest/gtest.h>
@@ -68,7 +75,7 @@ static int ready_for_read(int fd, int timeout) {
  * res is the expected status of handshake
  */
 static void do_handshake(std::string zvol_name, std::string &host,
-    uint16_t &port, int control_fd, int res) {
+    uint16_t &port, uint64_t *ionum, int control_fd, int res) {
 	zvol_io_hdr_t hdr_out, hdr_in;
 	int rc;
 	mgmt_ack_t mgmt_ack;
@@ -98,15 +105,22 @@ static void do_handshake(std::string zvol_name, std::string &host,
 	EXPECT_STREQ(mgmt_ack.volname, zvol_name.c_str());
 	host = std::string(mgmt_ack.ip);
 	port = mgmt_ack.port;
+	if (ionum != NULL)
+		*ionum = hdr_in.checkpointed_io_seq;
 }
 
 /*
  * This fn does data conn for a host:ip and volume, and fills data fd
+ *
+ * NOTE: Return value must be void otherwise we could not use asserts
+ * (pecularity of gtest framework).
  */
-void do_data_connection(int &data_fd, std::string host, uint16_t port,
-    std::string zvol_name) {
+static void do_data_connection(int &data_fd, std::string host, uint16_t port,
+    std::string zvol_name, int bs=4096, int timeout=120,
+    int res=ZVOL_OP_STATUS_OK) {
 	struct sockaddr_in addr;
-	zvol_io_hdr_t hdr_out;
+	zvol_io_hdr_t hdr_out, hdr_in;
+	open_payload_t open_pd;
 	int rc;
 
 	data_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -123,23 +137,34 @@ void do_data_connection(int &data_fd, std::string host, uint16_t port,
 	}
 
 	hdr_out.version = REPLICA_VERSION;
-	hdr_out.opcode = ZVOL_OPCODE_HANDSHAKE;
+	hdr_out.opcode = ZVOL_OPCODE_OPEN;
 	hdr_out.status = ZVOL_OP_STATUS_OK;
 	hdr_out.io_seq = 0;
 	hdr_out.offset = 0;
-	hdr_out.len = zvol_name.length() + 1;
+	hdr_out.len = sizeof (open_pd);
 
 	rc = write(data_fd, &hdr_out, sizeof (hdr_out));
 	ASSERT_EQ(rc, sizeof (hdr_out));
-	rc = write(data_fd, zvol_name.c_str(), hdr_out.len);
-	ASSERT_EQ(rc, hdr_out.len);
+
+	open_pd.block_size = bs;
+	open_pd.timeout = timeout;
+	strncpy(open_pd.volname, zvol_name.c_str(),
+	    sizeof (open_pd.volname));
+	rc = write(data_fd, &open_pd, hdr_out.len);
+
+	rc = read(data_fd, &hdr_in, sizeof (hdr_in));
+	ASSERT_EQ(rc, sizeof (hdr_in));
+	ASSERT_EQ(hdr_in.version, REPLICA_VERSION);
+	ASSERT_EQ(hdr_in.opcode, ZVOL_OPCODE_OPEN);
+	ASSERT_EQ(hdr_in.len, 0);
+	ASSERT_EQ(hdr_in.status, res);
 }
 
 /*
  * Send header for data write. Leave write of actual data to the caller.
  * len is real length - including metadata headers.
  */
-void write_data_start(int data_fd, int &ioseq, size_t offset, int len) {
+static void write_data_start(int data_fd, int &ioseq, size_t offset, int len) {
 	zvol_io_hdr_t hdr_out;
 	int rc;
 
@@ -155,7 +180,8 @@ void write_data_start(int data_fd, int &ioseq, size_t offset, int len) {
 	ASSERT_EQ(rc, sizeof (hdr_out));
 }
 
-void write_data(int data_fd, int &ioseq, void *buf, size_t offset, int len, uint64_t io_num) {
+static void write_data(int data_fd, int &ioseq, void *buf, size_t offset,
+    int len, uint64_t io_num) {
 	struct zvol_io_rw_hdr write_hdr;
 	int rc;
 
@@ -174,7 +200,7 @@ void write_data(int data_fd, int &ioseq, void *buf, size_t offset, int len, uint
  * Send command to read data and read reply header. Reading payload is
  * left to the caller.
  */
-void read_data_start(int data_fd, int &ioseq, size_t offset, int len,
+static void read_data_start(int data_fd, int &ioseq, size_t offset, int len,
     zvol_io_hdr_t *hdr_inp, bool rebuild_flag=false) {
 	zvol_io_hdr_t hdr_out;
 	int rc;
@@ -200,7 +226,7 @@ void read_data_start(int data_fd, int &ioseq, size_t offset, int len,
  * Read 3 blocks of 4096 size at offset 0
  * Compares the io_num with expected value (hardcoded) and data
  */
-void read_data_and_verify_resp(int data_fd, int &ioseq) {
+static void read_data_and_verify_resp(int data_fd, int &ioseq) {
 	zvol_io_hdr_t hdr_in;
 	struct zvol_io_rw_hdr read_hdr;
 	int rc;
@@ -246,7 +272,7 @@ void read_data_and_verify_resp(int data_fd, int &ioseq) {
  * hardcoded offset
  * Verifies the resp of write IO
  */
-void write_two_chunks_and_verify_resp(int data_fd, int &ioseq,
+static void write_two_chunks_and_verify_resp(int data_fd, int &ioseq,
     size_t offset) {
 	zvol_io_hdr_t hdr_in;
 	struct zvol_io_rw_hdr read_hdr;
@@ -291,7 +317,7 @@ void write_two_chunks_and_verify_resp(int data_fd, int &ioseq,
  * Writes data block of size 4096 at given offset and io_num
  * Updates io_seq of volume
  */
-void write_data_and_verify_resp(int data_fd, int &ioseq, size_t offset,
+static void write_data_and_verify_resp(int data_fd, int &ioseq, size_t offset,
     uint64_t io_num) {
 	zvol_io_hdr_t hdr_in;
 	struct zvol_io_rw_hdr read_hdr;
@@ -314,7 +340,8 @@ void write_data_and_verify_resp(int data_fd, int &ioseq, size_t offset,
 	ASSERT_EQ(hdr_in.len, sizeof (buf) + sizeof (write_hdr));
 }
 
-void get_zvol_status(std::string zvol_name, int &ioseq, int control_fd, int state, int rebuild_status)
+static void get_zvol_status(std::string zvol_name, int &ioseq, int control_fd,
+    int state, int rebuild_status)
 {
 	zvol_io_hdr_t hdr_out, hdr_in;
 	struct zrepl_status_ack status;
@@ -346,7 +373,8 @@ void get_zvol_status(std::string zvol_name, int &ioseq, int control_fd, int stat
 	EXPECT_EQ(status.rebuild_status, rebuild_status);
 }
 
-void transition_zvol_to_online(int &ioseq, int control_fd, std::string zvol_name)
+static void transition_zvol_to_online(int &ioseq, int control_fd,
+    std::string zvol_name)
 {
 	zvol_io_hdr_t hdr_in, hdr_out;
 	struct mgmt_ack mgmt_ack;
@@ -371,6 +399,25 @@ void transition_zvol_to_online(int &ioseq, int control_fd, std::string zvol_name
 	rc = write(control_fd, &mgmt_ack, sizeof (mgmt_ack));
 	ASSERT_ERRNO("write", rc >= 0);
 	ASSERT_EQ(rc, sizeof (mgmt_ack));
+}
+
+/*
+ * We have to wait for the other end to close the connection, because the
+ * next test case could initiate a new connection before this one is
+ * fully closed and cause a handshake error. Or it could result in EBUSY
+ * error when destroying zpool if it is not released in time by zrepl.
+ */
+static void graceful_close(int sockfd)
+{
+	int rc;
+	char val;
+
+	if (sockfd < 0)
+		return;
+	shutdown(sockfd, SHUT_WR);
+	rc = read(sockfd, &val, sizeof (val));
+	ASSERT_EQ(rc, 0);
+	close(sockfd);
 }
 
 /*
@@ -531,11 +578,11 @@ public:
 	}
 
 	~TestPool() {
-//		try {
+		//try {
 			execCmd("zpool", std::string("destroy -f ") + m_name);
-//		} catch (std::runtime_error re) {
-//			;
-//		}
+		//} catch (std::runtime_error re) {
+			//;
+		//}
 		unlink(m_path.c_str());
 	}
 
@@ -623,7 +670,15 @@ std::string ZreplHandshakeTest::m_zvol_name = "";
 
 class ZreplDataTest : public testing::Test {
 protected:
-	/* Shared setup hook for all zrepl data tests - called just once */
+	/*
+	 * Shared setup hook for all zrepl data tests - called just once.
+	 *
+	 * TODO: we do more here than we are supposed to do (we should not test
+	 * things in setup hook). We create pool, restart zrepl, import the pool
+	 * again and then the tests issue IO to it. This scenario is currently
+	 * not covered by any test and should be. When we have a test for it,
+	 * the setup hook should be simplified to minimum again.
+	 */
 	static void SetUpTestCase() {
 		zvol_io_hdr_t hdr_out, hdr_in;
 		Target target1, target2;
@@ -642,7 +697,7 @@ protected:
 		m_control_fd1 = target1.accept(-1);
 		ASSERT_GE(m_control_fd1, 0);
 
-		do_handshake(m_zvol_name1, m_host1, m_port1, m_control_fd1,
+		do_handshake(m_zvol_name1, m_host1, m_port1, NULL, m_control_fd1,
 		    ZVOL_OP_STATUS_OK);
 		m_zrepl->kill();
 
@@ -651,7 +706,7 @@ protected:
 		m_control_fd1 = target1.accept(-1);
 		ASSERT_GE(m_control_fd1, 0);
 
-		do_handshake(m_zvol_name1, m_host1, m_port1, m_control_fd1,
+		do_handshake(m_zvol_name1, m_host1, m_port1, NULL, m_control_fd1,
 		    ZVOL_OP_STATUS_OK);
 
 		m_pool2->create();
@@ -663,11 +718,11 @@ protected:
 		m_control_fd2 = target2.accept(-1);
 		ASSERT_GE(m_control_fd2, 0);
 
-		do_handshake(m_zvol_name2, m_host2, m_port2, m_control_fd2,
+		do_handshake(m_zvol_name2, m_host2, m_port2, NULL, m_control_fd2,
 		    ZVOL_OP_STATUS_FAILED);
 
 		m_zvol_name2 = m_pool2->getZvolName("vol1");
-		do_handshake(m_zvol_name2, m_host2, m_port2, m_control_fd2,
+		do_handshake(m_zvol_name2, m_host2, m_port2, NULL, m_control_fd2,
 		    ZVOL_OP_STATUS_OK);
 	}
 
@@ -699,26 +754,8 @@ protected:
 	}
 
 	virtual void TearDown() override {
-		int rc, val;
-
-		if (m_data_fd1 >= 0) {
-			/*
-			 * We have to wait for the other end to close the
-			 * connection, because the next test case could
-			 * initiate a new connection before this one is
-			 * fully closed and cause a handshake error.
-			 */
-			shutdown(m_data_fd1, SHUT_WR);
-			rc = read(m_data_fd1, &val, sizeof (val));
-			ASSERT_EQ(rc, 0);
-			close(m_data_fd1);
-		}
-		if (m_data_fd2 >= 0) {
-			shutdown(m_data_fd2, SHUT_WR);
-			rc = read(m_data_fd2, &val, sizeof (val));
-			ASSERT_EQ(rc, 0);
-			close(m_data_fd2);
-		}
+		graceful_close(m_data_fd1);
+		graceful_close(m_data_fd2);
 	}
 
 	static int	m_control_fd1;
@@ -1236,4 +1273,164 @@ TEST(TargetIPTest, Reconnect) {
 	rc = read(fd, buf, sizeof (buf));
 	ASSERT_EQ(rc, 0);
 	close(fd);
+}
+
+/*
+ * Test setting interval for updating checkpointed ionum.
+ * Open two zvols, each with different interval setting and after some time
+ * check committed ionum on both of them.
+ */
+TEST(Misc, ZreplCheckpointInterval) {
+	Zrepl	 zrepl;
+	TestPool pool("checkpoint");
+	Target	target;
+	std::string zvol_name_slow, zvol_name_fast;
+	int	rc, control_fd;
+	int	data_fd_slow, data_fd_fast;
+	int	ioseq = 0;
+	std::string host_slow, host_fast;
+	uint16_t port_slow, port_fast;
+	uint64_t ionum_slow, ionum_fast;
+
+	zrepl.start();
+	pool.create();
+	pool.createZvol("slow", "-o io.openebs:targetip=127.0.0.1:6060");
+	pool.createZvol("fast", "-o io.openebs:targetip=127.0.0.1:6060");
+	zvol_name_slow = pool.getZvolName("slow");
+	zvol_name_fast = pool.getZvolName("fast");
+
+	rc = target.listen();
+	ASSERT_GE(rc, 0);
+	control_fd = target.accept(-1);
+	ASSERT_GE(control_fd, 0);
+
+	do_handshake(zvol_name_slow, host_slow, port_slow, &ionum_slow,
+	    control_fd, ZVOL_OP_STATUS_OK);
+	do_handshake(zvol_name_fast, host_fast, port_fast, &ionum_fast,
+	    control_fd, ZVOL_OP_STATUS_OK);
+	ASSERT_NE(ionum_slow, 888);
+	ASSERT_NE(ionum_fast, 888);
+	transition_zvol_to_online(ioseq, control_fd, zvol_name_slow);
+	transition_zvol_to_online(ioseq, control_fd, zvol_name_fast);
+
+	do_data_connection(data_fd_slow, host_slow, port_slow, zvol_name_slow,
+	    4096, 1000);
+	do_data_connection(data_fd_fast, host_fast, port_fast, zvol_name_fast,
+	    4096, 1);
+
+	write_data_and_verify_resp(data_fd_slow, ioseq, 0, 888);
+	write_data_and_verify_resp(data_fd_fast, ioseq, 0, 888);
+	sleep(2);
+
+	do_handshake(zvol_name_slow, host_slow, port_slow, &ionum_slow,
+	    control_fd, ZVOL_OP_STATUS_OK);
+	do_handshake(zvol_name_fast, host_fast, port_fast, &ionum_fast,
+	    control_fd, ZVOL_OP_STATUS_OK);
+	ASSERT_NE(ionum_slow, 888);
+	ASSERT_EQ(ionum_fast, 888);
+
+	graceful_close(data_fd_slow);
+	graceful_close(data_fd_fast);
+	graceful_close(control_fd);
+}
+
+class ZreplBlockSizeTest : public testing::Test {
+protected:
+	/*
+	 * Shared setup hook for all zrepl block size tests - called just once.
+	 * Creates a zvol with 4k block size.
+	 */
+	static void SetUpTestCase() {
+		zvol_io_hdr_t hdr_out, hdr_in;
+		m_pool = new TestPool("blocksize");
+		m_zrepl = new Zrepl();
+
+		m_zrepl->start();
+		m_pool->create();
+	}
+
+	static void TearDownTestCase() {
+		delete m_pool;
+		delete m_zrepl;
+	}
+
+	ZreplBlockSizeTest() {
+		m_ioseq = 0;
+	}
+
+	/*
+	 * Create data connection and send handshake msg for the zvol.
+	 */
+	virtual void SetUp() override {
+		Target target;
+		int rc;
+
+		m_data_fd = -1;
+		m_control_fd = -1;
+		rc = target.listen();
+		ASSERT_GE(rc, 0);
+
+		m_pool->createZvol("vol", "-o io.openebs:targetip=127.0.0.1");
+		m_zvol_name = m_pool->getZvolName("vol");
+		m_control_fd = target.accept(-1);
+		ASSERT_GE(m_control_fd, 0);
+
+		do_handshake(m_zvol_name, m_host, m_port, NULL, m_control_fd,
+		    ZVOL_OP_STATUS_OK);
+	}
+
+	virtual void TearDown() override {
+		m_pool->destroyZvol("vol");
+		if (m_data_fd >= 0)
+			close(m_data_fd);
+		if (m_control_fd >= 0)
+			close(m_control_fd);
+	}
+
+	static Zrepl	*m_zrepl;
+	static TestPool *m_pool;
+
+	uint16_t m_port;
+	std::string m_host;
+	std::string m_zvol_name;
+	int	m_ioseq, m_data_fd, m_control_fd;
+};
+
+TestPool *ZreplBlockSizeTest::m_pool = nullptr;
+Zrepl *ZreplBlockSizeTest::m_zrepl = nullptr;
+
+/*
+ * Test setting metadata granularity on zvol.
+ */
+TEST_F(ZreplBlockSizeTest, SetMetaBlockSize) {
+	do_data_connection(m_data_fd, m_host, m_port, m_zvol_name, 4096);
+	write_data_and_verify_resp(m_data_fd, m_ioseq, 0, 1);
+	graceful_close(m_data_fd);
+	m_data_fd = -1;
+	do_data_connection(m_data_fd, m_host, m_port, m_zvol_name, 4096);
+	write_data_and_verify_resp(m_data_fd, m_ioseq, 0, 1);
+}
+
+TEST_F(ZreplBlockSizeTest, SetMetaBlockSizeSmallerThanBlockSize) {
+	do_data_connection(m_data_fd, m_host, m_port, m_zvol_name, 512);
+	write_data_and_verify_resp(m_data_fd, m_ioseq, 0, 1);
+}
+
+TEST_F(ZreplBlockSizeTest, SetMetaBlockSizeBiggerThanBlockSize) {
+	do_data_connection(m_data_fd, m_host, m_port, m_zvol_name, 8192, 120,
+	    ZVOL_OP_STATUS_FAILED);
+}
+
+TEST_F(ZreplBlockSizeTest, SetMetaBlockSizeUnaligned) {
+	do_data_connection(m_data_fd, m_host, m_port, m_zvol_name, 513, 120,
+	    ZVOL_OP_STATUS_FAILED);
+}
+
+TEST_F(ZreplBlockSizeTest, SetDifferentMetaBlockSizes) {
+	do_data_connection(m_data_fd, m_host, m_port, m_zvol_name, 4096);
+	write_data_and_verify_resp(m_data_fd, m_ioseq, 0, 1);
+	graceful_close(m_data_fd);
+	m_data_fd = -1;
+	do_data_connection(m_data_fd, m_host, m_port, m_zvol_name, 512, 120,
+	    ZVOL_OP_STATUS_FAILED);
 }

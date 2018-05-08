@@ -34,8 +34,6 @@ USER_H = \
 	$(top_srcdir)/include/rte_memory.h \
 	$(top_srcdir)/include/rte_pause.h \
 	$(top_srcdir)/include/uzfs_zap.h \
-	$(top_srcdir)/include/uzfs.h \
-	$(top_srcdir)/include/uzfs_task.h \
 	$(top_srcdir)/include/uzfs_rebuilding.h \
 	$(top_srcdir)/include/gtest_utils.h
 

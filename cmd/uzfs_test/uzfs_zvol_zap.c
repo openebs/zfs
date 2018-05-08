@@ -4,7 +4,6 @@
 #include <uzfs_mgmt.h>
 #include <uzfs_zap.h>
 #include <zrepl_mgmt.h>
-#include <uzfs.h>
 #include <uzfs_test.h>
 
 /*
@@ -120,9 +119,6 @@ uzfs_zvol_zap_operation(void *arg)
 	zvol_state_t *zvol;
 	uzfs_zap_kv_t **kv_array;
 	int zap_count;
-	uint64_t txg1, txg2, txg3, txg4;
-	struct timespec ts;
-	int err1, err2;
 
 	open_pool(&spa);
 	open_ds(spa, ds, &zvol);
@@ -173,56 +169,6 @@ uzfs_zvol_zap_operation(void *arg)
 
 	now = gethrtime();
 	end = now + (hrtime_t)(total_time_in_sec * (hrtime_t)(NANOSEC));
-
-	/*
-	 * uzfs_update_txg_zap_thread thread updates LAST_ITER_TXG
-	 * at interval of txg_update_interval_time (10 minutes).
-	 * For testing purpose, we are changing txg_update_interval_time
-	 * to 5 seconds
-	 */
-	txg_update_interval_time = 5 * hz;
-
-	mutex_enter(&(uzfs_spa(spa)->mtx));
-	cv_signal(&(uzfs_spa(spa)->cv));
-	mutex_exit(&(uzfs_spa(spa)->mtx));
-
-	ts.tv_nsec = 0;
-	ts.tv_sec = 2 * (txg_update_interval_time / hz);
-
-	while (1) {
-		err1 = uzfs_read_last_iter_txg(spa, &txg1);
-		if ((err1 != 0) && (err1 != 2)) {
-			printf("error in reading last iter txg..\n");
-			exit(1);
-		}
-
-		txg2 = spa_last_synced_txg(spa);
-
-		/*
-		 * do txg_wait_synced during each iteration to force
-		 * txg to increase well from last synced txg
-		 */
-		txg_wait_synced(spa_get_dsl(spa), 0);
-		nanosleep(&ts, NULL);
-
-		err2 = uzfs_read_last_iter_txg(spa, &txg3);
-		if ((err2 != 0) && (err2 != 2)) {
-			printf("error in reading last iter txg..\n");
-			exit(1);
-		}
-
-		txg4 = spa_last_synced_txg(spa);
-
-		if (txg2 != txg4)
-			if ((txg1 == txg3) && ((err1 == 0) || (err2 == 0))) {
-				printf("doesn't seem to be updating txg..\n");
-				exit(1);
-			}
-
-		now = gethrtime();
-		if (now > end)
-			break;
-	}
 
 	uzfs_close_dataset(zvol);
 	uzfs_close_pool(spa);

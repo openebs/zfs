@@ -32,10 +32,7 @@
 typedef struct zvol_properties {
 	uint64_t vol_size;
 	uint64_t block_size;
-
-/* explained in zvol_state_t definition */
-	uint64_t meta_block_size;
-	uint64_t meta_vol_block_size;
+	uint64_t meta_block_size;	/* explained in zvol_state_t def */
 } zvol_properties_t;
 
 /*

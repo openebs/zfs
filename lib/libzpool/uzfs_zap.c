@@ -27,15 +27,7 @@
 #include <sys/dmu_tx.h>
 #include <sys/zap.h>
 #include <sys/uzfs_zvol.h>
-#include <uzfs.h>
 #include <uzfs_zap.h>
-
-/*
- * this is in seconds. Default is 600 seconds.
- * It depends on the IO timeout at iscsi controller.
- * At this interval, txg value taken in last iteration is stored into zap
- */
-long long txg_update_interval_time = (600 * hz);
 
 /*
  * update/add key-value entry in zvol zap object
@@ -107,52 +99,10 @@ uzfs_read_zap_entry(void *zvol, uzfs_zap_kv_t *entry)
 	return (0);
 }
 
-int
-uzfs_read_last_iter_txg(void *spa, uint64_t *val)
-{
-	uint64_t zapobj = DMU_POOL_DIRECTORY_OBJECT;
-	int err;
-	err = zap_lookup(spa_meta_objset(spa), zapobj, LAST_ITER_TXG, 1, 8,
-	    val);
-	if (err)
-		return (SET_ERROR(err));
-
-	return (0);
-}
-
 void
 update_txg_sync_impl(void *txg, dmu_tx_t *tx)
 {
 	objset_t *mos = dmu_tx_pool(tx)->dp_meta_objset;
 	uint64_t zapobj = DMU_POOL_DIRECTORY_OBJECT;
 	VERIFY0(zap_update(mos, zapobj, LAST_ITER_TXG, 1, 8, txg, tx));
-}
-
-void
-uzfs_update_txg_zap_thread(void *s)
-{
-	spa_t *spa = (spa_t *)s;
-	uzfs_spa_t *us = spa->spa_us;
-	uint64_t txg = spa_last_synced_txg(spa);
-	mutex_enter(&us->mtx);
-	if (uzfs_spa(spa)->close_pool == 1)
-		goto exit;
-	cv_timedwait(&(uzfs_spa(spa)->cv), &(uzfs_spa(spa)->mtx),
-	    ddi_get_lbolt() + txg_update_interval_time);
-
-	while (uzfs_spa(spa)->close_pool == 0) {
-		mutex_exit(&(uzfs_spa(spa)->mtx));
-		dsl_sync_task(spa_name(spa), NULL, update_txg_sync_impl, &txg,
-		    0, ZFS_SPACE_CHECK_NONE);
-
-		txg = spa_last_synced_txg(spa);
-
-		mutex_enter(&(uzfs_spa(spa)->mtx));
-		cv_timedwait(&(uzfs_spa(spa)->cv), &(uzfs_spa(spa)->mtx),
-		    ddi_get_lbolt() + txg_update_interval_time);
-	}
-exit:
-	mutex_exit(&(uzfs_spa(spa)->mtx));
-	uzfs_spa(spa)->update_txg_tid = NULL;
-	zk_thread_exit();
 }

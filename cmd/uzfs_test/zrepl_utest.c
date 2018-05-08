@@ -74,6 +74,7 @@ zrepl_utest_mgmt_hs_io_conn(char *volname, int mgmt_fd)
 	int			io_fd = 0;
 	mgmt_ack_t		*mgmt_ack;
 	zvol_io_hdr_t		hdr;
+	open_payload_t		open_pd;
 	struct sockaddr_in	replica_io_addr;
 
 	bzero(&hdr, sizeof (hdr));
@@ -139,15 +140,29 @@ zrepl_utest_mgmt_hs_io_conn(char *volname, int mgmt_fd)
 		return (-1);
 	}
 
+	hdr.opcode = ZVOL_OPCODE_OPEN;
+	hdr.len = sizeof (open_payload_t);
+	open_pd.block_size = 4096;
+	open_pd.timeout = 120;
+	strncpy(open_pd.volname, volname, sizeof (open_pd.volname));
+
 	rc = write(io_fd, (void *)&hdr, sizeof (zvol_io_hdr_t));
 	if (rc == -1) {
-		printf("During handshake, Write error\n");
+		printf("During zvol open, Write error\n");
 		return (rc);
 	}
-
-	rc = write(io_fd, volname, hdr.len);
+	rc = write(io_fd, &open_pd, hdr.len);
 	if (rc == -1) {
-		printf("During volname send, Write error\n");
+		printf("During zvol open, Write error\n");
+		return (rc);
+	}
+	rc = read(io_fd, &hdr, sizeof (hdr));
+	if (rc == -1) {
+		printf("During open reply read, Read error\n");
+		return (rc);
+	}
+	if (hdr.status != ZVOL_OP_STATUS_OK) {
+		printf("Failed to open zvol for IO\n");
 		return (rc);
 	}
 	printf("Data-IO connection to volume:%s passed\n", volname);

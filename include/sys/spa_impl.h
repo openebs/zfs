@@ -44,9 +44,6 @@
 #include <sys/bpobj.h>
 #include <sys/zfeature.h>
 #include <zfeature_common.h>
-#ifndef _KERNEL
-#include <uzfs.h>
-#endif
 
 #ifdef	__cplusplus
 extern "C" {
@@ -291,10 +288,6 @@ struct spa {
 	refcount_t	spa_refcount;		/* number of opens */
 
 	taskq_t		*spa_upgrade_taskq;	/* taskq for upgrade jobs */
-
-#if !defined(_KERNEL)
-	uzfs_spa_t		*spa_us;	/* uzfs_pool structure */
-#endif
 };
 
 extern char *spa_config_path;

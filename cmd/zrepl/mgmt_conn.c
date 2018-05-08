@@ -491,8 +491,14 @@ uzfs_zvol_mgmt_do_handshake(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	 * hold dataset during handshake if objset is NULL
 	 * no critical section here as rebuild & handshake won't come at a time
 	 */
-	if (zv->zv_objset == NULL)
-		uzfs_hold_dataset(zv);
+	if (zv->zv_objset == NULL) {
+		if (uzfs_hold_dataset(zv) != 0) {
+			fprintf(stderr, "Failed to hold zvol during "
+			    "handshake\n");
+			return (reply_error(conn, ZVOL_OP_STATUS_FAILED,
+			    hdrp->opcode, hdrp->io_seq, CS_INIT));
+		}
+	}
 
 	/*
 	 * We don't use fsid_guid because that one is not guaranteed
@@ -507,7 +513,7 @@ uzfs_zvol_mgmt_do_handshake(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	hdr.io_seq = hdrp->io_seq;
 	hdr.len = sizeof (mgmt_ack);
 	hdr.status = ZVOL_OP_STATUS_OK;
-	uzfs_zvol_get_last_committed_io_no(zv, &hdr.checkpointed_io_seq);
+	hdr.checkpointed_io_seq = uzfs_zvol_get_last_committed_io_no(zv);
 
 	return (reply_data(conn, &hdr, &mgmt_ack, sizeof (mgmt_ack)));
 }
@@ -568,6 +574,7 @@ uzfs_zvol_rebuild_dw_replica_start(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 				    ZVOL_REBUILDING_DONE);
 				uzfs_zvol_set_status(zinfo->zv,
 				    ZVOL_STATUS_HEALTHY);
+				uzfs_update_ionum_interval(zinfo, 0);
 				printf("Rebuild of replica %s completed\n",
 				    zinfo->name);
 				uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);

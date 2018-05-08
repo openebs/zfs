@@ -663,6 +663,7 @@ open_ds(spa_t *spa, char *ds, zvol_state_t **zv)
 		exit(1);
 	}
 	uzfs_hold_dataset(*zv);
+	uzfs_update_metadata_granularity(*zv, 512);
 }
 
 void

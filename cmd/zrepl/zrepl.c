@@ -349,6 +349,9 @@ read_socket:
 				kmem_free(name, hdr.len);
 				goto exit;
 			}
+
+			ZREPL_ERRLOG("Rebuild scanner started on volume:%s\n",
+			    name);
 			kmem_free(name, hdr.len);
 			warg.zinfo = zinfo;
 			warg.fd = fd;
@@ -370,7 +373,8 @@ read_socket:
 			    uzfs_zvol_rebuild_scanner_callback,
 			    rebuild_req_offset, rebuild_req_len, &warg);
 			if (rc != 0) {
-				printf("Rebuild scanning failed\n");
+				ZREPL_ERRLOG("Rebuild scanning failed on "
+				    "Volume:%s\n", zinfo->name);
 			}
 			bzero(&hdr, sizeof (hdr));
 			hdr.status = ZVOL_OP_STATUS_OK;

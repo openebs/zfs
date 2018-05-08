@@ -597,8 +597,8 @@ uzfs_zvol_rebuild_dw_replica_start(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 		io_sfd = create_and_bind("", B_FALSE, B_FALSE);
 		if (io_sfd < 0) {
 			/* Fail this rebuild process entirely */
-			ZREPL_ERRLOG("Rebuild IO socket create and bind "
-			    "failed on Volume:%s\n", zinfo->name);
+			fprintf(stderr, "Rebuild IO socket create and bind"
+			    " failed on volume: %s\n", zinfo->name);
 			uzfs_zvol_set_rebuild_status(zinfo->zv,
 			    ZVOL_REBUILDING_FAILED);
 			uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);

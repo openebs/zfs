@@ -120,7 +120,7 @@ static void do_data_connection(int &data_fd, std::string host, uint16_t port,
     int res=ZVOL_OP_STATUS_OK) {
 	struct sockaddr_in addr;
 	zvol_io_hdr_t hdr_out, hdr_in;
-	open_payload_t open_pd;
+	zvol_op_open_data_t open_data;
 	int rc;
 
 	data_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -141,16 +141,16 @@ static void do_data_connection(int &data_fd, std::string host, uint16_t port,
 	hdr_out.status = ZVOL_OP_STATUS_OK;
 	hdr_out.io_seq = 0;
 	hdr_out.offset = 0;
-	hdr_out.len = sizeof (open_pd);
+	hdr_out.len = sizeof (open_data);
 
 	rc = write(data_fd, &hdr_out, sizeof (hdr_out));
 	ASSERT_EQ(rc, sizeof (hdr_out));
 
-	open_pd.block_size = bs;
-	open_pd.timeout = timeout;
-	strncpy(open_pd.volname, zvol_name.c_str(),
-	    sizeof (open_pd.volname));
-	rc = write(data_fd, &open_pd, hdr_out.len);
+	open_data.tgt_block_size = bs;
+	open_data.timeout = timeout;
+	strncpy(open_data.volname, zvol_name.c_str(),
+	    sizeof (open_data.volname));
+	rc = write(data_fd, &open_data, hdr_out.len);
 
 	rc = read(data_fd, &hdr_in, sizeof (hdr_in));
 	ASSERT_EQ(rc, sizeof (hdr_in));

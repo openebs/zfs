@@ -431,16 +431,16 @@ uzfs_read_metadata(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
  * not change.
  */
 int
-uzfs_update_metadata_granularity(zvol_state_t *zv, uint64_t block_size)
+uzfs_update_metadata_granularity(zvol_state_t *zv, uint64_t tgt_block_size)
 {
 	int error;
 	dmu_tx_t *tx;
 
-	if (block_size == zv->zv_metavolblocksize)
+	if (tgt_block_size == zv->zv_metavolblocksize)
 		return (0);	/* nothing to update */
-	if (block_size > zv->zv_volblocksize)
+	if (tgt_block_size > zv->zv_volblocksize)
 		return (-1);
-	if (zv->zv_volblocksize % block_size != 0)
+	if (zv->zv_volblocksize % tgt_block_size != 0)
 		return (-1);
 
 	tx = dmu_tx_create(zv->zv_objset);
@@ -451,8 +451,8 @@ uzfs_update_metadata_granularity(zvol_state_t *zv, uint64_t block_size)
 		return (-1);
 	}
 	VERIFY0(zap_update(zv->zv_objset, ZVOL_ZAP_OBJ, "metavolblocksize",
-	    8, 1, &block_size, tx));
+	    8, 1, &tgt_block_size, tx));
 	dmu_tx_commit(tx);
-	zv->zv_metavolblocksize = block_size;
+	zv->zv_metavolblocksize = tgt_block_size;
 	return (0);
 }

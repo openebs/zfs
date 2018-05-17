@@ -105,13 +105,13 @@ struct zvol_io_hdr {
 
 typedef struct zvol_io_hdr zvol_io_hdr_t;
 
-struct open_payload {
-	uint32_t	block_size;	// used block size for rw in bytes
+struct zvol_op_open_data {
+	uint32_t	tgt_block_size;	// used block size for rw in bytes
 	uint32_t	timeout;	// replica timeout in seconds
 	char		volname[MAX_NAME_LEN];
 } __attribute__((packed));
 
-typedef struct open_payload open_payload_t;
+typedef struct zvol_op_open_data zvol_op_open_data_t;
 
 /*
  * Payload data send in response to handshake on control connection. It tells

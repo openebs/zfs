@@ -78,7 +78,7 @@ open_zvol(int fd, zvol_info_t **zinfopp)
 {
 	int		rc;
 	zvol_io_hdr_t	hdr;
-	open_payload_t	open_pd;
+	zvol_op_open_data_t open_data;
 	zvol_info_t	*zinfo = NULL;
 	zvol_state_t	*zv;
 	kthread_t	*thrd_info;
@@ -96,40 +96,35 @@ open_zvol(int fd, zvol_info_t **zinfopp)
 		ZREPL_ERRLOG("Zvol must be opened first\n");
 		return (-1);
 	}
-	if (hdr.len != sizeof (open_payload_t)) {
+	if (hdr.len != sizeof (open_data)) {
 		ZREPL_ERRLOG("Invalid payload length for open\n");
 		return (-1);
 	}
-	rc = uzfs_zvol_socket_read(fd, (char *)&open_pd, sizeof (open_pd));
+	rc = uzfs_zvol_socket_read(fd, (char *)&open_data, sizeof (open_data));
 	if (rc != 0) {
 		ZREPL_ERRLOG("Payload read failed: %d\n", errno);
 		return (-1);
 	}
 
-	open_pd.volname[MAX_NAME_LEN - 1] = '\0';
-	zinfo = uzfs_zinfo_lookup(open_pd.volname);
+	open_data.volname[MAX_NAME_LEN - 1] = '\0';
+	zinfo = uzfs_zinfo_lookup(open_data.volname);
 	if (zinfo == NULL) {
-		ZREPL_ERRLOG("zvol %s not found", open_pd.volname);
+		ZREPL_ERRLOG("zvol %s not found", open_data.volname);
 		hdr.status = ZVOL_OP_STATUS_FAILED;
 		goto open_reply;
 	}
 	zv = zinfo->zv;
 	ASSERT3P(zv, !=, NULL);
 	if (zv->zv_metavolblocksize != 0 &&
-	    zv->zv_metavolblocksize != open_pd.block_size) {
+	    zv->zv_metavolblocksize != open_data.tgt_block_size) {
 		ZREPL_ERRLOG("Conflicting block size");
 		hdr.status = ZVOL_OP_STATUS_FAILED;
 		goto open_reply;
 	}
 	// validate block size (only one bit is set in the number)
-	if (open_pd.block_size == 0 ||
-	    (open_pd.block_size & (open_pd.block_size - 1)) != 0) {
+	if (open_data.tgt_block_size == 0 ||
+	    (open_data.tgt_block_size & (open_data.tgt_block_size - 1)) != 0) {
 		ZREPL_ERRLOG("Invalid block size");
-		hdr.status = ZVOL_OP_STATUS_FAILED;
-		goto open_reply;
-	}
-	if (zinfo->timeout != 0 && zinfo->timeout != open_pd.timeout) {
-		ZREPL_ERRLOG("Conflicting timeout value");
 		hdr.status = ZVOL_OP_STATUS_FAILED;
 		goto open_reply;
 	}
@@ -146,14 +141,20 @@ open_zvol(int fd, zvol_info_t **zinfopp)
 		hdr.status = ZVOL_OP_STATUS_FAILED;
 		goto open_reply;
 	}
-	if (uzfs_update_metadata_granularity(zv, open_pd.block_size) != 0) {
+	if (uzfs_update_metadata_granularity(zv,
+	    open_data.tgt_block_size) != 0) {
 		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 		ZREPL_ERRLOG("Failed to set granularity of metadata\n");
 		hdr.status = ZVOL_OP_STATUS_FAILED;
 		goto open_reply;
 	}
-	uzfs_update_ionum_interval(zinfo, open_pd.timeout);
-	zinfo->timeout = open_pd.timeout;
+	/*
+	 * TODO: Once we support multiple concurrent data connections for a
+	 * single zvol, we should probably check that the timeout is the same
+	 * for all data connections.
+	 */
+	uzfs_update_ionum_interval(zinfo, open_data.timeout);
+	zinfo->timeout = open_data.timeout;
 	*zinfopp = zinfo;
 
 	if (!zinfo->is_io_ack_sender_created) {

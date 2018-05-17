@@ -323,7 +323,7 @@ static int open_zvol(struct thread_data *td, int fd, const char *volname)
 	struct repl_options *o = td->eo;
 	ssize_t rc;
 	zvol_io_hdr_t hdr;
-	open_payload_t open_pd;
+	zvol_op_open_data_t open_data;
 	int volname_size = strlen(volname) + 1;
 
 	hdr.version = REPLICA_VERSION;
@@ -331,20 +331,20 @@ static int open_zvol(struct thread_data *td, int fd, const char *volname)
 	hdr.status = 0;
 	hdr.io_seq = 0;
 	hdr.offset = 0;
-	hdr.len = sizeof (open_pd);
+	hdr.len = sizeof (open_data);
 
 	// we use the smallest possible bs for metadata granularity, this still
 	// allows us to use arbitrary larger bs for IO
-	open_pd.block_size = (o->metadata_bs) ? o->metadata_bs : 512;
-	open_pd.timeout = 120;
-	strncpy(open_pd.volname, volname, sizeof (open_pd.volname));
+	open_data.tgt_block_size = (o->metadata_bs) ? o->metadata_bs : 512;
+	open_data.timeout = 120;
+	strncpy(open_data.volname, volname, sizeof (open_data.volname));
 
 	rc = write_to_socket(fd, &hdr, sizeof (hdr), 1);
 	if (rc != 0) {
 		td_verror(td, rc, "write");
 		return (-1);
 	}
-	rc = write_to_socket(fd, &open_pd, hdr.len, 0);
+	rc = write_to_socket(fd, &open_data, hdr.len, 0);
 	if (rc != 0) {
 		td_verror(td, rc, "write");
 		return (-1);

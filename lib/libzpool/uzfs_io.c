@@ -438,10 +438,6 @@ uzfs_update_metadata_granularity(zvol_state_t *zv, uint64_t tgt_block_size)
 
 	if (tgt_block_size == zv->zv_metavolblocksize)
 		return (0);	/* nothing to update */
-	if (tgt_block_size > zv->zv_volblocksize)
-		return (-1);
-	if (zv->zv_volblocksize % tgt_block_size != 0)
-		return (-1);
 
 	tx = dmu_tx_create(zv->zv_objset);
 	dmu_tx_hold_zap(tx, ZVOL_ZAP_OBJ, TRUE, NULL);

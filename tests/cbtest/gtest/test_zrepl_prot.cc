@@ -318,17 +318,17 @@ static void write_two_chunks_and_verify_resp(int data_fd, int &ioseq,
  * Updates io_seq of volume
  */
 static void write_data_and_verify_resp(int data_fd, int &ioseq, size_t offset,
-    uint64_t io_num) {
+    uint64_t io_num, int blocksize=4096) {
 	zvol_io_hdr_t hdr_in;
 	struct zvol_io_rw_hdr read_hdr;
 	int rc;
 	struct zvol_io_rw_hdr write_hdr;
-	char buf[4096];
-	int len = 4096;
-	/* write 1th data block */
-	init_buf(buf, sizeof (buf), "cStor-data");
+	char *buf;
 
-	write_data(data_fd, ioseq, buf, offset, len, io_num);
+	buf = (char *)malloc(blocksize);
+	init_buf(buf, blocksize, "cStor-data");
+	write_data(data_fd, ioseq, buf, offset, blocksize, io_num);
+	free(buf);
 
 	rc = read(data_fd, &hdr_in, sizeof (hdr_in));
 	ASSERT_ERRNO("read", rc >= 0);
@@ -337,7 +337,7 @@ static void write_data_and_verify_resp(int data_fd, int &ioseq, size_t offset,
 	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
 	EXPECT_EQ(hdr_in.io_seq, ioseq);
 	EXPECT_EQ(hdr_in.offset, offset);
-	ASSERT_EQ(hdr_in.len, sizeof (buf) + sizeof (write_hdr));
+	ASSERT_EQ(hdr_in.len, sizeof (write_hdr) + blocksize);
 }
 
 static void get_zvol_status(std::string zvol_name, int &ioseq, int control_fd,
@@ -1413,12 +1413,12 @@ TEST_F(ZreplBlockSizeTest, SetMetaBlockSize) {
 
 TEST_F(ZreplBlockSizeTest, SetMetaBlockSizeSmallerThanBlockSize) {
 	do_data_connection(m_data_fd, m_host, m_port, m_zvol_name, 512);
-	write_data_and_verify_resp(m_data_fd, m_ioseq, 0, 1);
+	write_data_and_verify_resp(m_data_fd, m_ioseq, 0, 1, 512);
 }
 
 TEST_F(ZreplBlockSizeTest, SetMetaBlockSizeBiggerThanBlockSize) {
-	do_data_connection(m_data_fd, m_host, m_port, m_zvol_name, 8192, 120,
-	    ZVOL_OP_STATUS_FAILED);
+	do_data_connection(m_data_fd, m_host, m_port, m_zvol_name, 8192);
+	write_data_and_verify_resp(m_data_fd, m_ioseq, 0, 1, 8192);
 }
 
 TEST_F(ZreplBlockSizeTest, SetMetaBlockSizeUnaligned) {

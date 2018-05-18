@@ -158,19 +158,21 @@ open_zvol(int fd, zvol_info_t **zinfopp)
 	*zinfopp = zinfo;
 
 	if (!zinfo->is_io_ack_sender_created) {
+		zinfo->conn_closed = B_FALSE;
+		zinfo->is_io_ack_sender_created = B_TRUE;
+		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 		thrd_arg = kmem_alloc(sizeof (thread_args_t), KM_SLEEP);
 		thrd_arg->fd = fd;
 		thrd_arg->zinfo = zinfo;
 		uzfs_zinfo_take_refcnt(zinfo, B_FALSE);
-		zinfo->conn_closed = B_FALSE;
-		zinfo->is_io_ack_sender_created = B_TRUE;
 		thrd_info = zk_thread_create(NULL, 0,
 		    (thread_func_t)uzfs_zvol_io_ack_sender,
 		    (void *)thrd_arg, 0, NULL, TS_RUN, 0,
 		    PTHREAD_CREATE_DETACHED);
 		VERIFY3P(thrd_info, !=, NULL);
+	} else {
+		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 	}
-	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 
 	hdr.status = ZVOL_OP_STATUS_OK;
 
@@ -181,10 +183,10 @@ open_reply:
 		ZREPL_ERRLOG("failed to send reply for open request\n");
 	if (hdr.status != ZVOL_OP_STATUS_OK) {
 		if (zinfo != NULL)
-			uzfs_zinfo_drop_refcnt(zinfo, B_TRUE);
+			uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
 		return (-1);
 	}
-	return (0);
+	return (rc);
 }
 
 /*
@@ -212,15 +214,13 @@ uzfs_zvol_io_receiver(void *arg)
 		rc = uzfs_zvol_socket_read(fd, (char *)&hdr,
 		    sizeof (hdr));
 		if (rc != 0) {
-			ZREPL_ERRLOG("error reading from socket: %d\n",
-			    errno);
+			ZREPL_ERRLOG("error reading from socket: %d\n", errno);
 			goto exit;
 		}
 		if (hdr.opcode != ZVOL_OPCODE_WRITE &&
 		    hdr.opcode != ZVOL_OPCODE_READ &&
 		    hdr.opcode != ZVOL_OPCODE_SYNC) {
-			ZREPL_ERRLOG("Unexpected opcode %d\n",
-			    hdr.opcode);
+			ZREPL_ERRLOG("Unexpected opcode %d\n", hdr.opcode);
 			goto exit;
 		}
 
@@ -260,14 +260,16 @@ exit:
 		if (zinfo->io_ack_waiting) {
 			rc = pthread_cond_signal(&zinfo->io_ack_cond);
 		}
-		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 		/*
 		 * wait for ack thread to exit to avoid races with new
 		 * connections for the same zinfo
 		 */
-		while (zinfo->is_io_ack_sender_created) {
+		while (zinfo->conn_closed && zinfo->is_io_ack_sender_created) {
+			(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 			usleep(1000);
+			(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
 		}
+		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 		uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
 	} else {
 		ZREPL_LOG("uzfs_zvol_io_receiver thread exiting\n");

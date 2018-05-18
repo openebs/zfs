@@ -96,8 +96,11 @@ struct zvol_io_hdr {
 	/* only used for read/write */
 	uint64_t	offset;
 	/*
-	 * Length of data in payload.
-	 * (for read/write that includes size of io headers with meta data).
+	 * Length of data in payload, with following exceptions:
+	 *  1) for read request: size of data to read (payload has zero length)
+	 *  2) for write reply: size of data written (payload has zero length)
+	 * Note that for write request it includes size of io headers with
+	 * meta data.
 	 */
 	uint64_t	len;
 	uint64_t	checkpointed_io_seq;

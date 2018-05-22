@@ -3450,7 +3450,7 @@ dmu_recv_end_sync(void *arg, dmu_tx_t *tx)
 		drc->drc_newsnapobj =
 		    dsl_dataset_phys(drc->drc_ds)->ds_prev_snap_obj;
 	}
-	zvol_create_minors(dp->dp_spa, drc->drc_tofs);
+	zvol_create_minors(dp->dp_spa, drc->drc_tofs, B_TRUE);
 	/*
 	 * Release the hold from dmu_recv_begin.  This must be done before
 	 * we return to open context, so that when we free the dataset's dnode,

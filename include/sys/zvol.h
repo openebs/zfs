@@ -36,7 +36,7 @@
 #define	SPEC_MAXOFFSET_T	((1LL << ((NBBY * sizeof (daddr32_t)) + \
 				DEV_BSHIFT - 1)) - 1)
 
-extern void zvol_create_minors(spa_t *spa, const char *name);
+extern void zvol_create_minors(spa_t *spa, const char *name, boolean_t async);
 extern void zvol_remove_minors(spa_t *spa, const char *name, boolean_t async);
 extern void zvol_rename_minors(spa_t *spa, const char *oldname,
     const char *newname, boolean_t async);

@@ -1699,7 +1699,7 @@ __spl_pf_fstrans_check(void)
 }
 
 void
-zvol_create_minors(spa_t *spa, const char *name)
+zvol_create_minors(spa_t *spa, const char *name, boolean_t async)
 {
 }
 

@@ -2709,7 +2709,7 @@ zvol_set_volmode(const char *ddname, zprop_source_t source, uint64_t volmode)
 }
 
 void
-zvol_create_minors(spa_t *spa, const char *name)
+zvol_create_minors(spa_t *spa, const char *name, boolean_t async)
 {
 	zvol_task_t *task;
 	taskqid_t id;
@@ -2719,7 +2719,7 @@ zvol_create_minors(spa_t *spa, const char *name)
 		return;
 
 	id = taskq_dispatch(spa->spa_zvol_taskq, zvol_task_cb, task, TQ_SLEEP);
-	if (id != TASKQID_INVALID)
+	if ((async == B_FALSE) && (id != TASKQID_INVALID))
 		taskq_wait_id(spa->spa_zvol_taskq, id);
 }
 

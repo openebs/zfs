@@ -63,33 +63,9 @@
  *     their state.
  */
 
-/* To print verbose debug messages uncomment the following line */
-#define	MGMT_CONN_DEBUG	1
-
-#ifdef MGMT_CONN_DEBUG
-static const char *
-gettimestamp(void)
-{
-	struct timeval tv;
-	static char buf[20];
-	struct tm *timeinfo;
-	unsigned int ms;
-
-	gettimeofday(&tv, NULL);
-	timeinfo = localtime(&tv.tv_sec);
-	ms = tv.tv_usec / 1000;
-
-	strftime(buf, sizeof (buf), "%H:%M:%S.", timeinfo);
-	snprintf(buf + 9, sizeof (buf) - 9, "%u", ms);
-
-	return (buf);
-}
-#define	DBGCONN(c, fmt, ...)	fprintf(stderr, "%s [tgt %s:%u]: " fmt "\n", \
-				gettimestamp(), \
+/* LOG_DEBUG wrapper which puts target address prefix to message */
+#define	DBGCONN(c, fmt, ...)	LOG_DEBUG("[tgt %s:%u]: " fmt, \
 				(c)->conn_host, (c)->conn_port, ##__VA_ARGS__)
-#else
-#define	DBGCONN(c, fmt, ...)
-#endif
 
 /* Max # of events from epoll processed at once */
 #define	MAX_EVENTS	10
@@ -241,7 +217,8 @@ connect_to_tgt(uzfs_mgmt_conn_t *conn)
 	/* EINPROGRESS means that EPOLLOUT will tell us when connect is done */
 	if (rc != 0 && errno != EINPROGRESS) {
 		close(sfd);
-		DBGCONN(conn, "Failed to connect");
+		LOG_ERRNO("Failed to connect to %s:%d", conn->conn_host,
+		    conn->conn_port);
 		return (-1);
 	}
 	return (sfd);
@@ -515,11 +492,11 @@ uzfs_zvol_mgmt_do_handshake(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	mgmt_ack_t 	mgmt_ack;
 	zvol_io_hdr_t	hdr;
 
-	printf("Volume %s sent for enq\n", name);
+	LOG_INFO("Handshake on zvol %s", name);
 
 	bzero(&mgmt_ack, sizeof (mgmt_ack));
 	if (uzfs_zvol_get_ip(mgmt_ack.ip) == -1) {
-		fprintf(stderr, "Unable to get IP with err: %d\n", errno);
+		LOG_ERRNO("Unable to get IP");
 		return (reply_nodata(conn, ZVOL_OP_STATUS_FAILED, hdrp->opcode,
 		    hdrp->io_seq));
 	}
@@ -535,8 +512,7 @@ uzfs_zvol_mgmt_do_handshake(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	 */
 	if (zv->zv_objset == NULL) {
 		if (uzfs_hold_dataset(zv) != 0) {
-			fprintf(stderr, "Failed to hold zvol during "
-			    "handshake\n");
+			LOG_ERR("Failed to hold zvol during handshake");
 			return (reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
 			    hdrp->opcode, hdrp->io_seq));
 		}
@@ -638,7 +614,8 @@ uzfs_zvol_execute_async_command(void *arg)
 	case ZVOL_OPCODE_SNAP_CREATE:
 		rc = dmu_objset_snapshot_one(zinfo->name, snapname);
 		if (rc != 0) {
-			fprintf(stderr, "Snapshot create failed: %d\n", rc);
+			LOG_ERR("Failed to create %s@%s: %d",
+			    zinfo->name, snapname, rc);
 			async_task->status = ZVOL_OP_STATUS_FAILED;
 		} else {
 			async_task->status = ZVOL_OP_STATUS_OK;
@@ -649,7 +626,8 @@ uzfs_zvol_execute_async_command(void *arg)
 		rc = dsl_destroy_snapshot(dataset, B_FALSE);
 		strfree(dataset);
 		if (rc != 0) {
-			fprintf(stderr, "Snapshot destroy failed: %d\n", rc);
+			LOG_ERR("Failed to destroy %s@%s: %d",
+			    zinfo->name, snapname, rc);
 			async_task->status = ZVOL_OP_STATUS_FAILED;
 		} else {
 			async_task->status = ZVOL_OP_STATUS_OK;
@@ -717,14 +695,14 @@ uzfs_zvol_rebuild_dw_replica_start(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 
 	for (; rebuild_op_cnt > 0; rebuild_op_cnt--, mack++) {
 		if (mack->volname[0] != '\0') {
-			printf("Replica %s at %s:%u helping in rebuild\n",
+			LOG_INFO("zvol %s at %s:%u helping in rebuild",
 			    mack->volname, mack->ip, mack->port);
 		}
 		if (zinfo == NULL) {
 			zinfo = uzfs_zinfo_lookup(mack->dw_volname);
 			if ((zinfo == NULL) || (zinfo->mgmt_conn != conn)) {
-				printf("Replica %s not found or not matching "
-				    "conn\n", mack->dw_volname);
+				LOG_ERR("zvol %s not found or not matching "
+				    "connection", mack->dw_volname);
 				return (reply_nodata(conn,
 				    ZVOL_OP_STATUS_FAILED,
 				    hdrp->opcode, hdrp->io_seq));
@@ -744,7 +722,7 @@ uzfs_zvol_rebuild_dw_replica_start(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 				uzfs_zvol_set_status(zinfo->zv,
 				    ZVOL_STATUS_HEALTHY);
 				uzfs_update_ionum_interval(zinfo, 0);
-				printf("Rebuild of replica %s completed\n",
+				LOG_INFO("Rebuild of zvol %s completed",
 				    zinfo->name);
 				uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
 				break;
@@ -754,8 +732,8 @@ uzfs_zvol_rebuild_dw_replica_start(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 		} else {
 			if (strncmp(zinfo->name, mack->dw_volname, MAXNAMELEN)
 			    != 0) {
-				printf("Replica %s not matching with zinfo"
-				    " %s\n", mack->dw_volname, zinfo->name);
+				LOG_ERR("zvol %s not matching with zinfo %s",
+				    mack->dw_volname, zinfo->name);
 				return (reply_nodata(conn,
 				    ZVOL_OP_STATUS_FAILED,
 				    hdrp->opcode, hdrp->io_seq));
@@ -766,8 +744,8 @@ uzfs_zvol_rebuild_dw_replica_start(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 		io_sfd = create_and_bind("", B_FALSE, B_FALSE);
 		if (io_sfd < 0) {
 			/* Fail this rebuild process entirely */
-			fprintf(stderr, "Rebuild IO socket create and bind"
-			    " failed on volume: %s\n", zinfo->name);
+			LOG_ERR("Rebuild IO socket create and bind"
+			    " failed on zvol: %s", zinfo->name);
 			uzfs_zvol_set_rebuild_status(zinfo->zv,
 			    ZVOL_REBUILDING_FAILED);
 			uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
@@ -823,7 +801,7 @@ process_message(uzfs_mgmt_conn_t *conn)
 
 		if (((zinfo = uzfs_zinfo_lookup(zvol_name)) == NULL) ||
 		    (zinfo->mgmt_conn != conn)) {
-			fprintf(stderr, "Unknown zvol: %s\n", zvol_name);
+			LOG_ERR("Unknown zvol: %s", zvol_name);
 			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
 			    hdrp->opcode, hdrp->io_seq);
 			break;
@@ -861,7 +839,7 @@ process_message(uzfs_mgmt_conn_t *conn)
 		zvol_name[payload_size] = '\0';
 		snap = strchr(zvol_name, '@');
 		if (snap == NULL) {
-			fprintf(stderr, "Invalid snapshot name: %s\n",
+			LOG_ERR("Invalid snapshot name: %s",
 			    zvol_name);
 			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
 			    hdrp->opcode, hdrp->io_seq);
@@ -871,7 +849,7 @@ process_message(uzfs_mgmt_conn_t *conn)
 		/* ref will be released when async command has finished */
 		if (((zinfo = uzfs_zinfo_lookup(zvol_name)) == NULL) ||
 		    (zinfo->mgmt_conn != conn)) {
-			fprintf(stderr, "Unknown zvol: %s\n", zvol_name);
+			LOG_ERR("Unknown zvol: %s", zvol_name);
 			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
 			    hdrp->opcode, hdrp->io_seq);
 			break;
@@ -946,7 +924,7 @@ move_to_next_state(uzfs_mgmt_conn_t *conn)
 		kmem_free(conn->conn_buf, sizeof (uint16_t));
 		conn->conn_buf = NULL;
 		if (vers != REPLICA_VERSION) {
-			fprintf(stderr, "invalid replica protocol version %d\n",
+			LOG_ERR("Invalid replica protocol version %d",
 			    vers);
 			rc = reply_nodata(conn, ZVOL_OP_STATUS_VERSION_MISMATCH,
 			    0, 0);
@@ -1068,10 +1046,10 @@ uzfs_zvol_mgmt_thread(void *arg)
 
 			if (events[i].events & EPOLLERR) {
 				if (conn->conn_state == CS_CONNECT) {
-					DBGCONN(conn, "Failed to connect");
+					LOG_ERR("Failed to connect to %s:%d",
+					    conn->conn_host, conn->conn_port);
 				} else {
-					fprintf(stderr, "Error on connection "
-					    "to %s:%d\n",
+					LOG_ERR("Error on connection to %s:%d",
 					    conn->conn_host, conn->conn_port);
 				}
 				if (close_conn(conn) != 0)
@@ -1157,6 +1135,6 @@ exit:
 	mutex_exit(&async_tasks_mtx);
 	mutex_destroy(&async_tasks_mtx);
 
-	fprintf(stderr, "uzfs_zvol_mgmt_thread thread exiting\n");
+	LOG_DEBUG("uzfs_zvol_mgmt thread exiting");
 	zk_thread_exit();
 }

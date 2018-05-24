@@ -1,6 +1,5 @@
 #include <arpa/inet.h>
 #include <netdb.h>
-#include <syslog.h>
 #include <sys/zil.h>
 #include <sys/zfs_rlock.h>
 #include <sys/uzfs_zvol.h>
@@ -26,6 +25,54 @@ struct zvol_list stale_zv_list;
 	    (var) = (tvar))
 
 static int uzfs_zinfo_free(zvol_info_t *zinfo);
+
+enum zrepl_log_level zrepl_log_level;
+
+/*
+ * Log message to stdout/stderr if log level allows it.
+ */
+void
+zrepl_log(enum zrepl_log_level lvl, const char *fmt, ...)
+{
+	va_list args;
+	struct timeval tv;
+	struct tm *timeinfo;
+	unsigned int ms;
+	char line[512];
+	FILE *outf;
+
+	if (lvl < zrepl_log_level)
+		return;
+
+	/* Create timestamp prefix */
+	gettimeofday(&tv, NULL);
+	timeinfo = localtime(&tv.tv_sec);
+	ms = tv.tv_usec / 1000;
+	strftime(line, sizeof (line), "%H:%M:%S.", timeinfo);
+	snprintf(line + 9, sizeof (line) - 9, "%03u", ms);
+
+	switch (lvl) {
+	case LOG_LEVEL_DEBUG:
+		outf = stdout;
+		strncpy(line + 12, " DEBUG ", sizeof (line) - 12);
+		break;
+	case LOG_LEVEL_INFO:
+		outf = stdout;
+		strncpy(line + 12, " INFO  ", sizeof (line) - 12);
+		break;
+	case LOG_LEVEL_ERR:
+		outf = stderr;
+		strncpy(line + 12, " ERROR ", sizeof (line) - 12);
+		break;
+	default:
+		ASSERT(0);
+	}
+
+	va_start(args, fmt);
+	vsprintf(line + 19, fmt, args);
+	va_end(args);
+	fprintf(outf, "%s\n", line);
+}
 
 int
 create_and_bind(const char *port, int bind_needed, boolean_t nonblock)
@@ -59,8 +106,6 @@ create_and_bind(const char *port, int bind_needed, boolean_t nonblock)
 		}
 		s = bind(sfd, rp->ai_addr, rp->ai_addrlen);
 		if (s == 0) {
-			/* We managed to bind successfully! */
-			printf("bind is successful\n");
 			break;
 		}
 
@@ -68,7 +113,6 @@ create_and_bind(const char *port, int bind_needed, boolean_t nonblock)
 	}
 
 	if (rp == NULL) {
-		printf("bind failed with err\n");
 		return (-1);
 	}
 
@@ -115,7 +159,7 @@ uzfs_zinfo_take_refcnt(zvol_info_t *zinfo, int locked)
 static void
 uzfs_insert_zinfo_list(zvol_info_t *zinfo)
 {
-
+	LOG_INFO("Instantiating zvol %s", zinfo->name);
 	/* Base refcount is taken here */
 	(void) mutex_enter(&zvol_list_mutex);
 	uzfs_zinfo_take_refcnt(zinfo, B_TRUE);
@@ -126,7 +170,7 @@ uzfs_insert_zinfo_list(zvol_info_t *zinfo)
 static void
 uzfs_remove_zinfo_list(zvol_info_t *zinfo)
 {
-
+	LOG_INFO("Removing zvol %s", zinfo->name);
 	SLIST_REMOVE(&zvol_list, zinfo, zvol_info_s, zinfo_next);
 	(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
 	zinfo->state = ZVOL_INFO_STATE_OFFLINE;
@@ -196,7 +240,6 @@ uzfs_zinfo_destroy_mutex(zvol_info_t *zinfo)
 int
 uzfs_zinfo_destroy(const char *name, spa_t *spa)
 {
-
 	zvol_info_t	*zinfo = NULL;
 	zvol_info_t    *zt = NULL;
 	int namelen = ((name) ? strlen(name) : 0);
@@ -215,13 +258,11 @@ uzfs_zinfo_destroy(const char *name, spa_t *spa)
 			}
 		}
 	} else {
-
 		SLIST_FOREACH_SAFE(zinfo, &zvol_list, zinfo_next, zt) {
 			if (name == NULL || (strcmp(zinfo->name, name) == 0) ||
 			    ((strncmp(zinfo->name, name, namelen) == 0) &&
 			    zinfo->name[namelen] == '/' &&
 			    zinfo->name[namelen + 1] == '\0')) {
-				printf("destroying %s\n", zinfo->name);
 				zv = zinfo->zv;
 				uzfs_remove_zinfo_list(zinfo);
 				uzfs_close_dataset(zv);
@@ -229,10 +270,7 @@ uzfs_zinfo_destroy(const char *name, spa_t *spa)
 			}
 		}
 	}
-
-	(void) mutex_exit(&zvol_list_mutex);
-
-	printf("uzfs_zinfo_destroy path\n");
+	mutex_exit(&zvol_list_mutex);
 	return (0);
 }
 
@@ -263,7 +301,6 @@ uzfs_zinfo_init(void *zv, const char *ds_name, nvlist_t *create_props)
 	if (zinfo_create_hook)
 		(*zinfo_create_hook)(zinfo, create_props);
 
-	printf("uzfs_zinfo_init in success path\n");
 	return (0);
 }
 
@@ -276,7 +313,6 @@ uzfs_zinfo_free(zvol_info_t *zinfo)
 	taskq_destroy(zinfo->uzfs_zvol_taskq);
 	(void) uzfs_zinfo_destroy_mutex(zinfo);
 	ASSERT(STAILQ_EMPTY(&zinfo->complete_queue));
-	printf("Freeing volume =%s\n", zinfo->name);
 
 	free(zinfo);
 	return (0);

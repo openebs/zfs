@@ -45,22 +45,19 @@ uzfs_zvol_read_header(int fd, zvol_io_hdr_t *hdr)
 
 	rc = uzfs_zvol_socket_read(fd, (char *)hdr,
 	    sizeof (hdr->version));
-	if (rc != 0) {
-		ZREPL_ERRLOG("error reading from socket: %d\n", errno);
+	if (rc != 0)
 		return (-1);
-	}
+
 	if (hdr->version != REPLICA_VERSION) {
-		ZREPL_ERRLOG("invalid replica protocol version %d\n",
+		LOG_ERR("invalid replica protocol version %d",
 		    hdr->version);
 		return (1);
 	}
 	rc = uzfs_zvol_socket_read(fd,
 	    ((char *)hdr) + sizeof (hdr->version),
 	    sizeof (*hdr) - sizeof (hdr->version));
-	if (rc != 0) {
-		ZREPL_ERRLOG("error reading from socket: %d\n", errno);
+	if (rc != 0)
 		return (-1);
-	}
 
 	return (0);
 }
@@ -89,27 +86,27 @@ open_zvol(int fd, zvol_info_t **zinfopp)
 	 * reading header
 	 */
 	if (uzfs_zvol_read_header(fd, &hdr) != 0) {
-		ZREPL_ERRLOG("error reading open header\n");
+		LOG_ERR("error reading open header");
 		return (-1);
 	}
 	if (hdr.opcode != ZVOL_OPCODE_OPEN) {
-		ZREPL_ERRLOG("Zvol must be opened first\n");
+		LOG_ERR("zvol must be opened first");
 		return (-1);
 	}
 	if (hdr.len != sizeof (open_data)) {
-		ZREPL_ERRLOG("Invalid payload length for open\n");
+		LOG_ERR("Invalid payload length for open");
 		return (-1);
 	}
 	rc = uzfs_zvol_socket_read(fd, (char *)&open_data, sizeof (open_data));
 	if (rc != 0) {
-		ZREPL_ERRLOG("Payload read failed: %d\n", errno);
+		LOG_ERR("Payload read failed");
 		return (-1);
 	}
 
 	open_data.volname[MAX_NAME_LEN - 1] = '\0';
 	zinfo = uzfs_zinfo_lookup(open_data.volname);
 	if (zinfo == NULL) {
-		ZREPL_ERRLOG("zvol %s not found", open_data.volname);
+		LOG_ERR("zvol %s not found", open_data.volname);
 		hdr.status = ZVOL_OP_STATUS_FAILED;
 		goto open_reply;
 	}
@@ -117,14 +114,14 @@ open_zvol(int fd, zvol_info_t **zinfopp)
 	ASSERT3P(zv, !=, NULL);
 	if (zv->zv_metavolblocksize != 0 &&
 	    zv->zv_metavolblocksize != open_data.tgt_block_size) {
-		ZREPL_ERRLOG("Conflicting block size");
+		LOG_ERR("Conflicting block size");
 		hdr.status = ZVOL_OP_STATUS_FAILED;
 		goto open_reply;
 	}
 	// validate block size (only one bit is set in the number)
 	if (open_data.tgt_block_size == 0 ||
 	    (open_data.tgt_block_size & (open_data.tgt_block_size - 1)) != 0) {
-		ZREPL_ERRLOG("Invalid block size");
+		LOG_ERR("Invalid block size");
 		hdr.status = ZVOL_OP_STATUS_FAILED;
 		goto open_reply;
 	}
@@ -137,14 +134,14 @@ open_zvol(int fd, zvol_info_t **zinfopp)
 	 */
 	if (zv->zv_objset == NULL && uzfs_hold_dataset(zv) != 0) {
 		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
-		ZREPL_ERRLOG("Failed to hold zvol during open\n");
+		LOG_ERR("Failed to hold zvol during open");
 		hdr.status = ZVOL_OP_STATUS_FAILED;
 		goto open_reply;
 	}
 	if (uzfs_update_metadata_granularity(zv,
 	    open_data.tgt_block_size) != 0) {
 		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
-		ZREPL_ERRLOG("Failed to set granularity of metadata\n");
+		LOG_ERR("Failed to set granularity of metadata");
 		hdr.status = ZVOL_OP_STATUS_FAILED;
 		goto open_reply;
 	}
@@ -180,7 +177,7 @@ open_reply:
 	hdr.len = 0;
 	rc = uzfs_zvol_socket_write(fd, (char *)&hdr, sizeof (hdr));
 	if (rc == -1)
-		ZREPL_ERRLOG("failed to send reply for open request\n");
+		LOG_ERR("Failed to send reply for open request");
 	if (hdr.status != ZVOL_OP_STATUS_OK) {
 		if (zinfo != NULL)
 			uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
@@ -213,14 +210,13 @@ uzfs_zvol_io_receiver(void *arg)
 	while (1) {
 		rc = uzfs_zvol_socket_read(fd, (char *)&hdr,
 		    sizeof (hdr));
-		if (rc != 0) {
-			ZREPL_ERRLOG("error reading from socket: %d\n", errno);
+		if (rc != 0)
 			goto exit;
-		}
+
 		if (hdr.opcode != ZVOL_OPCODE_WRITE &&
 		    hdr.opcode != ZVOL_OPCODE_READ &&
 		    hdr.opcode != ZVOL_OPCODE_SYNC) {
-			ZREPL_ERRLOG("Unexpected opcode %d\n", hdr.opcode);
+			LOG_ERR("Unexpected opcode %d", hdr.opcode);
 			goto exit;
 		}
 
@@ -230,12 +226,10 @@ uzfs_zvol_io_receiver(void *arg)
 			rc = uzfs_zvol_socket_read(fd, zio_cmd->buf, hdr.len);
 			if (rc != 0) {
 				zio_cmd_free(&zio_cmd);
-				ZREPL_ERRLOG("Socket read failed with "
-				    "error: %d\n", errno);
 				goto exit;
 			}
 		} else if (hdr.opcode != ZVOL_OPCODE_READ && hdr.len > 0) {
-			ZREPL_ERRLOG("Unexpected payload for opcode %d\n",
+			LOG_ERR("Unexpected payload for opcode %d",
 			    hdr.opcode);
 			zio_cmd_free(&zio_cmd);
 			goto exit;
@@ -249,7 +243,7 @@ uzfs_zvol_io_receiver(void *arg)
 	}
 exit:
 	if (zinfo != NULL) {
-		ZREPL_LOG("uzfs_zvol_io_receiver thread exiting, volume: %s\n",
+		LOG_DEBUG("uzfs_zvol_io_receiver thread for zvol %s exiting",
 		    zinfo->name);
 		(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
 		zinfo->conn_closed = B_TRUE;
@@ -272,7 +266,7 @@ exit:
 		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 		uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
 	} else {
-		ZREPL_LOG("uzfs_zvol_io_receiver thread exiting\n");
+		LOG_DEBUG("uzfs_zvol_io_receiver thread exiting");
 	}
 	zk_thread_exit();
 }
@@ -296,7 +290,7 @@ uzfs_zvol_rebuild_scanner_callback(off_t offset, size_t len,
 	hdr.len = len;
 	hdr.flags = ZVOL_OP_FLAG_REBUILD;
 	hdr.status = ZVOL_OP_STATUS_OK;
-	printf("IO number for rebuild %ld\n", metadata->io_num);
+	LOG_INFO("IO number for rebuild %ld", metadata->io_num);
 	zio_cmd = zio_cmd_alloc(&hdr, warg->fd);
 	/* Take refcount for uzfs_zvol_worker to work on it */
 	uzfs_zinfo_take_refcnt(zinfo, B_FALSE);
@@ -330,7 +324,7 @@ read_socket:
 		goto exit;
 	}
 
-	printf("op_code=%d io_seq=%ld\n", hdr.opcode, hdr.io_seq);
+	LOG_DEBUG("op_code=%d io_seq=%ld", hdr.opcode, hdr.io_seq);
 
 	/* Handshake yet to happen */
 	if ((hdr.opcode != ZVOL_OPCODE_HANDSHAKE) && (zinfo == NULL)) {
@@ -343,28 +337,26 @@ read_socket:
 			rc = uzfs_zvol_socket_read(fd, name, hdr.len);
 			if (rc != 0) {
 				kmem_free(name, hdr.len);
-				ZREPL_ERRLOG("Socket read error: %d\n", errno);
 				goto exit;
 			}
 
 			/* Handshake already happened */
 			if (zinfo != NULL) {
-				ZREPL_ERRLOG("Again handshake request on "
-				    "<fd:%d - volume:%s> for volume:%s \n",
-				    fd, zinfo->name, name);
+				LOG_ERR("Second handshake on %s connection for "
+				    "zvol %s",
+				    zinfo->name, name);
 				kmem_free(name, hdr.len);
 				goto exit;
 			}
 
 			zinfo = uzfs_zinfo_lookup(name);
 			if (zinfo == NULL) {
-				ZREPL_ERRLOG("Volume/LUN: %s not found", name);
+				LOG_ERR("zvol %s not found", name);
 				kmem_free(name, hdr.len);
 				goto exit;
 			}
 
-			ZREPL_ERRLOG("Rebuild scanner started on volume:%s\n",
-			    name);
+			LOG_INFO("Rebuild scanner started on zvol %s", name);
 			kmem_free(name, hdr.len);
 			warg.zinfo = zinfo;
 			warg.fd = fd;
@@ -377,8 +369,8 @@ read_socket:
 			rebuild_req_offset = hdr.offset;
 			rebuild_req_len = hdr.len;
 
-			ZREPL_LOG("Checkpointed IO_seq: %ld, "
-			    "Rebuild Req offset:%ld, Rebuild Req length:%ld\n",
+			LOG_INFO("Checkpointed IO_seq: %ld, "
+			    "Rebuild Req offset: %ld, Rebuild Req length: %ld",
 			    metadata.io_num, rebuild_req_offset,
 			    rebuild_req_len);
 
@@ -386,8 +378,8 @@ read_socket:
 			    uzfs_zvol_rebuild_scanner_callback,
 			    rebuild_req_offset, rebuild_req_len, &warg);
 			if (rc != 0) {
-				ZREPL_ERRLOG("Rebuild scanning failed on "
-				    "Volume:%s\n", zinfo->name);
+				LOG_ERR("Rebuild scanning failed on zvol %s",
+				    zinfo->name);
 			}
 			bzero(&hdr, sizeof (hdr));
 			hdr.status = ZVOL_OP_STATUS_OK;
@@ -402,24 +394,24 @@ read_socket:
 			break;
 
 		case ZVOL_OPCODE_REBUILD_COMPLETE:
-			ZREPL_LOG("Rebuild process is over on Replica:%s\n",
+			LOG_INFO("Rebuild process is over on zvol %s",
 			    zinfo->name);
 			goto exit;
 			break;
 
 		default:
-			ZREPL_LOG("Wrong opcode:%d\n", hdr.opcode);
+			LOG_ERR("Wrong opcode: %d", hdr.opcode);
 			goto exit;
 			break;
 	}
 
 exit:
 	if (zinfo != NULL) {
-		ZREPL_LOG("uzfs_zvol_rebuild_scanner thread exiting,"
-		    " volume:%s\n", zinfo->name);
+		LOG_DEBUG("uzfs_zvol_rebuild_scanner thread for zvol %s "
+		    "exiting", zinfo->name);
 		uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
 	} else {
-		printf("uzfs_zvol_rebuild_scanner thread exiting\n");
+		LOG_DEBUG("uzfs_zvol_rebuild_scanner thread exiting");
 	}
 
 	if (fd != -1)
@@ -460,8 +452,7 @@ uzfs_zvol_io_conn_acceptor(void)
 
 	rc = listen(io_sfd, SOMAXCONN);
 	if (rc == -1) {
-		ZREPL_ERRLOG("listen() on IO_SFD failed with errno:%d\n",
-		    errno);
+		LOG_ERRNO("listen on IO FD in acceptor failed");
 		goto exit;
 	}
 
@@ -472,14 +463,13 @@ uzfs_zvol_io_conn_acceptor(void)
 
 	rc = listen(rebuild_fd, SOMAXCONN);
 	if (rc == -1) {
-		ZREPL_ERRLOG("listen() on REBUILD_FD failed with errno:%d\n",
-		    errno);
+		LOG_ERRNO("listen on rebuild FD in acceptor failed");
 		goto exit;
 	}
 
 	efd = epoll_create1(0);
 	if (efd == -1) {
-		ZREPL_ERRLOG("epoll_create() failed with errno:%d\n", errno);
+		LOG_ERRNO("epoll_create1 failed");
 		goto exit;
 	}
 
@@ -487,8 +477,7 @@ uzfs_zvol_io_conn_acceptor(void)
 	event.events = flags;
 	rc = epoll_ctl(efd, EPOLL_CTL_ADD, io_sfd, &event);
 	if (rc == -1) {
-		ZREPL_ERRLOG("epoll_ctl() for IO_SFD failed with errno:%d\n",
-		    errno);
+		LOG_ERRNO("epoll_ctl on IO FD failed");
 		goto exit;
 	}
 
@@ -496,8 +485,7 @@ uzfs_zvol_io_conn_acceptor(void)
 	event.events = flags;
 	rc = epoll_ctl(efd, EPOLL_CTL_ADD, rebuild_fd, &event);
 	if (rc == -1) {
-		ZREPL_ERRLOG("epoll_ctl() for REBUILD_FD failed with "
-		    "errno:%d\n", errno);
+		LOG_ERRNO("epoll_ctl on rebuild FD failed");
 		goto exit;
 	}
 
@@ -527,7 +515,7 @@ uzfs_zvol_io_conn_acceptor(void)
 			 * (why were we notified then?)
 			 */
 			if (!(events[i].events & EPOLLIN)) {
-				ZREPL_ERRLOG("epoll err() :%d\n", errno);
+				LOG_ERRNO("epoll failed");
 				if (events[i].data.fd == io_sfd) {
 					io_sfd = -1;
 				} else {
@@ -548,7 +536,7 @@ uzfs_zvol_io_conn_acceptor(void)
 			in_len = sizeof (in_addr);
 			new_fd = accept(events[i].data.fd, &in_addr, &in_len);
 			if (new_fd == -1) {
-				ZREPL_ERRLOG("accept err() :%d\n", errno);
+				LOG_ERRNO("accept failed");
 				goto exit;
 			}
 #ifdef DEBUG
@@ -558,8 +546,8 @@ uzfs_zvol_io_conn_acceptor(void)
 			    sbuf, sizeof (sbuf), NI_NUMERICHOST |
 			    NI_NUMERICSERV);
 			if (rc == 0) {
-				ZREPL_LOG("Accepted connection on fd %ld "
-				"(host=%s, port=%s)\n", new_fd, hbuf, sbuf);
+				LOG_DEBUG("Accepted connection from %s:%s",
+				    hbuf, sbuf);
 			}
 
 			kmem_free(hbuf, sizeof (NI_MAXHOST));
@@ -571,7 +559,7 @@ uzfs_zvol_io_conn_acceptor(void)
 				    (void *)new_fd, 0, NULL, TS_RUN, 0,
 				    PTHREAD_CREATE_DETACHED);
 			} else {
-				ZREPL_ERRLOG("Connection req for rebuild\n");
+				LOG_INFO("Connection req for rebuild");
 				thrd_info = zk_thread_create(NULL, 0,
 				    uzfs_zvol_rebuild_scanner,
 				    (void *)new_fd, 0, NULL, TS_RUN, 0,
@@ -593,7 +581,7 @@ exit:
 	if (efd != -1)
 		close(efd);
 
-	ZREPL_ERRLOG("uzfs_zvol_io_conn_acceptor thread exiting\n");
+	LOG_DEBUG("uzfs_zvol_io_conn_acceptor thread exiting");
 	zk_thread_exit();
 }
 
@@ -695,7 +683,7 @@ uzfs_zvol_io_ack_sender(void *arg)
 		STAILQ_REMOVE_HEAD(&zinfo->complete_queue, cmd_link);
 		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 
-		ZREPL_LOG("ACK for op:%d with seq-id %ld\n",
+		LOG_DEBUG("ACK for op: %d, seq-id: %ld",
 		    zio_cmd->hdr.opcode, zio_cmd->hdr.io_seq);
 
 		/* account for space taken by metadata headers */
@@ -717,7 +705,7 @@ uzfs_zvol_io_ack_sender(void *arg)
 		rc = uzfs_zvol_socket_write(zio_cmd->conn,
 		    (char *)&zio_cmd->hdr, sizeof (zio_cmd->hdr));
 		if (rc == -1) {
-			ZREPL_ERRLOG("socket write err :%d\n", errno);
+			LOG_ERRNO("socket write err");
 			if (zio_cmd->conn == fd) {
 				zio_cmd_free(&zio_cmd);
 				(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
@@ -732,8 +720,7 @@ uzfs_zvol_io_ack_sender(void *arg)
 				/* Send data read from disk */
 				rc = uzfs_send_reads(zio_cmd->conn, zio_cmd);
 				if (rc == -1) {
-					ZREPL_ERRLOG("socket write err :%d\n",
-					    errno);
+					LOG_ERRNO("socket write err");
 					if (zio_cmd->conn == fd) {
 						(void) pthread_mutex_lock(
 						    &zinfo->zinfo_mutex);
@@ -748,7 +735,7 @@ uzfs_zvol_io_ack_sender(void *arg)
 		zio_cmd_free(&zio_cmd);
 	}
 exit:
-	ZREPL_LOG("uzfs_zvol_io_ack_sender thread exiting, volume:%s\n",
+	LOG_DEBUG("uzfs_zvol_io_ack_sender thread for zvol %s exiting",
 	    zinfo->name);
 
 	close(fd);
@@ -762,18 +749,6 @@ exit:
 	uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
 
 	zk_thread_exit();
-}
-
-static void
-uzfs_zrepl_open_log(void)
-{
-	openlog("zrepl", LOG_PID, LOG_LOCAL7);
-}
-
-static void
-uzfs_zrepl_close_log(void)
-{
-	closelog();
 }
 
 void
@@ -801,30 +776,44 @@ zrepl_svc_run(void)
 int
 main(int argc, char **argv)
 {
-
 	int	rc;
 
+	/* Use opt parsing lib if we have more options */
+	zrepl_log_level = LOG_LEVEL_INFO;
+	if (argc == 3 && strcmp(argv[1], "-l") == 0) {
+		if (strcmp(argv[2], "debug") == 0)
+			zrepl_log_level = LOG_LEVEL_DEBUG;
+		else if (strcmp(argv[2], "info") == 0)
+			zrepl_log_level = LOG_LEVEL_INFO;
+		else if (strcmp(argv[2], "error") == 0)
+			zrepl_log_level = LOG_LEVEL_ERR;
+		else {
+			fprintf(stderr, "Log level should be one of "
+			    "\"debug\", \"info\" or \"error\"\n");
+			return (-1);
+		}
+	}
+
 	if (getenv("CONFIG_LOAD_DISABLE") != NULL) {
-		printf("disabled auto import (reading of zpool.cache)\n");
+		LOG_INFO("disabled auto import (reading of zpool.cache)");
 		zfs_autoimport_disable = 1;
 	} else {
-		printf("auto importing pools by reading zpool.cache files\n");
+		LOG_INFO("auto importing pools by reading zpool.cache files");
 		zfs_autoimport_disable = 0;
 	}
 
 	zinfo_create_hook = &zinfo_create_cb;
 	zinfo_destroy_hook = &zinfo_destroy_cb;
 	rc = uzfs_init();
-	uzfs_zrepl_open_log();
 	if (rc != 0) {
-		ZREPL_ERRLOG("initialization errored.. %d\n", rc);
+		LOG_ERR("initialization errored: %d", rc);
 		return (-1);
 	}
 
 	/* Ignore SIGPIPE signal */
 	signal(SIGPIPE, SIG_IGN);
 	if (libuzfs_ioctl_init() < 0) {
-		ZREPL_ERRLOG("Failed to initialize libuzfs ioctl\n");
+		LOG_ERR("Failed to initialize libuzfs ioctl");
 		goto initialize_error;
 	}
 
@@ -834,7 +823,6 @@ main(int argc, char **argv)
 	}
 
 initialize_error:
-	uzfs_zrepl_close_log();
 	uzfs_fini();
 	return (-1);
 }

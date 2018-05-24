@@ -2579,10 +2579,10 @@ zfs_prop_set_special(const char *dsname, zprop_source_t source,
 	case ZFS_PROP_REFRESERVATION:
 		err = dsl_dataset_set_refreservation(dsname, source, intval);
 		break;
-#ifdef _KERNEL
 	case ZFS_PROP_VOLSIZE:
 		err = zvol_set_volsize(dsname, intval);
 		break;
+#ifdef _KERNEL
 	case ZFS_PROP_SNAPDEV:
 		err = zvol_set_snapdev(dsname, source, intval);
 		break;

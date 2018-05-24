@@ -95,6 +95,7 @@
 #include <libuzfs.h>
 #include <uzfs_mgmt.h>
 #include <sys/uzfs_zvol.h>
+#include <zrepl_mgmt.h>
 #endif
 
 unsigned int zvol_inhibit_dev = 0;
@@ -354,10 +355,10 @@ zvol_get_stats(objset_t *os, nvlist_t *nv)
 	return (SET_ERROR(error));
 }
 
-#if defined(_KERNEL)
-static void
+void
 zvol_size_changed(zvol_state_t *zv, uint64_t volsize)
 {
+#if defined(_KERNEL)
 	struct block_device *bdev;
 
 	ASSERT(MUTEX_HELD(&zv->zv_state_lock));
@@ -367,12 +368,12 @@ zvol_size_changed(zvol_state_t *zv, uint64_t volsize)
 		return;
 
 	set_capacity(zv->zv_disk, volsize >> 9);
-	zv->zv_volsize = volsize;
 	check_disk_size_change(zv->zv_disk, bdev);
 
 	bdput(bdev);
-}
 #endif
+	zv->zv_volsize = volsize;
+}
 
 /*
  * Sanity check volume size.
@@ -393,11 +394,10 @@ zvol_check_volsize(uint64_t volsize, uint64_t blocksize)
 	return (0);
 }
 
-#if defined(_KERNEL)
 /*
  * Ensure the zap is flushed then inform the VFS of the capacity change.
  */
-static int
+int
 zvol_update_volsize(uint64_t volsize, objset_t *os)
 {
 	dmu_tx_t *tx;
@@ -461,18 +461,27 @@ zvol_set_volsize(const char *name, uint64_t volsize)
 	if (readonly)
 		return (SET_ERROR(EROFS));
 
+#if !defined(_KERNEL)
+	zvol_info_t *zinfo = uzfs_zinfo_lookup(name);
+	if (zinfo == NULL)
+		return (SET_ERROR(ENOENT));
+	zv = zinfo->zv;
+#else
 	zv = zvol_find_by_name(name, RW_READER);
-
 	ASSERT(zv == NULL || (MUTEX_HELD(&zv->zv_state_lock) &&
 	    RW_READ_HELD(&zv->zv_suspend_lock)));
-
+#endif
 	if (zv == NULL || zv->zv_objset == NULL) {
+#if defined(_KERNEL)
 		if (zv != NULL)
 			rw_exit(&zv->zv_suspend_lock);
+#endif
 		if ((error = dmu_objset_own(name, DMU_OST_ZVOL, B_FALSE,
 		    FTAG, &os)) != 0) {
+#if defined(_KERNEL)
 			if (zv != NULL)
 				mutex_exit(&zv->zv_state_lock);
+#endif
 			return (SET_ERROR(error));
 		}
 		owned = B_TRUE;
@@ -500,15 +509,19 @@ out:
 		if (zv != NULL)
 			zv->zv_objset = NULL;
 	} else {
+#if defined(_KERNEL)
 		rw_exit(&zv->zv_suspend_lock);
+#endif
 	}
 
+#if !defined(_KERNEL)
+	uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
+#else
 	if (zv != NULL)
 		mutex_exit(&zv->zv_state_lock);
-
+#endif
 	return (SET_ERROR(error));
 }
-#endif
 
 /*
  * Sanity check volume block size.

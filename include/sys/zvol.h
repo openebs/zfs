@@ -45,11 +45,13 @@ extern int zvol_check_volsize(uint64_t volsize, uint64_t blocksize);
 extern int zvol_check_volblocksize(const char *name, uint64_t volblocksize);
 extern int zvol_get_stats(objset_t *os, nvlist_t *nv);
 
-#ifdef _KERNEL
 typedef struct zvol_state zvol_state_t;
-
-extern boolean_t zvol_is_zvol(const char *);
+extern int zvol_update_volsize(uint64_t volsize, objset_t *os);
+extern void zvol_size_changed(zvol_state_t *zv, uint64_t volsize);
 extern int zvol_set_volsize(const char *, uint64_t);
+
+#ifdef _KERNEL
+extern boolean_t zvol_is_zvol(const char *);
 extern int zvol_set_volblocksize(const char *, uint64_t);
 extern int zvol_set_snapdev(const char *, zprop_source_t, uint64_t);
 extern int zvol_set_volmode(const char *, zprop_source_t, uint64_t);

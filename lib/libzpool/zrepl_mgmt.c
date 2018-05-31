@@ -41,7 +41,7 @@ zrepl_log(enum zrepl_log_level lvl, const char *fmt, ...)
 	char line[512];
 	FILE *outf;
 
-	if (lvl < zrepl_log_level)
+	if (likely(lvl < zrepl_log_level))
 		return;
 
 	/* Create timestamp prefix */
@@ -69,7 +69,7 @@ zrepl_log(enum zrepl_log_level lvl, const char *fmt, ...)
 	}
 
 	va_start(args, fmt);
-	vsprintf(line + 19, fmt, args);
+	vsnprintf(line + 19, sizeof (line) - 19, fmt, args);
 	va_end(args);
 	fprintf(outf, "%s\n", line);
 }

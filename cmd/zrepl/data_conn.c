@@ -120,7 +120,11 @@ uzfs_zvol_socket_write(int fd, char *buf, uint64_t nbytes)
 	while (nbytes) {
 		count = write(fd, (void *)p, nbytes);
 		if (count <= 0) {
-			LOG_ERRNO("Write error");
+			if (count == 0) {
+				LOG_INFO("Connection closed");
+			} else {
+				LOG_ERRNO("Socket write error");
+			}
 			return (-1);
 		}
 		p += count;

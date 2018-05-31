@@ -57,7 +57,7 @@ void zrepl_log(enum zrepl_log_level lvl, const char *fmt, ...);
 #define	LOG_INFO(fmt, ...)	zrepl_log(LOG_LEVEL_INFO, fmt, ##__VA_ARGS__)
 #define	LOG_ERR(fmt, ...)	zrepl_log(LOG_LEVEL_ERR, fmt, ##__VA_ARGS__)
 #define	LOG_ERRNO(fmt, ...)	zrepl_log(LOG_LEVEL_ERR, \
-				    fmt ": ", ##__VA_ARGS__, strerror(errno))
+				    fmt ": %s", ##__VA_ARGS__, strerror(errno))
 
 SLIST_HEAD(zvol_list, zvol_info_s);
 extern kmutex_t zvol_list_mutex;

@@ -281,7 +281,7 @@ zinfo_create_cb(zvol_info_t *zinfo, nvlist_t *create_props)
 {
 	char target_host[MAXNAMELEN];
 	uint16_t target_port;
-	uzfs_mgmt_conn_t *mgmt_conn, *new_mgmt_conn;
+	uzfs_mgmt_conn_t *conn, *new_mgmt_conn;
 	zvol_state_t *zv = zinfo->zv;
 	char *delim, *ip;
 	uint64_t val = 1;
@@ -318,12 +318,12 @@ zinfo_create_cb(zvol_info_t *zinfo, nvlist_t *create_props)
 	new_mgmt_conn = kmem_zalloc(sizeof (*new_mgmt_conn), KM_SLEEP);
 
 	mutex_enter(&conn_list_mtx);
-	SLIST_FOREACH(mgmt_conn, &uzfs_mgmt_conns, conn_next) {
-		if (strcmp(mgmt_conn->conn_host, target_host) == 0 &&
-		    mgmt_conn->conn_port == target_port) {
+	SLIST_FOREACH(conn, &uzfs_mgmt_conns, conn_next) {
+		if (strcmp(conn->conn_host, target_host) == 0 &&
+		    conn->conn_port == target_port) {
 			/* we already have conn for this target */
-			mgmt_conn->conn_refcount++;
-			zinfo->mgmt_conn = mgmt_conn;
+			conn->conn_refcount++;
+			zinfo->mgmt_conn = conn;
 			mutex_exit(&conn_list_mtx);
 			kmem_free(new_mgmt_conn, sizeof (*new_mgmt_conn));
 			return;
@@ -800,9 +800,21 @@ process_message(uzfs_mgmt_conn_t *conn)
 		strncpy(zvol_name, payload, payload_size);
 		zvol_name[payload_size] = '\0';
 
-		if (((zinfo = uzfs_zinfo_lookup(zvol_name)) == NULL) ||
-		    (zinfo->mgmt_conn != conn)) {
+		if ((zinfo = uzfs_zinfo_lookup(zvol_name)) == NULL) {
 			LOG_ERR("Unknown zvol: %s", zvol_name);
+			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
+			    hdrp->opcode, hdrp->io_seq);
+			break;
+		}
+		/*
+		 * Can happen if target asks for a zvol which exists but is
+		 * presumably served by a different mgmt connection. Recovery
+		 * from that case would not be trivial so we pretend a miss.
+		 */
+		if (zinfo->mgmt_conn != conn) {
+			uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
+			LOG_ERR("Target used invalid connection for "
+			    "zvol %s\n", zvol_name);
 			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
 			    hdrp->opcode, hdrp->io_seq);
 			break;

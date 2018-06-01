@@ -273,7 +273,7 @@ redundant_metadata_changed_cb(void *arg, uint64_t newval)
 	/*
 	 * Inheritance and range checking should have been done by now.
 	 */
-	ASSERT(newval == ZFS_REDUNDANT_METADATA_ALL ||
+	ASSERT(newval == ZFS_REDUNDANT_METADATA_NONE ||
 	    newval == ZFS_REDUNDANT_METADATA_MOST);
 
 	os->os_redundant_metadata = newval;

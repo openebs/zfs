@@ -393,7 +393,7 @@ typedef enum {
 } zfs_dnsize_type_t;
 
 typedef enum {
-	ZFS_REDUNDANT_METADATA_ALL,
+	ZFS_REDUNDANT_METADATA_NONE,
 	ZFS_REDUNDANT_METADATA_MOST
 } zfs_redundant_metadata_type_t;
 

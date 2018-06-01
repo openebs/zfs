@@ -240,7 +240,7 @@ zfs_prop_init(void)
 	};
 
 	static zprop_index_t redundant_metadata_table[] = {
-		{ "all",	ZFS_REDUNDANT_METADATA_ALL },
+		{ "none",	ZFS_REDUNDANT_METADATA_NONE },
 		{ "most",	ZFS_REDUNDANT_METADATA_MOST },
 		{ NULL }
 	};
@@ -256,9 +256,9 @@ zfs_prop_init(void)
 
 	/* inherit index properties */
 	zprop_register_index(ZFS_PROP_REDUNDANT_METADATA, "redundant_metadata",
-	    ZFS_REDUNDANT_METADATA_ALL,
+	    ZFS_REDUNDANT_METADATA_NONE,
 	    PROP_INHERIT, ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME,
-	    "all | most", "REDUND_MD",
+	    "none | most", "REDUND_MD",
 	    redundant_metadata_table);
 	zprop_register_index(ZFS_PROP_SYNC, "sync", ZFS_SYNC_STANDARD,
 	    PROP_INHERIT, ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME,

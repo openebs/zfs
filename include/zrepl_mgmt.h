@@ -53,7 +53,11 @@ extern enum zrepl_log_level zrepl_log_level;
 void zrepl_log(enum zrepl_log_level lvl, const char *fmt, ...);
 
 /* shortcuts to invoke log function with given log level */
-#define	LOG_DEBUG(fmt, ...)	zrepl_log(LOG_LEVEL_DEBUG, fmt, ##__VA_ARGS__)
+#define	LOG_DEBUG(fmt, ...)	\
+	do { \
+		if (unlikely(zrepl_log_level <= LOG_LEVEL_DEBUG)) \
+			zrepl_log(LOG_LEVEL_DEBUG, fmt, ##__VA_ARGS__); \
+	} while (0)
 #define	LOG_INFO(fmt, ...)	zrepl_log(LOG_LEVEL_INFO, fmt, ##__VA_ARGS__)
 #define	LOG_ERR(fmt, ...)	zrepl_log(LOG_LEVEL_ERR, fmt, ##__VA_ARGS__)
 #define	LOG_ERRNO(fmt, ...)	zrepl_log(LOG_LEVEL_ERR, \

@@ -140,7 +140,8 @@ close_conn(uzfs_mgmt_conn_t *conn)
 {
 	async_task_t *async_task;
 
-	DBGCONN(conn, "Closing the connection");
+	if (conn->conn_state != CS_CONNECT)
+		DBGCONN(conn, "Closing the connection");
 
 	/* Release resources tight to the conn */
 	if (conn->conn_buf != NULL) {

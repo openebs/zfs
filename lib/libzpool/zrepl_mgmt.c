@@ -41,7 +41,7 @@ zrepl_log(enum zrepl_log_level lvl, const char *fmt, ...)
 	char line[512];
 	FILE *outf;
 
-	if (likely(lvl < zrepl_log_level))
+	if (lvl < zrepl_log_level)
 		return;
 
 	/* Create timestamp prefix */

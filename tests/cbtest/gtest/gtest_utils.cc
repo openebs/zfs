@@ -1,4 +1,8 @@
 
+#include <unistd.h>
+#include <signal.h>
+#include <fcntl.h>
+
 #include <cstdio>
 #include <iostream>
 #include <memory>
@@ -7,6 +11,9 @@
 #include <array>
 
 #include "gtest_utils.h"
+
+#define	POOL_SIZE	(100 * 1024 * 1024)
+#define	ZVOL_SIZE	(10 * 1024 * 1024)
 
 void GtestUtils::init_buf(void *buf, int len, const char *pattern) {
 	int i;
@@ -74,4 +81,82 @@ std::string GtestUtils::execCmd(std::string const &zfsCmd,
 		    cmdLine);
 
 	return result;
+}
+
+void GtestUtils::Vdev::create() {
+	int fd, rc;
+
+	fd = open(m_path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0666);
+	if (fd < 0)
+		throw std::system_error(errno, std::system_category(),
+		    "Cannot create vdev file");
+
+	rc = ftruncate(fd, POOL_SIZE);
+	close(fd);
+	if (rc != 0)
+		throw std::system_error(errno, std::system_category(),
+		    "Cannot truncate vdev file");
+}
+
+void GtestUtils::TestPool::create() {
+	m_vdev->create();
+	execCmd("zpool", std::string("create ") + m_name + " " +
+	    m_vdev->m_path);
+}
+
+void GtestUtils::TestPool::import() {
+	execCmd("zpool", std::string("import ") + m_name + " -d /tmp");
+}
+
+void GtestUtils::TestPool::createZvol(std::string name, std::string arg /*= ""*/) {
+	execCmd("zfs",
+	    std::string("create -sV ") + std::to_string(ZVOL_SIZE) +
+	    " -o volblocksize=4k " + arg + " " + m_name + "/" + name);
+}
+
+void GtestUtils::TestPool::destroyZvol(std::string name) {
+	execCmd("zfs", std::string("destroy ") + m_name + "/" + name);
+}
+
+std::string GtestUtils::TestPool::getZvolName(std::string name) {
+	return (m_name + "/" + name);
+}
+
+void GtestUtils::Zrepl::start() {
+	std::string zrepl_path = getCmdPath("zrepl");
+	int i = 0;
+
+	if (m_pid != 0) {
+		throw std::runtime_error(
+		    std::string("zrepl has been already started"));
+	}
+	m_pid = fork();
+	if (m_pid == 0) {
+		execl(zrepl_path.c_str(), zrepl_path.c_str(), NULL);
+	}
+	/* wait for zrepl to come up - is there a better way? */
+	while (i < 10) {
+		try {
+			execCmd("zpool", "list");
+			return;
+		} catch (std::runtime_error &) {
+			sleep(1);
+			i++;
+		}
+	}
+	throw std::runtime_error(
+	    std::string("Timed out waiting for zrepl to come up"));
+}
+
+void GtestUtils::Zrepl::kill() {
+	int rc;
+
+	if (m_pid != 0) {
+		rc = ::kill(m_pid, SIGTERM);
+		while (rc == 0) {
+			(void) waitpid(m_pid, NULL, 0);
+			rc = ::kill(m_pid, 0);
+		}
+		m_pid = 0;
+	}
 }

@@ -31,9 +31,6 @@
  */
 
 #include <gtest/gtest.h>
-#include <unistd.h>
-#include <signal.h>
-#include <fcntl.h>
 #include <iostream>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -433,67 +430,6 @@ static std::string getPoolState(std::string pname)
 }
 
 /*
- * zrepl program wrapper.
- *
- * The main benefits are:
- *  1) when zrepl goes out of C++ scope it is automatically terminated,
- *  2) special care is taken when starting and stopping the process to
- *      make sure it is fully operation respectively fully terminated
- *      to avoid various races.
- */
-class Zrepl {
-public:
-	Zrepl() {
-		m_pid = 0;
-	}
-
-	~Zrepl() {
-		kill();
-	}
-
-	void start() {
-		std::string zrepl_path = getCmdPath("zrepl");
-		int i = 0;
-
-		if (m_pid != 0) {
-			throw std::runtime_error(
-			    std::string("zrepl has been already started"));
-		}
-		m_pid = fork();
-		if (m_pid == 0) {
-			execl(zrepl_path.c_str(), zrepl_path.c_str(), NULL);
-		}
-		/* wait for zrepl to come up - is there a better way? */
-		while (i < 10) {
-			try {
-				execCmd("zpool", "list");
-				return;
-			} catch (std::runtime_error &) {
-				sleep(1);
-				i++;
-			}
-		}
-		throw std::runtime_error(
-		    std::string("Timed out waiting for zrepl to come up"));
-	}
-
-	void kill() {
-		int rc;
-
-		if (m_pid != 0) {
-			rc = ::kill(m_pid, SIGTERM);
-			while (rc == 0) {
-				(void) waitpid(m_pid, NULL, 0);
-				rc = ::kill(m_pid, 0);
-			}
-			m_pid = 0;
-		}
-	}
-
-	pid_t m_pid;
-};
-
-/*
  * Object simulating iSCSI target. It has listen and accept methods.
  * Listening port is automatically closed when object goes out of scope.
  */
@@ -578,82 +514,6 @@ public:
 	int m_listenfd;
 };
 
-class Vdev {
-public:
-	Vdev(std::string name) {
-		m_path = std::string("/tmp/") + name;
-	}
-
-	~Vdev() {
-		unlink(m_path.c_str());
-	}
-
-	void create() {
-		int fd, rc;
-
-		fd = open(m_path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0666);
-		if (fd < 0)
-			throw std::system_error(errno, std::system_category(),
-			    "Cannot create vdev file");
-
-		rc = ftruncate(fd, POOL_SIZE);
-		close(fd);
-		if (rc != 0)
-			throw std::system_error(errno, std::system_category(),
-			    "Cannot truncate vdev file");
-	}
-
-	std::string m_path;
-};
-
-/*
- * Class simplifying test zfs pool creation and creation of zvols on it.
- * Automatic pool destruction takes place when object goes out of scope.
- */
-class TestPool {
-public:
-	TestPool(std::string poolname) {
-		m_name = poolname;
-		m_vdev = new Vdev(std::string("disk-for-") + poolname);
-	}
-
-	~TestPool() {
-		//try {
-			execCmd("zpool", std::string("destroy -f ") + m_name);
-		//} catch (std::runtime_error re) {
-			//;
-		//}
-		delete m_vdev;
-	}
-
-	void create() {
-		m_vdev->create();
-		execCmd("zpool", std::string("create ") + m_name + " " +
-		    m_vdev->m_path);
-	}
-
-	void import() {
-		execCmd("zpool", std::string("import ") + m_name + " -d /tmp");
-	}
-
-	void createZvol(std::string name, std::string arg = "") {
-		execCmd("zfs",
-		    std::string("create -sV ") + std::to_string(ZVOL_SIZE) +
-		    " -o volblocksize=4k " + arg + " " + m_name + "/" + name);
-	}
-
-	void destroyZvol(std::string name) {
-		execCmd("zfs", std::string("destroy ") + m_name + "/" + name);
-	}
-
-	std::string getZvolName(std::string name) {
-		return (m_name + "/" + name);
-	}
-
-	Vdev *m_vdev;
-	std::string m_name;
-};
-
 class ZreplHandshakeTest : public testing::Test {
 protected:
 	/* Shared setup hook for all zrepl handshake tests - called just once */
@@ -696,126 +556,6 @@ protected:
 Zrepl *ZreplHandshakeTest::m_zrepl = nullptr;
 TestPool *ZreplHandshakeTest::m_pool = nullptr;
 std::string ZreplHandshakeTest::m_zvol_name = "";
-
-class ZreplDataTest : public testing::Test {
-protected:
-	/*
-	 * Shared setup hook for all zrepl data tests - called just once.
-	 *
-	 * TODO: we do more here than we are supposed to do (we should not test
-	 * things in setup hook). We create pool, restart zrepl, import the pool
-	 * again and then the tests issue IO to it. This scenario is currently
-	 * not covered by any test and should be. When we have a test for it,
-	 * the setup hook should be simplified to minimum again.
-	 */
-	static void SetUpTestCase() {
-		zvol_io_hdr_t hdr_out, hdr_in;
-		Target target1, target2;
-		m_pool1 = new TestPool("ihandshake");
-		m_pool2 = new TestPool("handshake");
-		m_zrepl = new Zrepl();
-		int rc;
-
-		m_zrepl->start();
-		m_pool1->create();
-		m_pool1->createZvol("vol1", "-o io.openebs:targetip=127.0.0.1:6060");
-		m_zvol_name1 = m_pool1->getZvolName("vol1");
-
-		rc = target1.listen();
-		ASSERT_GE(rc, 0);
-		m_control_fd1 = target1.accept(-1);
-		ASSERT_GE(m_control_fd1, 0);
-
-		do_handshake(m_zvol_name1, m_host1, m_port1, NULL, m_control_fd1,
-		    ZVOL_OP_STATUS_OK);
-		m_zrepl->kill();
-
-		m_zrepl->start();
-		m_pool1->import();
-		m_control_fd1 = target1.accept(-1);
-		ASSERT_GE(m_control_fd1, 0);
-
-		do_handshake(m_zvol_name1, m_host1, m_port1, NULL, m_control_fd1,
-		    ZVOL_OP_STATUS_OK);
-
-		m_pool2->create();
-		m_pool2->createZvol("vol1", "-o io.openebs:targetip=127.0.0.1:12345");
-		m_zvol_name2 = m_pool1->getZvolName("vol1");
-
-		rc = target2.listen(12345);
-		ASSERT_GE(rc, 0);
-		m_control_fd2 = target2.accept(-1);
-		ASSERT_GE(m_control_fd2, 0);
-
-		do_handshake(m_zvol_name2, m_host2, m_port2, NULL, m_control_fd2,
-		    ZVOL_OP_STATUS_FAILED);
-
-		m_zvol_name2 = m_pool2->getZvolName("vol1");
-		do_handshake(m_zvol_name2, m_host2, m_port2, NULL, m_control_fd2,
-		    ZVOL_OP_STATUS_OK);
-	}
-
-	static void TearDownTestCase() {
-		m_pool1->destroyZvol("vol1");
-		m_pool2->destroyZvol("vol1");
-		delete m_pool1;
-		delete m_pool2;
-		if (m_control_fd1 >= 0)
-			close(m_control_fd1);
-		if (m_control_fd2 >= 0)
-			close(m_control_fd2);
-		delete m_zrepl;
-	}
-
-	ZreplDataTest() {
-		m_data_fd1 = -1;
-		m_data_fd2 = -1;
-		m_ioseq1 = 0;
-		m_ioseq2 = 0;
-	}
-
-	/*
-	 * Create data connection and send handshake msg for the zvol.
-	 */
-	virtual void SetUp() override {
-		do_data_connection(m_data_fd1, m_host1, m_port1, m_zvol_name1);
-		do_data_connection(m_data_fd2, m_host2, m_port2, m_zvol_name2);
-	}
-
-	virtual void TearDown() override {
-		graceful_close(m_data_fd1);
-		graceful_close(m_data_fd2);
-	}
-
-	static int	m_control_fd1;
-	static int	m_control_fd2;
-	static uint16_t m_port1;
-	static uint16_t m_port2;
-	static std::string m_host1;
-	static std::string m_host2;
-	static Zrepl	*m_zrepl;
-	static TestPool *m_pool1;
-	static TestPool *m_pool2;
-	static std::string m_zvol_name1;
-	static std::string m_zvol_name2;
-
-	int	m_data_fd1;
-	int	m_data_fd2;
-	int	m_ioseq1;
-	int	m_ioseq2;
-};
-
-int ZreplDataTest::m_control_fd1 = -1;
-uint16_t ZreplDataTest::m_port1 = 0;
-std::string ZreplDataTest::m_host1 = "";
-std::string ZreplDataTest::m_zvol_name1 = "";
-TestPool *ZreplDataTest::m_pool1 = nullptr;
-int ZreplDataTest::m_control_fd2 = -1;
-uint16_t ZreplDataTest::m_port2 = 0;
-std::string ZreplDataTest::m_host2 = "";
-std::string ZreplDataTest::m_zvol_name2 = "";
-TestPool *ZreplDataTest::m_pool2 = nullptr;
-Zrepl *ZreplDataTest::m_zrepl = nullptr;
 
 TEST_F(ZreplHandshakeTest, HandshakeOk) {
 	zvol_io_hdr_t hdr_out, hdr_in;
@@ -945,6 +685,126 @@ TEST_F(ZreplHandshakeTest, UnknownOpcode) {
 	EXPECT_EQ(hdr_in.offset, 0);
 	ASSERT_EQ(hdr_in.len, 0);
 }
+
+class ZreplDataTest : public testing::Test {
+protected:
+	/*
+	 * Shared setup hook for all zrepl data tests - called just once.
+	 *
+	 * TODO: we do more here than we are supposed to do (we should not test
+	 * things in setup hook). We create pool, restart zrepl, import the pool
+	 * again and then the tests issue IO to it. This scenario is currently
+	 * not covered by any test and should be. When we have a test for it,
+	 * the setup hook should be simplified to minimum again.
+	 */
+	static void SetUpTestCase() {
+		zvol_io_hdr_t hdr_out, hdr_in;
+		Target target1, target2;
+		m_pool1 = new TestPool("ihandshake");
+		m_pool2 = new TestPool("handshake");
+		m_zrepl = new Zrepl();
+		int rc;
+
+		m_zrepl->start();
+		m_pool1->create();
+		m_pool1->createZvol("vol1", "-o io.openebs:targetip=127.0.0.1:6060");
+		m_zvol_name1 = m_pool1->getZvolName("vol1");
+
+		rc = target1.listen();
+		ASSERT_GE(rc, 0);
+		m_control_fd1 = target1.accept(-1);
+		ASSERT_GE(m_control_fd1, 0);
+
+		do_handshake(m_zvol_name1, m_host1, m_port1, NULL, m_control_fd1,
+		    ZVOL_OP_STATUS_OK);
+		m_zrepl->kill();
+
+		m_zrepl->start();
+		m_pool1->import();
+		m_control_fd1 = target1.accept(-1);
+		ASSERT_GE(m_control_fd1, 0);
+
+		do_handshake(m_zvol_name1, m_host1, m_port1, NULL, m_control_fd1,
+		    ZVOL_OP_STATUS_OK);
+
+		m_pool2->create();
+		m_pool2->createZvol("vol1", "-o io.openebs:targetip=127.0.0.1:12345");
+		m_zvol_name2 = m_pool1->getZvolName("vol1");
+
+		rc = target2.listen(12345);
+		ASSERT_GE(rc, 0);
+		m_control_fd2 = target2.accept(-1);
+		ASSERT_GE(m_control_fd2, 0);
+
+		do_handshake(m_zvol_name2, m_host2, m_port2, NULL, m_control_fd2,
+		    ZVOL_OP_STATUS_FAILED);
+
+		m_zvol_name2 = m_pool2->getZvolName("vol1");
+		do_handshake(m_zvol_name2, m_host2, m_port2, NULL, m_control_fd2,
+		    ZVOL_OP_STATUS_OK);
+	}
+
+	static void TearDownTestCase() {
+		m_pool1->destroyZvol("vol1");
+		m_pool2->destroyZvol("vol1");
+		delete m_pool1;
+		delete m_pool2;
+		if (m_control_fd1 >= 0)
+			close(m_control_fd1);
+		if (m_control_fd2 >= 0)
+			close(m_control_fd2);
+		delete m_zrepl;
+	}
+
+	ZreplDataTest() {
+		m_data_fd1 = -1;
+		m_data_fd2 = -1;
+		m_ioseq1 = 0;
+		m_ioseq2 = 0;
+	}
+
+	/*
+	 * Create data connection and send handshake msg for the zvol.
+	 */
+	virtual void SetUp() override {
+		do_data_connection(m_data_fd1, m_host1, m_port1, m_zvol_name1);
+		do_data_connection(m_data_fd2, m_host2, m_port2, m_zvol_name2);
+	}
+
+	virtual void TearDown() override {
+		graceful_close(m_data_fd1);
+		graceful_close(m_data_fd2);
+	}
+
+	static int	m_control_fd1;
+	static int	m_control_fd2;
+	static uint16_t m_port1;
+	static uint16_t m_port2;
+	static std::string m_host1;
+	static std::string m_host2;
+	static Zrepl	*m_zrepl;
+	static TestPool *m_pool1;
+	static TestPool *m_pool2;
+	static std::string m_zvol_name1;
+	static std::string m_zvol_name2;
+
+	int	m_data_fd1;
+	int	m_data_fd2;
+	int	m_ioseq1;
+	int	m_ioseq2;
+};
+
+int ZreplDataTest::m_control_fd1 = -1;
+uint16_t ZreplDataTest::m_port1 = 0;
+std::string ZreplDataTest::m_host1 = "";
+std::string ZreplDataTest::m_zvol_name1 = "";
+TestPool *ZreplDataTest::m_pool1 = nullptr;
+int ZreplDataTest::m_control_fd2 = -1;
+uint16_t ZreplDataTest::m_port2 = 0;
+std::string ZreplDataTest::m_host2 = "";
+std::string ZreplDataTest::m_zvol_name2 = "";
+TestPool *ZreplDataTest::m_pool2 = nullptr;
+Zrepl *ZreplDataTest::m_zrepl = nullptr;
 
 /*
  * Write two blocks with the same io_num and third one with a different io_num

@@ -25,6 +25,7 @@ ZFS="$SRC_PATH/cmd/zfs/zfs"
 ZDB="$SRC_PATH/cmd/zdb/zdb"
 ZREPL="$SRC_PATH/cmd/zrepl/zrepl"
 GTEST_UZFS="$SRC_PATH/tests/cbtest/gtest/test_uzfs"
+GTEST_ZFS="$SRC_PATH/tests/cbtest/gtest/test_zfs"
 GTEST_ZREPL_PROT="$SRC_PATH/tests/cbtest/gtest/test_zrepl_prot"
 ZTEST="$SRC_PATH/cmd/ztest/ztest"
 UZFS_TEST="$SRC_PATH/cmd/uzfs_test/uzfs_test"
@@ -1187,6 +1188,7 @@ run_zvol_test()
 
 	stop_zrepl
 	log_must $GTEST_UZFS
+	log_must $GTEST_ZFS
 	log_must $GTEST_ZREPL_PROT
 	start_zrepl
 }

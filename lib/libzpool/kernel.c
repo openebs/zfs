@@ -1509,12 +1509,25 @@ void
 kernel_init(int mode)
 {
 	extern uint_t rrw_tsd_key;
+	uint64_t cgroupmem;
+	FILE *f;
 
 	umem_nofail_callback(umem_out_of_memory);
 
 	physmem = sysconf(_SC_PHYS_PAGES);
 
-	dprintf("physmem = %llu pages (%.2f GB)\n", physmem,
+	/* If we run inside a container get the cgroup mem limit */
+	f = fopen("/sys/fs/cgroup/memory/memory.limit_in_bytes", "r");
+	if (f != NULL) {
+		if (fscanf(f, "%lu", &cgroupmem) == 1) {
+			cgroupmem /= sysconf(_SC_PAGE_SIZE);
+			if (physmem > cgroupmem)
+				physmem = cgroupmem;
+		}
+		fclose(f);
+	}
+
+	printf("physmem = %lu pages (%.2f GB)\n", physmem,
 	    (double)physmem * sysconf(_SC_PAGE_SIZE) / (1ULL << 30));
 
 	(void) snprintf(hw_serial, sizeof (hw_serial), "%ld",

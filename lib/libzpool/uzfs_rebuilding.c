@@ -29,6 +29,7 @@
 #include <uzfs_io.h>
 #include <uzfs_mgmt.h>
 #include <uzfs_rebuilding.h>
+#include <zrepl_mgmt.h>
 
 #define	ADD_TO_IO_CHUNK_LIST(list, e_offset, e_len, count)		\
 	do {    							\
@@ -82,9 +83,8 @@ get_snapshot_zv(zvol_state_t *zv, char *snap_name, zvol_state_t **snap_zv)
 	if (ret == ENOENT) {
 		ret = dmu_objset_snapshot_one(zv->zv_name, snap_name);
 		if (ret) {
-			printf("Failed to create snapshot for %s err(%d)\n",
-			    zv->zv_name, ret);
-			printf("vol:%s snap:%s\n", dataset, snap_name);
+			LOG_ERR("Failed to create snapshot %s@%s: %d",
+			    zv->zv_name, snap_name, ret);
 			strfree(dataset);
 			return (ret);
 		}
@@ -98,7 +98,7 @@ get_snapshot_zv(zvol_state_t *zv, char *snap_name, zvol_state_t **snap_zv)
 
 	if (ret != 0) {
 		strfree(dataset);
-		printf("Failed to own snapshot.. err(%d)\n", ret);
+		LOG_ERR("Failed to own snapshot: %d", ret);
 		return (ret);
 	}
 
@@ -149,8 +149,8 @@ uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *low,
 
 	ret = get_snapshot_zv(zv, snap_name, &snap_zv);
 	if (ret != 0) {
-		printf("failed to get snapshot info for %s io_num:%lu\n",
-		    zv->zv_name, low->io_num);
+		LOG_ERR("Failed to get info about %s@%s io_num %lu",
+		    zv->zv_name, snap_name, low->io_num);
 		strfree(snap_name);
 		return (ret);
 	}
@@ -263,7 +263,7 @@ uzfs_get_nonoverlapping_ondisk_blks(zvol_state_t *zv, uint64_t offset,
 	ret = uzfs_read_metadata(zv, ondisk_metadata_buf,
 	    ondisk_metablk.m_offset, ondisk_metablk.m_len, &rd_rlen);
 	if (ret || rd_rlen != ondisk_metablk.m_len) {
-		printf("failed to read metadata\n");
+		LOG_ERR("Failed to read metadata");
 		goto exit;
 	}
 

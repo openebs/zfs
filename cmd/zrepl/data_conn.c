@@ -99,7 +99,11 @@ uzfs_zvol_socket_read(int fd, char *buf, uint64_t nbytes)
 	while (nbytes) {
 		count = read(fd, (void *)p, nbytes);
 		if (count <= 0) {
-			ZREPL_ERRLOG("Read error:%d\n", errno);
+			if (count == 0) {
+				LOG_INFO("Connection closed");
+			} else {
+				LOG_ERRNO("Socket read error");
+			}
 			return (-1);
 		}
 		p += count;
@@ -116,7 +120,11 @@ uzfs_zvol_socket_write(int fd, char *buf, uint64_t nbytes)
 	while (nbytes) {
 		count = write(fd, (void *)p, nbytes);
 		if (count <= 0) {
-			ZREPL_ERRLOG("Write error:%d\n", errno);
+			if (count == 0) {
+				LOG_INFO("Connection closed");
+			} else {
+				LOG_ERRNO("Socket write error");
+			}
 			return (-1);
 		}
 		p += count;
@@ -233,8 +241,7 @@ uzfs_zvol_worker(void *arg)
 	}
 
 	if (rc != 0) {
-		ZREPL_ERRLOG("Zvol op_code :%d failed with "
-		    "error: %d\n", hdr->opcode, errno);
+		LOG_ERR("OP code %d failed", hdr->opcode);
 		hdr->status = ZVOL_OP_STATUS_FAILED;
 		hdr->len = 0;
 	} else {
@@ -311,14 +318,14 @@ uzfs_zvol_rebuild_dw_replica(void *arg)
 
 	rc = uzfs_zvol_socket_write(sfd, (char *)&hdr, sizeof (hdr));
 	if (rc == -1) {
-		ZREPL_ERRLOG("Socket write failed, err: %d\n", errno);
+		LOG_ERRNO("Socket write failed");
 		goto exit;
 	}
 
 	rc = uzfs_zvol_socket_write(sfd, (void *)rebuild_args->zvol_name,
 	    hdr.len);
 	if (rc == -1) {
-		ZREPL_ERRLOG("Socket write failed, err: %d\n", errno);
+		LOG_ERRNO("Socket write failed");
 		goto exit;
 	}
 
@@ -332,7 +339,7 @@ next_step:
 		hdr.opcode = ZVOL_OPCODE_REBUILD_COMPLETE;
 		rc = uzfs_zvol_socket_write(sfd, (char *)&hdr, sizeof (hdr));
 		if (rc != 0) {
-			ZREPL_ERRLOG("Socket write failed, err: %d\n", errno);
+			LOG_ERRNO("Socket write failed");
 			goto exit;
 		}
 
@@ -345,8 +352,7 @@ next_step:
 			uzfs_zvol_set_status(zinfo->zv, ZVOL_STATUS_HEALTHY);
 			uzfs_update_ionum_interval(zinfo, 0);
 		}
-		ZREPL_ERRLOG("Rebuilding on Replica:%s completed\n",
-		    zinfo->name);
+		LOG_INFO("Rebuilding zvol %s completed", zinfo->name);
 		goto exit;
 	} else {
 		bzero(&hdr, sizeof (hdr));
@@ -358,7 +364,7 @@ next_step:
 		hdr.len = ZVOL_REBUILD_STEP_SIZE;
 		rc = uzfs_zvol_socket_write(sfd, (char *)&hdr, sizeof (hdr));
 		if (rc != 0) {
-			ZREPL_ERRLOG("Socket write failed, err: %d\n", errno);
+			LOG_ERRNO("Socket write failed");
 			goto exit;
 		}
 	}
@@ -371,13 +377,13 @@ next_step:
 
 		rc = uzfs_zvol_socket_read(sfd, (char *)&hdr, sizeof (hdr));
 		if (rc != 0) {
-			ZREPL_ERRLOG("Socket read failed, err: %d\n", errno);
+			LOG_ERRNO("Socket read failed");
 			goto exit;
 		}
 
 		if (hdr.opcode == ZVOL_OPCODE_REBUILD_STEP_DONE) {
 			offset += ZVOL_REBUILD_STEP_SIZE;
-			printf("ZVOL_OPCODE_REBUILD_STEP_DONE received\n");
+			LOG_DEBUG("ZVOL_OPCODE_REBUILD_STEP_DONE received");
 			goto next_step;
 		}
 
@@ -388,8 +394,7 @@ next_step:
 		zio_cmd = zio_cmd_alloc(&hdr, sfd);
 		rc = uzfs_zvol_socket_read(sfd, zio_cmd->buf, hdr.len);
 		if (rc != 0) {
-			ZREPL_ERRLOG("Socket read failed with "
-			    "error: %d\n", errno);
+			LOG_ERRNO("Socket read failed");
 			goto exit;
 		}
 
@@ -413,7 +418,7 @@ exit:
 	if (rc == -1)
 		uzfs_zvol_set_rebuild_status(zinfo->zv, ZVOL_REBUILDING_FAILED);
 
-	ZREPL_LOG("uzfs_zvol_rebuild_dw_replica thread exiting, volume:%s\n",
+	LOG_DEBUG("uzfs_zvol_rebuild_dw_replica thread exiting, zvol: %s",
 	    zinfo->name);
 	/* Parent thread have taken refcount, drop it now */
 	uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
@@ -443,8 +448,8 @@ uzfs_zvol_timer_thread(void)
 				next_check = zinfo->checkpointed_time +
 				    zinfo->update_ionum_interval;
 				if (next_check <= now) {
-					fprintf(stderr, "Checkpointing ionum "
-					    "%lu on %s\n",
+					LOG_DEBUG("Checkpointing ionum "
+					    "%lu on %s",
 					    zinfo->checkpointed_ionum,
 					    zinfo->name);
 					uzfs_zvol_store_last_committed_io_no(

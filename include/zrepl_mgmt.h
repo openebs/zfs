@@ -25,8 +25,8 @@
 #ifndef	ZREPL_MGMT_H
 #define	ZREPL_MGMT_H
 
+#include <stdio.h>
 #include <pthread.h>
-#include <syslog.h>
 #include <sys/queue.h>
 #include <uzfs_io.h>
 #include "zrepl_prot.h"
@@ -42,6 +42,26 @@ extern "C" {
 
 #define	REBUILD_IO_SERVER_PORT	"3233"
 #define	IO_SERVER_PORT	"3232"
+
+enum zrepl_log_level {
+	LOG_LEVEL_DEBUG,
+	LOG_LEVEL_INFO,
+	LOG_LEVEL_ERR,
+};
+
+extern enum zrepl_log_level zrepl_log_level;
+void zrepl_log(enum zrepl_log_level lvl, const char *fmt, ...);
+
+/* shortcuts to invoke log function with given log level */
+#define	LOG_DEBUG(fmt, ...)	\
+	do { \
+		if (unlikely(zrepl_log_level <= LOG_LEVEL_DEBUG)) \
+			zrepl_log(LOG_LEVEL_DEBUG, fmt, ##__VA_ARGS__); \
+	} while (0)
+#define	LOG_INFO(fmt, ...)	zrepl_log(LOG_LEVEL_INFO, fmt, ##__VA_ARGS__)
+#define	LOG_ERR(fmt, ...)	zrepl_log(LOG_LEVEL_ERR, fmt, ##__VA_ARGS__)
+#define	LOG_ERRNO(fmt, ...)	zrepl_log(LOG_LEVEL_ERR, \
+				    fmt ": %s", ##__VA_ARGS__, strerror(errno))
 
 SLIST_HEAD(zvol_list, zvol_info_s);
 extern kmutex_t zvol_list_mutex;
@@ -136,24 +156,6 @@ void uzfs_zvol_store_last_committed_io_no(zvol_state_t *zv,
     uint64_t io_seq);
 extern int create_and_bind(const char *port, int bind_needed,
     boolean_t nonblocking);
-
-#define	ZREPL_LOG(fmt, ...)  syslog(LOG_NOTICE,				\
-		"%-18.18s:%4d: " fmt, __func__, __LINE__, ##__VA_ARGS__)
-
-#define	ZREPL_NOTICELOG(fmt, ...) syslog(LOG_NOTICE,			\
-		"%-18.18s:%4d: " fmt, __func__, __LINE__, ##__VA_ARGS__)
-
-#define	ZREPL_ERRLOG(fmt, ...) syslog(LOG_ERR,				\
-		"%-18.18s:%4d: " fmt, __func__, __LINE__, ##__VA_ARGS__)
-
-#define	ZREPL_WARNLOG(fmt, ...) syslog(LOG_ERR,				\
-		"%-18.18s:%4d: " fmt, __func__, __LINE__, ##__VA_ARGS__)
-
-#define	ZREPL_TRACELOG(FLAG, fmt, ...)					\
-	do {								\
-		syslog(LOG_NOTICE, "%-18.18s:%4d: "		\
-		    fmt, __func__, __LINE__, ##__VA_ARGS__);	\
-	} while (0)
 
 #ifdef	__cplusplus
 }

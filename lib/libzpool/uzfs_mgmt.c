@@ -467,13 +467,12 @@ uzfs_zvol_create_cb(const char *ds_name, void *arg)
 	char		*ip;
 
 	if (strrchr(ds_name, '@') != NULL) {
-		printf("no owning dataset for snapshots: %s\n", ds_name);
 		return (0);
 	}
 
 	error = uzfs_own_dataset(ds_name, &zv);
 	if (error) {
-		printf("Failed to open dataset: %s\n", ds_name);
+		/* happens normally for all non-zvol-type datasets */
 		return (error);
 	}
 
@@ -484,20 +483,19 @@ uzfs_zvol_create_cb(const char *ds_name, void *arg)
 			strncpy(zv->zv_target_host, ip,
 			    sizeof (zv->zv_target_host));
 		else {
-			printf("target IP address is not set for %s\n",
-			    ds_name);
+			LOG_ERR("target IP address is not set for %s", ds_name);
 			uzfs_close_dataset(zv);
 			return (error);
 		}
 	} else {
 		if (zv->zv_target_host[0] == '\0') {
-			printf("target IP address is NULL for %s\n", ds_name);
+			LOG_ERR("target IP address is empty for %s", ds_name);
 			uzfs_close_dataset(zv);
 			return (EINVAL);
 		}
 	}
 	if (uzfs_zinfo_init(zv, ds_name, nvprops) != 0) {
-		printf("Failed in uzfs_zinfo_init\n");
+		LOG_ERR("Failed in uzfs_zinfo_init");
 		return (error);
 	}
 
@@ -527,12 +525,7 @@ uzfs_zvol_create_minors(spa_t *spa, const char *name)
 int
 uzfs_zvol_destroy_cb(const char *ds_name, void *arg)
 {
-	if (ds_name)
-		printf("deleting ds_name %s\n", ds_name);
-	else
-		printf("deleting all dsnames on pool!\n ");
-	uzfs_zinfo_destroy(ds_name, arg);
-	return (0);
+	return (uzfs_zinfo_destroy(ds_name, arg));
 }
 
 /* disowns, closes dataset */

@@ -69,7 +69,7 @@ enum zvol_op_code {
 	ZVOL_OPCODE_REBUILD_STEP_DONE,
 	ZVOL_OPCODE_REBUILD_COMPLETE,
 	ZVOL_OPCODE_SNAP_CREATE,
-	ZVOL_OPCODE_SNAP_ROLLBACK,
+	ZVOL_OPCODE_SNAP_DESTROY,
 } __attribute__((packed));
 
 typedef enum zvol_op_code zvol_op_code_t;

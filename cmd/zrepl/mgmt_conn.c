@@ -33,6 +33,7 @@
 #include <sys/prctl.h>
 
 #include <sys/dsl_dataset.h>
+#include <sys/dsl_destroy.h>
 #include <sys/dmu_objset.h>
 #include <zrepl_prot.h>
 #include <uzfs_mgmt.h>
@@ -62,33 +63,9 @@
  *     their state.
  */
 
-/* To print verbose debug messages uncomment the following line */
-#define	MGMT_CONN_DEBUG	1
-
-#ifdef MGMT_CONN_DEBUG
-static const char *
-gettimestamp(void)
-{
-	struct timeval tv;
-	static char buf[20];
-	struct tm *timeinfo;
-	unsigned int ms;
-
-	gettimeofday(&tv, NULL);
-	timeinfo = localtime(&tv.tv_sec);
-	ms = tv.tv_usec / 1000;
-
-	strftime(buf, sizeof (buf), "%H:%M:%S.", timeinfo);
-	snprintf(buf + 9, sizeof (buf) - 9, "%u", ms);
-
-	return (buf);
-}
-#define	DBGCONN(c, fmt, ...)	fprintf(stderr, "%s [tgt %s:%u]: " fmt "\n", \
-				gettimestamp(), \
+/* LOG_DEBUG wrapper which puts target address prefix to message */
+#define	DBGCONN(c, fmt, ...)	LOG_DEBUG("[tgt %s:%u]: " fmt, \
 				(c)->conn_host, (c)->conn_port, ##__VA_ARGS__)
-#else
-#define	DBGCONN(c, fmt, ...)
-#endif
 
 /* Max # of events from epoll processed at once */
 #define	MAX_EVENTS	10
@@ -125,8 +102,27 @@ typedef struct uzfs_mgmt_conn {
 } uzfs_mgmt_conn_t;
 
 /* conn list can be traversed or changed only when holding the mutex */
-kmutex_t	conn_list_mtx;
+kmutex_t conn_list_mtx;
 SLIST_HEAD(, uzfs_mgmt_conn) uzfs_mgmt_conns;
+
+/*
+ * Blocking or lengthy operations must be executed asynchronously not to block
+ * the main event loop. Following structure describes asynchronous task.
+ */
+typedef struct async_task {
+	SLIST_ENTRY(async_task) task_next;
+	uzfs_mgmt_conn_t *conn;	// conn ptr can be invalid if closed = true
+	boolean_t conn_closed;	// conn was closed before task finished
+	boolean_t finished;	// async cmd has finished
+	zvol_info_t *zinfo;
+	zvol_io_hdr_t hdr;	// header of the incoming request
+	void *payload; // snapshot name
+	int payload_length;	// length of payload in bytes
+	int status;		// status which should be sent back
+} async_task_t;
+
+kmutex_t async_tasks_mtx;
+SLIST_HEAD(, async_task) async_tasks;
 
 /* event FD for waking up event loop thread blocked in epoll_wait */
 int mgmt_eventfd = -1;
@@ -142,6 +138,11 @@ static int move_to_next_state(uzfs_mgmt_conn_t *conn);
 static int
 close_conn(uzfs_mgmt_conn_t *conn)
 {
+	async_task_t *async_task;
+
+	if (conn->conn_state != CS_CONNECT)
+		DBGCONN(conn, "Closing the connection");
+
 	/* Release resources tight to the conn */
 	if (conn->conn_buf != NULL) {
 		kmem_free(conn->conn_buf, conn->conn_bufsiz);
@@ -160,6 +161,35 @@ close_conn(uzfs_mgmt_conn_t *conn)
 	}
 	(void) close(conn->conn_fd);
 	conn->conn_fd = -1;
+
+	mutex_enter(&async_tasks_mtx);
+	SLIST_FOREACH(async_task, &async_tasks, task_next) {
+		if (async_task->conn == conn) {
+			async_task->conn_closed = B_TRUE;
+		}
+	}
+	mutex_exit(&async_tasks_mtx);
+
+	return (0);
+}
+
+/*
+ * Complete destruction of conn struct. conn list mtx must be held when calling
+ * this function.
+ * Close connection if still open, remove conn from list of conns and free it.
+ */
+static int
+destroy_conn(uzfs_mgmt_conn_t *conn)
+{
+	ASSERT(MUTEX_HELD(&conn_list_mtx));
+
+	if (conn->conn_fd >= 0) {
+		if (close_conn(conn) != 0)
+			return (-1);
+	}
+	DBGCONN(conn, "Destroying the connection");
+	SLIST_REMOVE(&uzfs_mgmt_conns, conn, uzfs_mgmt_conn, conn_next);
+	kmem_free(conn, sizeof (*conn));
 	return (0);
 }
 
@@ -188,7 +218,8 @@ connect_to_tgt(uzfs_mgmt_conn_t *conn)
 	/* EINPROGRESS means that EPOLLOUT will tell us when connect is done */
 	if (rc != 0 && errno != EINPROGRESS) {
 		close(sfd);
-		DBGCONN(conn, "Failed to connect");
+		LOG_ERRNO("Failed to connect to %s:%d", conn->conn_host,
+		    conn->conn_port);
 		return (-1);
 	}
 	return (sfd);
@@ -201,12 +232,15 @@ connect_to_tgt(uzfs_mgmt_conn_t *conn)
 static int
 scan_conn_list(void)
 {
-	uzfs_mgmt_conn_t *conn;
+	uzfs_mgmt_conn_t *conn, *conn_tmp;
 	struct epoll_event ev;
 	int rc = 0;
 
 	mutex_enter(&conn_list_mtx);
-	SLIST_FOREACH(conn, &uzfs_mgmt_conns, conn_next) {
+	/* iterate safely because entries can be destroyed while iterating */
+	conn = SLIST_FIRST(&uzfs_mgmt_conns);
+	while (conn != NULL) {
+		conn_tmp = SLIST_NEXT(conn, conn_next);
 		/* we need to create new connection */
 		if (conn->conn_refcount > 0 && conn->conn_fd < 0 &&
 		    time(NULL) - conn->conn_last_connect >= RECONNECT_DELAY) {
@@ -225,13 +259,13 @@ scan_conn_list(void)
 				}
 			}
 		/* we need to close unused connection */
-		} else if (conn->conn_refcount == 0 && conn->conn_fd >= 0) {
-			DBGCONN(conn, "Closing the connection");
-			if (close_conn(conn) != 0) {
+		} else if (conn->conn_refcount == 0) {
+			if (destroy_conn(conn) != 0) {
 				rc = -1;
 				break;
 			}
 		}
+		conn = conn_tmp;
 	}
 	mutex_exit(&conn_list_mtx);
 
@@ -332,57 +366,42 @@ zinfo_destroy_cb(zvol_info_t *zinfo)
 	zinfo->mgmt_conn = NULL;
 
 	if (--conn->conn_refcount == 0) {
-		/* signal the event loop thread to close FD */
-		if (conn->conn_fd >= 0) {
-			ASSERT3P(mgmt_eventfd, >=, 0);
-			rc = write(mgmt_eventfd, &val, sizeof (val));
-			ASSERT3P(rc, ==, sizeof (val));
-			mutex_exit(&conn_list_mtx);
-			/* wait for event loop thread to close the FD */
-			/* TODO: too rough algorithm with sleep */
-			while (1) {
-				usleep(1000);
-				mutex_enter(&conn_list_mtx);
-				if (conn->conn_refcount > 0 ||
-				    conn->conn_fd < 0)
-					break;
-				mutex_exit(&conn_list_mtx);
-			}
-			/* someone else reused the conn while waiting - ok */
-			if (conn->conn_refcount > 0) {
-				mutex_exit(&conn_list_mtx);
-				return;
-			}
-		}
-		SLIST_REMOVE(&uzfs_mgmt_conns, conn, uzfs_mgmt_conn,
-		    conn_next);
-		kmem_free(conn, sizeof (*conn));
+		/* signal the event loop thread to close FD and destroy conn */
+		ASSERT3P(mgmt_eventfd, >=, 0);
+		rc = write(mgmt_eventfd, &val, sizeof (val));
+		ASSERT3P(rc, ==, sizeof (val));
 	}
 	mutex_exit(&conn_list_mtx);
 }
 
 /*
- * Send handshake reply with error status to the client.
+ * Send simple reply without any payload to the client.
  */
 static int
-reply_error(uzfs_mgmt_conn_t *conn, zvol_op_status_t status,
-    int opcode, uint64_t io_seq, enum conn_state next_state)
+reply_nodata(uzfs_mgmt_conn_t *conn, zvol_op_status_t status,
+    int opcode, uint64_t io_seq)
 {
 	zvol_io_hdr_t *hdrp;
 	struct epoll_event ev;
 
-	DBGCONN(conn, "Error reply with status %d for OP %d",
-	    status, opcode);
+	if (status != ZVOL_OP_STATUS_OK) {
+		DBGCONN(conn, "Error reply with status %d for OP %d",
+		    status, opcode);
+	} else {
+		DBGCONN(conn, "Reply without payload for OP %d", opcode);
+	}
 
 	hdrp = kmem_zalloc(sizeof (*hdrp), KM_SLEEP);
 	hdrp->version = REPLICA_VERSION;
 	hdrp->opcode = opcode;
 	hdrp->io_seq = io_seq;
 	hdrp->status = status;
+	hdrp->len = 0;
+	ASSERT3P(conn->conn_buf, ==, NULL);
 	conn->conn_buf = hdrp;
 	conn->conn_bufsiz = sizeof (*hdrp);
 	conn->conn_procn = 0;
-	conn->conn_state = next_state;
+	conn->conn_state = CS_INIT;
 
 	ev.events = EPOLLOUT;
 	ev.data.ptr = conn;
@@ -399,9 +418,10 @@ reply_data(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp, void *buf, int size)
 
 	DBGCONN(conn, "Data reply");
 
-	conn->conn_bufsiz = sizeof (*hdrp) + size;
 	conn->conn_procn = 0;
 	conn->conn_state = CS_INIT;
+	ASSERT3P(conn->conn_buf, ==, NULL);
+	conn->conn_bufsiz = sizeof (*hdrp) + size;
 	conn->conn_buf = kmem_zalloc(conn->conn_bufsiz, KM_SLEEP);
 	memcpy(conn->conn_buf, hdrp, sizeof (*hdrp));
 	memcpy((char *)conn->conn_buf + sizeof (*hdrp), buf, size);
@@ -473,13 +493,13 @@ uzfs_zvol_mgmt_do_handshake(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	mgmt_ack_t 	mgmt_ack;
 	zvol_io_hdr_t	hdr;
 
-	printf("Volume %s sent for enq\n", name);
+	LOG_INFO("Handshake on zvol %s", name);
 
 	bzero(&mgmt_ack, sizeof (mgmt_ack));
 	if (uzfs_zvol_get_ip(mgmt_ack.ip) == -1) {
-		fprintf(stderr, "Unable to get IP with err: %d\n", errno);
-		return (reply_error(conn, ZVOL_OP_STATUS_FAILED, hdrp->opcode,
-		    hdrp->io_seq, CS_INIT));
+		LOG_ERRNO("Unable to get IP");
+		return (reply_nodata(conn, ZVOL_OP_STATUS_FAILED, hdrp->opcode,
+		    hdrp->io_seq));
 	}
 
 	strncpy(mgmt_ack.volname, name, sizeof (mgmt_ack.volname));
@@ -493,10 +513,9 @@ uzfs_zvol_mgmt_do_handshake(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	 */
 	if (zv->zv_objset == NULL) {
 		if (uzfs_hold_dataset(zv) != 0) {
-			fprintf(stderr, "Failed to hold zvol during "
-			    "handshake\n");
-			return (reply_error(conn, ZVOL_OP_STATUS_FAILED,
-			    hdrp->opcode, hdrp->io_seq, CS_INIT));
+			LOG_ERR("Failed to hold zvol during handshake");
+			return (reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
+			    hdrp->opcode, hdrp->io_seq));
 		}
 	}
 
@@ -538,6 +557,134 @@ uzfs_zvol_rebuild_status(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	return (reply_data(conn, &hdr, &status_ack, sizeof (status_ack)));
 }
 
+static void
+free_async_task(async_task_t *async_task)
+{
+	ASSERT(MUTEX_HELD(&async_tasks_mtx));
+	SLIST_REMOVE(&async_tasks, async_task, async_task, task_next);
+	uzfs_zinfo_drop_refcnt(async_task->zinfo, B_FALSE);
+	kmem_free(async_task->payload, async_task->payload_length);
+	kmem_free(async_task, sizeof (*async_task));
+}
+
+/*
+ * Iterate through all finished async tasks and send replies to clients.
+ */
+static int
+finish_async_tasks(void)
+{
+	async_task_t *async_task, *async_task_tmp;
+	int rc = 0;
+
+	mutex_enter(&async_tasks_mtx);
+	for (async_task = SLIST_FIRST(&async_tasks);
+	    async_task != NULL;
+	    async_task = async_task_tmp) {
+		async_task_tmp = SLIST_NEXT(async_task, task_next);
+		if (!async_task->finished)
+			continue;
+		/* connection could have been closed in the meantime */
+		if (!async_task->conn_closed) {
+			rc = reply_nodata(async_task->conn, async_task->status,
+			    async_task->hdr.opcode, async_task->hdr.io_seq);
+		}
+		free_async_task(async_task);
+		if (rc != 0)
+			return (rc);
+	}
+	mutex_exit(&async_tasks_mtx);
+	return (0);
+}
+
+/*
+ * Perform the command (in async context).
+ *
+ * Currently we have only snapshot commands which are async. We might need to
+ * make the code & structures more generic if we add more commands.
+ */
+static void
+uzfs_zvol_execute_async_command(void *arg)
+{
+	async_task_t *async_task = arg;
+	zvol_info_t *zinfo = async_task->zinfo;
+	char *snapname = async_task->payload;
+	char *dataset;
+	int rc;
+
+	switch (async_task->hdr.opcode) {
+	case ZVOL_OPCODE_SNAP_CREATE:
+		rc = dmu_objset_snapshot_one(zinfo->name, snapname);
+		if (rc != 0) {
+			LOG_ERR("Failed to create %s@%s: %d",
+			    zinfo->name, snapname, rc);
+			async_task->status = ZVOL_OP_STATUS_FAILED;
+		} else {
+			async_task->status = ZVOL_OP_STATUS_OK;
+		}
+		break;
+	case ZVOL_OPCODE_SNAP_DESTROY:
+		dataset = kmem_asprintf("%s@%s", zinfo->name, snapname);
+		rc = dsl_destroy_snapshot(dataset, B_FALSE);
+		strfree(dataset);
+		if (rc != 0) {
+			LOG_ERR("Failed to destroy %s@%s: %d",
+			    zinfo->name, snapname, rc);
+			async_task->status = ZVOL_OP_STATUS_FAILED;
+		} else {
+			async_task->status = ZVOL_OP_STATUS_OK;
+		}
+		break;
+	default:
+		ASSERT(0);
+	}
+
+	/*
+	 * Drop the async cmd if event loop thread has terminated or
+	 * corresponding connection has been closed
+	 */
+	mutex_enter(&async_tasks_mtx);
+	if (mgmt_eventfd < 0 || async_task->conn_closed) {
+		free_async_task(async_task);
+	} else {
+		uint64_t val = 1;
+
+		async_task->finished = B_TRUE;
+		rc = write(mgmt_eventfd, &val, sizeof (val));
+		ASSERT3P(rc, ==, sizeof (val));
+	}
+	mutex_exit(&async_tasks_mtx);
+}
+
+/*
+ * Dispatch command which should be executed asynchronously to a taskq.
+ */
+static int
+uzfs_zvol_dispatch_command(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
+    const char *payload, zvol_info_t *zinfo)
+{
+	struct epoll_event ev;
+	async_task_t *arg;
+
+	arg = kmem_zalloc(sizeof (*arg), KM_SLEEP);
+	arg->conn = conn;
+	arg->zinfo = zinfo;
+	arg->hdr = *hdrp;
+	arg->payload_length = strlen(payload) + 1;
+	arg->payload = kmem_zalloc(arg->payload_length, KM_SLEEP);
+	strcpy(arg->payload, payload);
+
+	mutex_enter(&async_tasks_mtx);
+	SLIST_INSERT_HEAD(&async_tasks, arg, task_next);
+	mutex_exit(&async_tasks_mtx);
+
+	taskq_dispatch(zinfo->uzfs_zvol_taskq, uzfs_zvol_execute_async_command,
+	    arg, TQ_SLEEP);
+	/* Until we have the result, don't poll read/write events on FD */
+	ev.events = 0;	/* ERR and HUP are implicitly set */
+	ev.data.ptr = conn;
+	return (epoll_ctl(epollfd, EPOLL_CTL_MOD, conn->conn_fd, &ev));
+}
+
 static int
 uzfs_zvol_rebuild_dw_replica_start(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
     mgmt_ack_t *mack, int rebuild_op_cnt)
@@ -549,16 +696,17 @@ uzfs_zvol_rebuild_dw_replica_start(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 
 	for (; rebuild_op_cnt > 0; rebuild_op_cnt--, mack++) {
 		if (mack->volname[0] != '\0') {
-			printf("Replica %s at %s:%u helping in rebuild\n",
+			LOG_INFO("zvol %s at %s:%u helping in rebuild",
 			    mack->volname, mack->ip, mack->port);
 		}
 		if (zinfo == NULL) {
 			zinfo = uzfs_zinfo_lookup(mack->dw_volname);
 			if ((zinfo == NULL) || (zinfo->mgmt_conn != conn)) {
-				printf("Replica %s not found or not matching "
-				    "conn\n", mack->dw_volname);
-				return (reply_error(conn, ZVOL_OP_STATUS_FAILED,
-				    hdrp->opcode, hdrp->io_seq, CS_INIT));
+				LOG_ERR("zvol %s not found or not matching "
+				    "connection", mack->dw_volname);
+				return (reply_nodata(conn,
+				    ZVOL_OP_STATUS_FAILED,
+				    hdrp->opcode, hdrp->io_seq));
 			}
 			/* Track # of rebuilds we are initializing on replica */
 			zinfo->zv->rebuild_info.rebuild_cnt = rebuild_op_cnt;
@@ -575,7 +723,7 @@ uzfs_zvol_rebuild_dw_replica_start(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 				uzfs_zvol_set_status(zinfo->zv,
 				    ZVOL_STATUS_HEALTHY);
 				uzfs_update_ionum_interval(zinfo, 0);
-				printf("Rebuild of replica %s completed\n",
+				LOG_INFO("Rebuild of zvol %s completed",
 				    zinfo->name);
 				uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
 				break;
@@ -585,10 +733,11 @@ uzfs_zvol_rebuild_dw_replica_start(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 		} else {
 			if (strncmp(zinfo->name, mack->dw_volname, MAXNAMELEN)
 			    != 0) {
-				printf("Replica %s not matching with zinfo"
-				    " %s\n", mack->dw_volname, zinfo->name);
-				return (reply_error(conn, ZVOL_OP_STATUS_FAILED,
-				    hdrp->opcode, hdrp->io_seq, CS_INIT));
+				LOG_ERR("zvol %s not matching with zinfo %s",
+				    mack->dw_volname, zinfo->name);
+				return (reply_nodata(conn,
+				    ZVOL_OP_STATUS_FAILED,
+				    hdrp->opcode, hdrp->io_seq));
 			}
 			uzfs_zinfo_take_refcnt(zinfo, B_FALSE);
 		}
@@ -596,8 +745,8 @@ uzfs_zvol_rebuild_dw_replica_start(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 		io_sfd = create_and_bind("", B_FALSE, B_FALSE);
 		if (io_sfd < 0) {
 			/* Fail this rebuild process entirely */
-			fprintf(stderr, "Rebuild IO socket create and bind"
-			    " failed on volume: %s\n", zinfo->name);
+			LOG_ERR("Rebuild IO socket create and bind"
+			    " failed on zvol: %s", zinfo->name);
 			uzfs_zvol_set_rebuild_status(zinfo->zv,
 			    ZVOL_REBUILDING_FAILED);
 			uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
@@ -631,6 +780,7 @@ process_message(uzfs_mgmt_conn_t *conn)
 	void *payload = conn->conn_buf;
 	size_t payload_size = conn->conn_bufsiz;
 	zvol_info_t *zinfo;
+	char *snap;
 	int rc = 0;
 
 	conn->conn_hdr = NULL;
@@ -643,8 +793,8 @@ process_message(uzfs_mgmt_conn_t *conn)
 	case ZVOL_OPCODE_PREPARE_FOR_REBUILD:
 	case ZVOL_OPCODE_REPLICA_STATUS:
 		if (payload_size == 0 || payload_size > MAX_NAME_LEN) {
-			rc = reply_error(conn, ZVOL_OP_STATUS_FAILED,
-			    hdrp->opcode, hdrp->io_seq, CS_INIT);
+			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
+			    hdrp->opcode, hdrp->io_seq);
 			break;
 		}
 		strncpy(zvol_name, payload, payload_size);
@@ -652,9 +802,9 @@ process_message(uzfs_mgmt_conn_t *conn)
 
 		if (((zinfo = uzfs_zinfo_lookup(zvol_name)) == NULL) ||
 		    (zinfo->mgmt_conn != conn)) {
-			fprintf(stderr, "Unknown zvol: %s\n", zvol_name);
-			rc = reply_error(conn, ZVOL_OP_STATUS_FAILED,
-			    hdrp->opcode, hdrp->io_seq, CS_INIT);
+			LOG_ERR("Unknown zvol: %s", zvol_name);
+			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
+			    hdrp->opcode, hdrp->io_seq);
 			break;
 		}
 
@@ -679,12 +829,47 @@ process_message(uzfs_mgmt_conn_t *conn)
 		uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
 		break;
 
+	case ZVOL_OPCODE_SNAP_CREATE:
+	case ZVOL_OPCODE_SNAP_DESTROY:
+		if (payload_size == 0 || payload_size > MAX_NAME_LEN) {
+			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
+			    hdrp->opcode, hdrp->io_seq);
+			break;
+		}
+		strncpy(zvol_name, payload, payload_size);
+		zvol_name[payload_size] = '\0';
+		snap = strchr(zvol_name, '@');
+		if (snap == NULL) {
+			LOG_ERR("Invalid snapshot name: %s",
+			    zvol_name);
+			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
+			    hdrp->opcode, hdrp->io_seq);
+			break;
+		}
+		*snap++ = '\0';
+		/* ref will be released when async command has finished */
+		if (((zinfo = uzfs_zinfo_lookup(zvol_name)) == NULL) ||
+		    (zinfo->mgmt_conn != conn)) {
+			LOG_ERR("Unknown zvol: %s", zvol_name);
+			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
+			    hdrp->opcode, hdrp->io_seq);
+			break;
+		}
+		if (hdrp->opcode == ZVOL_OPCODE_SNAP_CREATE) {
+			DBGCONN(conn, "Create snapshot command for %s@%s",
+			    zinfo->name, snap);
+		} else {
+			DBGCONN(conn, "Destroy snapshot command for %s@%s",
+			    zinfo->name, snap);
+		}
+		rc = uzfs_zvol_dispatch_command(conn, hdrp, snap, zinfo);
+		break;
 
 	case ZVOL_OPCODE_START_REBUILD:
 		/* iSCSI controller will send this msg to downgraded replica */
 		if (payload_size < sizeof (mgmt_ack_t)) {
-			rc = reply_error(conn, ZVOL_OP_STATUS_FAILED,
-			    hdrp->opcode, hdrp->io_seq, CS_INIT);
+			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
+			    hdrp->opcode, hdrp->io_seq);
 			break;
 		}
 		DBGCONN(conn, "Rebuild start command");
@@ -694,8 +879,8 @@ process_message(uzfs_mgmt_conn_t *conn)
 
 	default:
 		DBGCONN(conn, "Message with unknown OP code %d", hdrp->opcode);
-		rc = reply_error(conn, ZVOL_OP_STATUS_FAILED, hdrp->opcode,
-		    hdrp->io_seq, CS_INIT);
+		rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED, hdrp->opcode,
+		    hdrp->io_seq);
 		break;
 	}
 	kmem_free(hdrp, sizeof (*hdrp));
@@ -738,11 +923,14 @@ move_to_next_state(uzfs_mgmt_conn_t *conn)
 	case CS_READ_VERSION:
 		vers = *((uint16_t *)conn->conn_buf);
 		kmem_free(conn->conn_buf, sizeof (uint16_t));
+		conn->conn_buf = NULL;
 		if (vers != REPLICA_VERSION) {
-			fprintf(stderr, "invalid replica protocol version %d\n",
+			LOG_ERR("Invalid replica protocol version %d",
 			    vers);
-			rc = reply_error(conn, ZVOL_OP_STATUS_VERSION_MISMATCH,
-			    0, 0, CS_CLOSE);
+			rc = reply_nodata(conn, ZVOL_OP_STATUS_VERSION_MISMATCH,
+			    0, 0);
+			/* override the default next state from reply_nodata */
+			conn->conn_state = CS_CLOSE;
 		} else {
 			DBGCONN(conn, "Reading header..");
 			hdrp = kmem_zalloc(sizeof (*hdrp), KM_SLEEP);
@@ -795,8 +983,10 @@ uzfs_zvol_mgmt_thread(void *arg)
 	struct epoll_event	ev, events[MAX_EVENTS];
 	int			nfds, i, rc;
 	boolean_t		do_scan;
+	async_task_t		*async_task;
 
 	mutex_init(&conn_list_mtx, NULL, MUTEX_DEFAULT, NULL);
+	mutex_init(&async_tasks_mtx, NULL, MUTEX_DEFAULT, NULL);
 
 	mgmt_eventfd = eventfd(0, EFD_NONBLOCK);
 	if (mgmt_eventfd < 0) {
@@ -839,8 +1029,9 @@ uzfs_zvol_mgmt_thread(void *arg)
 			conn = events[i].data.ptr;
 
 			/*
-			 * data.ptr is null only for eventfd. In that case
-			 * zinfo was created or deleted -> scan the list.
+			 * data.ptr is null only for eventfd. In that case:
+			 *  A) zinfo was created or deleted -> scan the list or
+			 *  B) async task has finished -> send reply
 			 */
 			if (conn == NULL) {
 				uint64_t value;
@@ -849,15 +1040,17 @@ uzfs_zvol_mgmt_thread(void *arg)
 				/* consume the event */
 				rc = read(mgmt_eventfd, &value, sizeof (value));
 				ASSERT3P(rc, ==, sizeof (value));
+				if (finish_async_tasks() != 0)
+					goto exit;
 				continue;
 			}
 
 			if (events[i].events & EPOLLERR) {
 				if (conn->conn_state == CS_CONNECT) {
-					DBGCONN(conn, "Failed to connect");
+					LOG_ERR("Failed to connect to %s:%d",
+					    conn->conn_host, conn->conn_port);
 				} else {
-					fprintf(stderr, "Error on connection "
-					    "to %s:%d\n",
+					LOG_ERR("Error on connection to %s:%d",
 					    conn->conn_host, conn->conn_port);
 				}
 				if (close_conn(conn) != 0)
@@ -924,14 +1117,25 @@ uzfs_zvol_mgmt_thread(void *arg)
 exit:
 	(void) close(epollfd);
 	epollfd = -1;
-	(void) close(mgmt_eventfd);
-	mgmt_eventfd = -1;
 	mutex_enter(&conn_list_mtx);
 	SLIST_FOREACH(conn, &uzfs_mgmt_conns, conn_next) {
-		close_conn(conn);
+		if (conn->conn_fd >= 0)
+			close_conn(conn);
 	}
 	mutex_exit(&conn_list_mtx);
 	mutex_destroy(&conn_list_mtx);
-	fprintf(stderr, "uzfs_zvol_mgmt_thread thread exiting\n");
+
+	mutex_enter(&async_tasks_mtx);
+	(void) close(mgmt_eventfd);
+	mgmt_eventfd = -1;
+	while ((async_task = SLIST_FIRST(&async_tasks)) != NULL) {
+		SLIST_REMOVE_HEAD(&async_tasks, task_next);
+		uzfs_zinfo_drop_refcnt(async_task->zinfo, B_FALSE);
+		kmem_free(async_task, sizeof (*async_task));
+	}
+	mutex_exit(&async_tasks_mtx);
+	mutex_destroy(&async_tasks_mtx);
+
+	LOG_DEBUG("uzfs_zvol_mgmt thread exiting");
 	zk_thread_exit();
 }

@@ -164,6 +164,8 @@ close_conn(uzfs_mgmt_conn_t *conn)
 {
 	async_task_t *async_task;
 
+	DBGCONN(conn, "Closing the connection");
+
 	/* Release resources tight to the conn */
 	if (conn->conn_buf != NULL) {
 		kmem_free(conn->conn_buf, conn->conn_bufsiz);
@@ -191,6 +193,26 @@ close_conn(uzfs_mgmt_conn_t *conn)
 	}
 	mutex_exit(&async_tasks_mtx);
 
+	return (0);
+}
+
+/*
+ * Complete destruction of conn struct. conn list mtx must be held when calling
+ * this function.
+ * Close connection if still open, remove conn from list of conns and free it.
+ */
+static int
+destroy_conn(uzfs_mgmt_conn_t *conn)
+{
+	ASSERT(MUTEX_HELD(&conn_list_mtx));
+
+	if (conn->conn_fd >= 0) {
+		if (close_conn(conn) != 0)
+			return (-1);
+	}
+	DBGCONN(conn, "Destroying the connection");
+	SLIST_REMOVE(&uzfs_mgmt_conns, conn, uzfs_mgmt_conn, conn_next);
+	kmem_free(conn, sizeof (*conn));
 	return (0);
 }
 
@@ -232,12 +254,15 @@ connect_to_tgt(uzfs_mgmt_conn_t *conn)
 static int
 scan_conn_list(void)
 {
-	uzfs_mgmt_conn_t *conn;
+	uzfs_mgmt_conn_t *conn, *conn_tmp;
 	struct epoll_event ev;
 	int rc = 0;
 
 	mutex_enter(&conn_list_mtx);
-	SLIST_FOREACH(conn, &uzfs_mgmt_conns, conn_next) {
+	/* iterate safely because entries can be destroyed while iterating */
+	conn = SLIST_FIRST(&uzfs_mgmt_conns);
+	while (conn != NULL) {
+		conn_tmp = SLIST_NEXT(conn, conn_next);
 		/* we need to create new connection */
 		if (conn->conn_refcount > 0 && conn->conn_fd < 0 &&
 		    time(NULL) - conn->conn_last_connect >= RECONNECT_DELAY) {
@@ -256,13 +281,13 @@ scan_conn_list(void)
 				}
 			}
 		/* we need to close unused connection */
-		} else if (conn->conn_refcount == 0 && conn->conn_fd >= 0) {
-			DBGCONN(conn, "Closing the connection");
-			if (close_conn(conn) != 0) {
+		} else if (conn->conn_refcount == 0) {
+			if (destroy_conn(conn) != 0) {
 				rc = -1;
 				break;
 			}
 		}
+		conn = conn_tmp;
 	}
 	mutex_exit(&conn_list_mtx);
 
@@ -363,31 +388,10 @@ zinfo_destroy_cb(zvol_info_t *zinfo)
 	zinfo->mgmt_conn = NULL;
 
 	if (--conn->conn_refcount == 0) {
-		/* signal the event loop thread to close FD */
-		if (conn->conn_fd >= 0) {
-			ASSERT3P(mgmt_eventfd, >=, 0);
-			rc = write(mgmt_eventfd, &val, sizeof (val));
-			ASSERT3P(rc, ==, sizeof (val));
-			mutex_exit(&conn_list_mtx);
-			/* wait for event loop thread to close the FD */
-			/* TODO: too rough algorithm with sleep */
-			while (1) {
-				usleep(1000);
-				mutex_enter(&conn_list_mtx);
-				if (conn->conn_refcount > 0 ||
-				    conn->conn_fd < 0)
-					break;
-				mutex_exit(&conn_list_mtx);
-			}
-			/* someone else reused the conn while waiting - ok */
-			if (conn->conn_refcount > 0) {
-				mutex_exit(&conn_list_mtx);
-				return;
-			}
-		}
-		SLIST_REMOVE(&uzfs_mgmt_conns, conn, uzfs_mgmt_conn,
-		    conn_next);
-		kmem_free(conn, sizeof (*conn));
+		/* signal the event loop thread to close FD and destroy conn */
+		ASSERT3P(mgmt_eventfd, >=, 0);
+		rc = write(mgmt_eventfd, &val, sizeof (val));
+		ASSERT3P(rc, ==, sizeof (val));
 	}
 	mutex_exit(&conn_list_mtx);
 }
@@ -1136,7 +1140,8 @@ exit:
 	epollfd = -1;
 	mutex_enter(&conn_list_mtx);
 	SLIST_FOREACH(conn, &uzfs_mgmt_conns, conn_next) {
-		close_conn(conn);
+		if (conn->conn_fd >= 0)
+			close_conn(conn);
 	}
 	mutex_exit(&conn_list_mtx);
 	mutex_destroy(&conn_list_mtx);

@@ -649,6 +649,7 @@ static enum fio_q_status fio_repl_queue(struct thread_data *td,
 		hdr.opcode = ZVOL_OPCODE_READ;
 	} else {
 		hdr.opcode = ZVOL_OPCODE_SYNC;
+		hdr.len = 0;
 	}
 
 	if (write_to_socket(io_u->file->fd, &hdr, sizeof (hdr), 0) != 0) {

@@ -95,6 +95,7 @@ create_and_bind(const char *port, int bind_needed, boolean_t nonblock)
 
 	for (rp = result; rp != NULL; rp = rp->ai_next) {
 		int flags = rp->ai_socktype;
+		int enable = 1;
 
 		if (nonblock)
 			flags |= SOCK_NONBLOCK;
@@ -105,6 +106,10 @@ create_and_bind(const char *port, int bind_needed, boolean_t nonblock)
 
 		if (bind_needed == 0) {
 			break;
+		}
+		if (setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, &enable,
+		    sizeof (int)) < 0) {
+			perror("setsockopt(SO_REUSEADDR) failed");
 		}
 		s = bind(sfd, rp->ai_addr, rp->ai_addrlen);
 		if (s == 0) {

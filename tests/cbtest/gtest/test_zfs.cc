@@ -29,7 +29,6 @@
 
 #include <gtest/gtest.h>
 #include <unistd.h>
-#include <algorithm>
 
 #include "gtest_utils.h"
 
@@ -46,9 +45,6 @@ TEST(RedundantMetadata, NoneValue) {
 	pool.createZvol("vol1", "-o io.openebs:targetip=127.0.0.1");
 
 	s = execCmd("zfs", std::string("get -Ho value redundant_metadata ") + zvol_name);
-	// Trim white space at the end of string
-	s.erase(std::find_if(s.rbegin(), s.rend(),
-	    std::not1(std::ptr_fun<int, int>(std::isspace))).base(), s.end());
 	EXPECT_STREQ(s.c_str(), "none");
 
 	execCmd("zfs", std::string("set redundant_metadata=none ") + zvol_name);

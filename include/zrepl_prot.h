@@ -70,6 +70,7 @@ enum zvol_op_code {
 	ZVOL_OPCODE_REBUILD_COMPLETE,
 	ZVOL_OPCODE_SNAP_CREATE,
 	ZVOL_OPCODE_SNAP_DESTROY,
+	ZVOL_OPCODE_RESIZE,
 } __attribute__((packed));
 
 typedef enum zvol_op_code zvol_op_code_t;
@@ -125,8 +126,8 @@ struct mgmt_ack {
 	uint64_t zvol_guid;
 	uint16_t port;
 	char	ip[MAX_IP_LEN];
-	char	volname[MAX_NAME_LEN]; // Replica helping rebuild
-	char	dw_volname[MAX_NAME_LEN]; // Replica being rebuilt
+	char	volname[MAX_NAME_LEN]; // zvol helping rebuild
+	char	dw_volname[MAX_NAME_LEN]; // zvol being rebuilt
 } __attribute__((packed));
 
 typedef struct mgmt_ack mgmt_ack_t;
@@ -158,6 +159,14 @@ struct zrepl_status_ack {
 } __attribute__((packed));
 
 typedef struct zrepl_status_ack zrepl_status_ack_t;
+
+struct zvol_op_resize_data {
+	char	volname[MAX_NAME_LEN];	/* zvol to resize */
+	uint64_t size;			/* new size of zvol */
+} __attribute__((packed));
+
+typedef struct zvol_op_resize_data zvol_op_resize_data_t;
+
 /*
  * Describes chunk of data following this header.
  *

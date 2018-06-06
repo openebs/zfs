@@ -40,18 +40,58 @@ Special configure option `--enable-debug` should be used in order to create
 zfs and zpool commands which don't call into the kernel using ioctls, but
 instead call into uZFS process for serving "ioctls" using tcp connection.
 Other than that the build steps are the same as for ZoL:
+
 ```bash
 ./autogen.sh
 CFLAGS="-g -O0" ./configure --enable-debug --enable-uzfs=yes
 make
 ```
 
-# Running uzfs
+Additional configure option `--with-fio=<path-to-fio-repo>` can be supplied
+in case that fio engine for `zrepl` is wanted.
+
+# Running it
 
 This assumes that you have configured zfs with `--enable-uzfs=yes` option.
-To try zpool and zfs commands, start `cmd/tgt/tgt` binary with `sudo` and
+To try zpool and zfs commands, start `cmd/zrepl/zrepl` binary with `sudo` and
 leave it running. Now zpool and zfs commands from cmd/ directory can be
-used in usual way.
+run in usual way and they will act on running instance of `zrepl`.
+
+# Testing performance
+
+Standard IO benchmarking tool `fio` can be used with special engine for
+`zrepl`. Make sure that uzfs was configured and built with fio engine.
+If that is the case, then the fio can be started as follows (replace
+`$UZFS_PATH` by path to built uzfs repository):
+
+```bash
+LD_LIBRARY_PATH=fio
+LD_LIBRARY_PATH=$UZFS_PATH/lib/fio/.libs fio config.fio
+```
+
+Example of fio config file can be found in `lib/fio` directory.
+
+# Docker image
+
+A docker image with zrepl *for testing purpose* can be built as follows.
+The privileged parameter when starting container is to enable process
+tracing inside the container. The last command gets you a shell inside
+the container which can be used for debugging, running zfs & zpool commands,
+etc.
+
+```bash
+sudo docker build -t my-cstor .
+sudo docker run --privileged -it my-cstor
+sudo docker exec -it <container-id> /bin/bash
+```
+
+You could also run local image repo and upload the test image there:
+
+```bash
+sudo docker run -d -p 5000:5000 --restart=always --name registry registry:2
+sudo docker build -t localhost:5000/my-cstor .
+sudo docker push localhost:5000/my-cstor
+```
 
 # Caveats
 
@@ -59,6 +99,7 @@ Disk write cache must be disabled for any device not managed by linux
 sd driver. Cache flush is not supported for other drivers than sd.
 
 # Contributing
+
 Make sure to run cstyle on your changes before you submit a pull request:
 
 ```bash
@@ -72,5 +113,6 @@ tests:
 ```bash
 cmd/ztest/ztest -V
 tests/cbtest/gtest/test_uzfs
+tests/cbtest/gtest/test_zrepl_prot
 sudo tests/cbtest/script/test_uzfs.sh
 ```

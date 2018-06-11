@@ -70,7 +70,9 @@ script:
     # XXX enable the ztest when ticket #152 is fixed
     - if [ $ZFS_BUILD_TAGS = 0 ]; then
         export FIO_SRCDIR=$PWD/../fio;
-        travis_wait 60 sudo bash ./tests/cbtest/script/test_uzfs.sh -T all || travis_terminate 1;
+        travis_wait 5 sudo bash ./tests/cbtest/script/test_uzfs.sh -T all
+        sudo ps -auxwww
+        sudo bash print_debug_info.sh
       else
         sudo /sbin/modprobe zfs;
         travis_wait 10 /sbin/ztest || travis_terminate 1;

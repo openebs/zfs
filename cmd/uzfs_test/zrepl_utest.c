@@ -411,7 +411,7 @@ writer_thread(void *arg)
 		io->hdr.len = sizeof (struct zvol_io_rw_hdr) +
 		    warg->io_block_size;
 		io->hdr.status = 0;
-		io->hdr.flags = ZVOL_OP_FLAG_NONE;
+		io->hdr.flags = 0;
 		io->hdr.offset = nbytes;
 		io->rw_hdr.len = warg->io_block_size;
 		io->rw_hdr.io_num = i + 1;
@@ -450,7 +450,7 @@ writer_thread(void *arg)
 	io->hdr.version = REPLICA_VERSION;
 	io->hdr.opcode = ZVOL_OPCODE_SYNC;
 	io->hdr.len = 0;
-	io->hdr.flags = ZVOL_OP_FLAG_NONE;
+	io->hdr.flags = 0;
 	count = write(sfd, (void *)&io->hdr, sizeof (io->hdr));
 	if (count == -1) {
 		printf("Error sending sync on ds0\n");
@@ -474,7 +474,7 @@ writer_thread(void *arg)
 		io->hdr.io_seq = i;
 		io->hdr.len    = warg->io_block_size;
 		io->hdr.status = 0;
-		io->hdr.flags = ZVOL_OP_FLAG_NONE;
+		io->hdr.flags = 0;
 		io->hdr.offset = nbytes;
 
 		count = write(sfd, (void *)&io->hdr, sizeof (zvol_io_hdr_t));

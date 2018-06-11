@@ -38,8 +38,7 @@ install:
     # we need fio repo to build zfs replica fio engine
     - git clone https://github.com/axboe/fio
     - cd fio
-    # TODO: replace commit hash by version tag in future
-    - git checkout 2e4ef4fbd69eb6d4c07f2f362463e3f3df2e808c
+    - git checkout fio-3.7
     - ./configure
     - make -j4
     - cd ..

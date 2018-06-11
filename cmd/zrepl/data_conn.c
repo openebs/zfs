@@ -200,18 +200,22 @@ uzfs_zvol_worker(void *arg)
 	int		rc = 0;
 	int 		write = 0;
 	boolean_t	rebuild_cmd_req;
+	boolean_t	read_metadata;
 
 	zio_cmd = (zvol_io_cmd_t *)arg;
 	hdr = &zio_cmd->hdr;
 	zinfo = zio_cmd->zv;
 	zvol_state = zinfo->zv;
 	rebuild_cmd_req = hdr->flags & ZVOL_OP_FLAG_REBUILD;
+	read_metadata = hdr->flags & ZVOL_OP_FLAG_READ_METADATA;
 
 	/*
 	 * If zvol hasn't passed rebuild phase or if read
-	 * is meant for rebuild then we need the metadata
+	 * is meant for rebuild or if target has asked for metadata
+	 * then we need the metadata
 	 */
-	if (!rebuild_cmd_req && ZVOL_IS_REBUILDED(zvol_state)) {
+	if ((!rebuild_cmd_req && ZVOL_IS_REBUILDED(zvol_state)) &&
+	    !read_metadata) {
 		metadata_desc = NULL;
 		zio_cmd->metadata_desc = NULL;
 	} else {

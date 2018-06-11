@@ -639,7 +639,7 @@ static enum fio_q_status fio_repl_queue(struct thread_data *td,
 	hdr.offset = io_u->offset;
 	hdr.len = io_u->xfer_buflen;
 	hdr.status = 0;
-	hdr.flags = 0;
+	hdr.flags = ZVOL_OP_FLAG_NONE;
 	hdr.checkpointed_io_seq = 0;
 
 	if (io_u->ddir == DDIR_WRITE) {

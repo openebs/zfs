@@ -31,14 +31,14 @@ ZTEST="$SRC_PATH/cmd/ztest/ztest"
 UZFS_TEST="$SRC_PATH/cmd/uzfs_test/uzfs_test"
 UZFS_TEST_SYNC_SH="$SRC_PATH/cmd/uzfs_test/uzfs_test_sync.sh"
 TMPDIR="/tmp"
-VOLSIZE="1G"
+VOLSIZE="20M"
 UZFS_TEST_POOL="testp"
 UZFS_TEST_VOL="ds0"
 UZFS_REBUILD_VOL="ds1"
 UZFS_REBUILD_VOL1="ds2"
 UZFS_REBUILD_VOL2="ds3"
-UZFS_TEST_VOLSIZE="128M"
-UZFS_TEST_VOLSIZE_IN_NUM=134217728
+UZFS_TEST_VOLSIZE="20M"
+UZFS_TEST_VOLSIZE_IN_NUM=20971520
 ZREPL_PID="-1"
 
 source $UZFS_TEST_SYNC_SH
@@ -96,9 +96,7 @@ log_must_not()
 start_zrepl()
 {
 	if [ $ZREPL_PID -eq -1 ]; then
-		# XXX Remove redirection to /dev/null when debug messages are removed
-		# from zrepl
-		$ZREPL >/dev/null &
+		$ZREPL &
 		ZREPL_PID=$!
 		sleep 5
 	else
@@ -742,11 +740,18 @@ run_fio_test()
 
 	[ -z "$FIO_SRCDIR" ] && log_fail "FIO_SRCDIR must be defined"
 
-	create_disk "$TMPDIR/fio_disk1.img"
+	# Create backing store on disk device to test libaio backend
+	log_must truncate -s 100MB /tmp/disk;
+	if [ -e /dev/fake-dev ]; then
+		sudo losetup -d /dev/fake-dev;
+		sudo rm -f /dev/fake-dev;
+	fi
+	log_must sudo mknod /dev/fake-dev b 7 200;
+	log_must sudo chmod 666 /dev/fake-dev;
+	log_must sudo losetup /dev/fake-dev /tmp/disk;
 
 	log_must $ZPOOL create -f $fio_pool \
-	    -o cachefile="$TMPDIR/zpool_$fio_pool.cache" \
-	    "$TMPDIR/fio_disk1.img"
+	    -o cachefile="$TMPDIR/zpool_$fio_pool.cache" "/tmp/disk"
 	log_must $ZFS create -sV $VOLSIZE -o volblocksize=4k -o io.openebs:targetip=127.0.0.1:6060 $fio_pool/vol1
 	log_must $ZFS create -sV $VOLSIZE -o volblocksize=4k -o io.openebs:targetip=127.0.0.1:6060 $fio_pool/vol2
 	cat >$TMPDIR/test.fio <<EOF
@@ -760,7 +765,7 @@ ramp_time=0
 iodepth=128
 rw=randrw
 bs=4k
-filesize=100m
+filesize=20m
 fallocate=none
 time_based=1
 runtime=15
@@ -785,7 +790,9 @@ EOF
 	log_must $ZFS destroy -r $fio_pool/vol2
 	log_must destroy_pool $fio_pool
 	log_must rm $TMPDIR/test.fio
-	destroy_disk "$TMPDIR/fio_disk1.img"
+	log_must sudo losetup -d /dev/fake-dev;
+	log_must sudo rm /dev/fake-dev;
+	log_must rm /tmp/disk;
 
 	return 0
 }
@@ -1103,19 +1110,6 @@ run_uzfs_test()
 	return 0
 }
 
-run_dmu_test()
-{
-	log_must truncate -s 100MB /tmp/disk;
-	log_must sudo mknod /dev/fake-dev b 7 200;
-	log_must sudo chmod 666 /dev/fake-dev;
-	log_must sudo losetup /dev/fake-dev /tmp/disk;
-	log_must sudo losetup -d /dev/fake-dev;
-	log_must sudo rm /dev/fake-dev;
-	log_must rm /tmp/disk;
-
-	return 0
-}
-
 usage()
 {
 cat << EOF
@@ -1184,7 +1178,6 @@ run_zvol_test()
 	log_must nice -n -20 $ZTEST -VVVVV
 
 	run_uzfs_test
-	run_dmu_test
 
 	stop_zrepl
 	log_must $GTEST_UZFS
@@ -1199,7 +1192,7 @@ run_rebuild_test()
 
 	log_must setup_uzfs_test nolog 4096 $VOLSIZE standard uzfs_rebuild_pool2 uzfs_vol1 uzfs_rebuild_vdev2
 	log_must export_pool uzfs_rebuild_pool2
-	log_must $UZFS_TEST -T 0 -t 10 -n 10 -p uzfs_rebuild_pool2 -d uzfs_vol1 -a 419430400 &
+	log_must $UZFS_TEST -T 0 -t 10 -n 10 -p uzfs_rebuild_pool2 -d uzfs_vol1 -a $UZFS_TEST_VOLSIZE_IN_NUM &
 	pid1=$!
 
 	log_must setup_uzfs_test nolog 4096 $VOLSIZE standard uzfs_rebuild_pool3 uzfs_vol1 uzfs_rebuild_vdev3
@@ -1207,7 +1200,7 @@ run_rebuild_test()
 	log_must export_pool uzfs_rebuild_pool3
 	log_must export_pool uzfs_rebuild_pool4
 
-	log_must $UZFS_TEST -T 3 -t 60 -n 2 -p uzfs_rebuild_pool3,uzfs_rebuild_pool4 -d uzfs_vol1 -a 629145600 &
+	log_must $UZFS_TEST -T 3 -t 60 -n 2 -p uzfs_rebuild_pool3,uzfs_rebuild_pool4 -d uzfs_vol1 -a $UZFS_TEST_VOLSIZE_IN_NUM &
 	pid2=$!
 
 	wait_for_pids $pid1 $pid2

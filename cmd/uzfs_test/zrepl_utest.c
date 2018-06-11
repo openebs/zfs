@@ -449,6 +449,8 @@ writer_thread(void *arg)
 
 	io->hdr.version = REPLICA_VERSION;
 	io->hdr.opcode = ZVOL_OPCODE_SYNC;
+	io->hdr.len = 0;
+	io->hdr.flags = 0;
 	count = write(sfd, (void *)&io->hdr, sizeof (io->hdr));
 	if (count == -1) {
 		printf("Error sending sync on ds0\n");
@@ -654,7 +656,7 @@ zrepl_utest(void *arg)
 
 	io_block_size = 4096;
 	active_size = 0;
-	max_iops = 10000;
+	max_iops = 1000;
 	pool = "testp";
 	ds = "ds0";
 
@@ -847,7 +849,7 @@ zrepl_rebuild_test(void *arg)
 
 	io_block_size = 4096;
 	active_size = 0;
-	max_iops = 2000;
+	max_iops = 1000;
 	pool = "testp";
 	ds = "ds0";
 	ds1 = "ds1";

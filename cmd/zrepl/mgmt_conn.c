@@ -607,28 +607,46 @@ uzfs_zvol_execute_async_command(void *arg)
 {
 	async_task_t *async_task = arg;
 	zvol_info_t *zinfo = async_task->zinfo;
-	char *snapname = async_task->payload;
 	char *dataset;
+	char *snap;
+	uint64_t volsize;
 	int rc;
 
 	switch (async_task->hdr.opcode) {
 	case ZVOL_OPCODE_SNAP_CREATE:
-		rc = dmu_objset_snapshot_one(zinfo->name, snapname);
+		snap = async_task->payload;
+		rc = dmu_objset_snapshot_one(zinfo->name, snap);
 		if (rc != 0) {
 			LOG_ERR("Failed to create %s@%s: %d",
-			    zinfo->name, snapname, rc);
+			    zinfo->name, snap, rc);
 			async_task->status = ZVOL_OP_STATUS_FAILED;
 		} else {
 			async_task->status = ZVOL_OP_STATUS_OK;
 		}
 		break;
 	case ZVOL_OPCODE_SNAP_DESTROY:
-		dataset = kmem_asprintf("%s@%s", zinfo->name, snapname);
+		snap = async_task->payload;
+		dataset = kmem_asprintf("%s@%s", zinfo->name, snap);
 		rc = dsl_destroy_snapshot(dataset, B_FALSE);
 		strfree(dataset);
 		if (rc != 0) {
 			LOG_ERR("Failed to destroy %s@%s: %d",
-			    zinfo->name, snapname, rc);
+			    zinfo->name, snap, rc);
+			async_task->status = ZVOL_OP_STATUS_FAILED;
+		} else {
+			async_task->status = ZVOL_OP_STATUS_OK;
+		}
+		break;
+	case ZVOL_OPCODE_RESIZE:
+		volsize = *(uint64_t *)async_task->payload;
+		rc = zvol_check_volsize(volsize, zinfo->zv->zv_volblocksize);
+		if (rc == 0) {
+			rc = zvol_update_volsize(volsize, zinfo->zv->zv_objset);
+			if (rc == 0)
+				zvol_size_changed(zinfo->zv, volsize);
+		}
+		if (rc != 0) {
+			LOG_ERR("Failed to resize zvol %s", zinfo->name);
 			async_task->status = ZVOL_OP_STATUS_FAILED;
 		} else {
 			async_task->status = ZVOL_OP_STATUS_OK;
@@ -660,7 +678,7 @@ uzfs_zvol_execute_async_command(void *arg)
  */
 static int
 uzfs_zvol_dispatch_command(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
-    const char *payload, zvol_info_t *zinfo)
+    void *payload, int length, zvol_info_t *zinfo)
 {
 	struct epoll_event ev;
 	async_task_t *arg;
@@ -669,9 +687,9 @@ uzfs_zvol_dispatch_command(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	arg->conn = conn;
 	arg->zinfo = zinfo;
 	arg->hdr = *hdrp;
-	arg->payload_length = strlen(payload) + 1;
+	arg->payload_length = length;
 	arg->payload = kmem_zalloc(arg->payload_length, KM_SLEEP);
-	strcpy(arg->payload, payload);
+	memcpy(arg->payload, payload, arg->payload_length);
 
 	mutex_enter(&async_tasks_mtx);
 	SLIST_INSERT_HEAD(&async_tasks, arg, task_next);
@@ -779,6 +797,7 @@ process_message(uzfs_mgmt_conn_t *conn)
 	zvol_io_hdr_t *hdrp = conn->conn_hdr;
 	void *payload = conn->conn_buf;
 	size_t payload_size = conn->conn_bufsiz;
+	zvol_op_resize_data_t *resize_data;
 	zvol_info_t *zinfo;
 	char *snap;
 	int rc = 0;
@@ -860,9 +879,16 @@ process_message(uzfs_mgmt_conn_t *conn)
 		}
 		*snap++ = '\0';
 		/* ref will be released when async command has finished */
-		if (((zinfo = uzfs_zinfo_lookup(zvol_name)) == NULL) ||
-		    (zinfo->mgmt_conn != conn)) {
+		if ((zinfo = uzfs_zinfo_lookup(zvol_name)) == NULL) {
 			LOG_ERR("Unknown zvol: %s", zvol_name);
+			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
+			    hdrp->opcode, hdrp->io_seq);
+			break;
+		}
+		if (zinfo->mgmt_conn != conn) {
+			uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
+			LOG_ERR("Target used invalid connection for "
+			    "zvol %s\n", zvol_name);
 			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
 			    hdrp->opcode, hdrp->io_seq);
 			break;
@@ -874,7 +900,37 @@ process_message(uzfs_mgmt_conn_t *conn)
 			DBGCONN(conn, "Destroy snapshot command for %s@%s",
 			    zinfo->name, snap);
 		}
-		rc = uzfs_zvol_dispatch_command(conn, hdrp, snap, zinfo);
+		rc = uzfs_zvol_dispatch_command(conn, hdrp, snap,
+		    strlen(snap) + 1, zinfo);
+		break;
+
+	case ZVOL_OPCODE_RESIZE:
+		if (payload_size != sizeof (*resize_data)) {
+			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
+			    hdrp->opcode, hdrp->io_seq);
+			break;
+		}
+		resize_data = payload;
+
+		/* ref will be released when async command has finished */
+		if ((zinfo = uzfs_zinfo_lookup(resize_data->volname)) == NULL) {
+			LOG_ERR("Unknown zvol: %s", zvol_name);
+			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
+			    hdrp->opcode, hdrp->io_seq);
+			break;
+		}
+		if (zinfo->mgmt_conn != conn) {
+			uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
+			LOG_ERR("Target used invalid connection for "
+			    "zvol %s\n", zvol_name);
+			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
+			    hdrp->opcode, hdrp->io_seq);
+			break;
+		}
+		DBGCONN(conn, "Resize zvol %s to %lu bytes", zinfo->name,
+		    resize_data->size);
+		rc = uzfs_zvol_dispatch_command(conn, hdrp, &resize_data->size,
+		    sizeof (uint64_t), zinfo);
 		break;
 
 	case ZVOL_OPCODE_START_REBUILD:

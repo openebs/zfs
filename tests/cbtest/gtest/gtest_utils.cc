@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <string>
 #include <array>
+#include <algorithm>
 
 #include "gtest_utils.h"
 
@@ -80,6 +81,10 @@ std::string GtestUtils::execCmd(std::string const &zfsCmd,
 		throw std::runtime_error(std::string("Command failed: ") +
 		    cmdLine);
 
+	// Trim white space at the end of string
+	result.erase(std::find_if(result.rbegin(), result.rend(),
+	    std::not1(std::ptr_fun<int, int>(std::isspace))).base(),
+	    result.end());
 	return result;
 }
 

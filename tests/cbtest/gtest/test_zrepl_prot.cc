@@ -39,7 +39,6 @@
 #include <netinet/tcp.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <algorithm>
 
 #include <zrepl_prot.h>
 #include "gtest_utils.h"
@@ -420,13 +419,7 @@ static void graceful_close(int sockfd)
 
 static std::string getPoolState(std::string pname)
 {
-	std::string s;
-
-	s = execCmd("zpool", std::string("list -Ho health ") + pname);
-	// Trim white space at the end of string
-	s.erase(std::find_if(s.rbegin(), s.rend(),
-	    std::not1(std::ptr_fun<int, int>(std::isspace))).base(), s.end());
-	return (s);
+	return (execCmd("zpool", std::string("list -Ho health ") + pname));
 }
 
 /*
@@ -1524,6 +1517,65 @@ TEST(Snapshot, CreateAndDestroy) {
 
 	ASSERT_THROW(execCmd("zfs", std::string("list ") + snap_name),
 	    std::runtime_error);
+
+	graceful_close(control_fd);
+}
+
+/*
+ * Test zvol resize
+ */
+TEST(ZvolResizeTest, ResizeZvol) {
+	zvol_io_hdr_t hdr_out, hdr_in;
+	Zrepl zrepl;
+	Target target;
+	int rc, control_fd;
+	std::string host;
+	std::string str;
+	uint64_t val1, val2;
+	uint16_t port;
+	zvol_op_resize_data_t resize_data;
+	TestPool pool("resizepool");
+	std::string zvolname = pool.getZvolName("vol");
+
+	zrepl.start();
+	pool.create();
+	pool.createZvol("vol", "-o io.openebs:targetip=127.0.0.1");
+
+	// get the zvol size before
+	str = execCmd("zfs", std::string("get -Hpo value volsize ") + zvolname);
+	val1 = atoi(str.c_str());
+
+	rc = target.listen();
+	ASSERT_GE(rc, 0);
+	control_fd = target.accept(-1);
+	ASSERT_GE(control_fd, 0);
+	do_handshake(zvolname, host, port, NULL, control_fd,
+	    ZVOL_OP_STATUS_OK);
+
+	hdr_out.version = REPLICA_VERSION;
+	hdr_out.opcode = ZVOL_OPCODE_RESIZE;
+	hdr_out.status = ZVOL_OP_STATUS_OK;
+	hdr_out.io_seq = 1;
+	hdr_out.offset = 0;
+	hdr_out.len = sizeof (resize_data);
+	rc = write(control_fd, &hdr_out, sizeof (hdr_out));
+	ASSERT_EQ(rc, sizeof (hdr_out));
+	// double the zvol size
+	val1 <<= 1;
+	strcpy(resize_data.volname, zvolname.c_str());
+	resize_data.size = val1;
+	rc = write(control_fd, &resize_data, sizeof (resize_data));
+	ASSERT_EQ(rc, sizeof (resize_data));
+
+	rc = read(control_fd, &hdr_in, sizeof (hdr_in));
+	ASSERT_EQ(rc, sizeof (hdr_in));
+	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
+	ASSERT_EQ(hdr_in.len, 0);
+
+	// get the zvol size after
+	str = execCmd("zfs", std::string("get -Hpo value volsize ") + zvolname);
+	val2 = atoi(str.c_str());
+	EXPECT_EQ(val1, val2);
 
 	graceful_close(control_fd);
 }

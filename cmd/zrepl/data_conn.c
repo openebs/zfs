@@ -365,7 +365,11 @@ next_step:
 		hdr.opcode = ZVOL_OPCODE_REBUILD_STEP;
 		hdr.checkpointed_io_seq = checkpointed_ionum;
 		hdr.offset = offset;
-		hdr.len = ZVOL_REBUILD_STEP_SIZE;
+		if ((offset + ZVOL_REBUILD_STEP_SIZE) >
+		    ZVOL_VOLUME_SIZE(zvol_state))
+			hdr.len = ZVOL_VOLUME_SIZE(zvol_state) - offset;
+		else
+			hdr.len = ZVOL_REBUILD_STEP_SIZE;
 		rc = uzfs_zvol_socket_write(sfd, (char *)&hdr, sizeof (hdr));
 		if (rc != 0) {
 			LOG_ERRNO("Socket write failed");

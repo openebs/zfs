@@ -378,8 +378,8 @@ read_socket:
 			    uzfs_zvol_rebuild_scanner_callback,
 			    rebuild_req_offset, rebuild_req_len, &warg);
 			if (rc != 0) {
-				LOG_ERR("Rebuild scanning failed on zvol %s",
-				    zinfo->name);
+				LOG_ERR("Rebuild scanning failed on zvol %s "
+				    "err(%d)", zinfo->name, rc);
 			}
 			bzero(&hdr, sizeof (hdr));
 			hdr.status = ZVOL_OP_STATUS_OK;

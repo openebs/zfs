@@ -17,6 +17,7 @@ COPY cmd/zrepl/.libs/zrepl /usr/local/bin/
 COPY cmd/zpool/.libs/zpool /usr/local/bin/
 COPY cmd/zfs/.libs/zfs /usr/local/bin/
 
+COPY lib/libzrepl/.libs/*.so* /usr/lib/
 COPY lib/libzpool/.libs/*.so* /usr/lib/
 COPY lib/libuutil/.libs/*.so* /usr/lib/
 COPY lib/libnvpair/.libs/*.so* /usr/lib/

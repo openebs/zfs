@@ -38,7 +38,6 @@ zrepl_log(enum zrepl_log_level lvl, const char *fmt, ...)
 	struct tm *timeinfo;
 	unsigned int ms;
 	char line[512];
-	FILE *outf;
 	int off = 0;
 
 	if (lvl < zrepl_log_level)
@@ -53,26 +52,15 @@ zrepl_log(enum zrepl_log_level lvl, const char *fmt, ...)
 	snprintf(line + off, sizeof (line) - off, "%03u ", ms);
 	off += 4;
 
-	switch (lvl) {
-	case LOG_LEVEL_DEBUG:
-		outf = stdout;
-		break;
-	case LOG_LEVEL_INFO:
-		outf = stdout;
-		break;
-	case LOG_LEVEL_ERR:
-		outf = stderr;
+	if (lvl == LOG_LEVEL_ERR) {
 		strncpy(line + off, "ERROR ", sizeof (line) - off);
 		off += sizeof ("ERROR ") - 1;
-		break;
-	default:
-		ASSERT(0);
 	}
 
 	va_start(args, fmt);
 	vsnprintf(line + off, sizeof (line) - off, fmt, args);
 	va_end(args);
-	fprintf(outf, "%s\n", line);
+	fprintf(stderr, "%s\n", line);
 }
 
 int

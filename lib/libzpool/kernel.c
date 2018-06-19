@@ -1527,7 +1527,7 @@ kernel_init(int mode)
 		fclose(f);
 	}
 
-	printf("physmem = %lu pages (%.2f GB)\n", physmem,
+	fprintf(stderr, "physmem = %lu pages (%.2f GB)\n", physmem,
 	    (double)physmem * sysconf(_SC_PAGE_SIZE) / (1ULL << 30));
 
 	(void) snprintf(hw_serial, sizeof (hw_serial), "%ld",

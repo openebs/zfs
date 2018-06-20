@@ -227,7 +227,7 @@ uzfs_zvol_io_receiver(void *arg)
 		    (hdr.opcode == ZVOL_OPCODE_READ)) && !hdr.len) {
 			LOG_ERR("Zero Payload size for opcode %d", hdr.opcode);
 			goto exit;
-		} else if (hdr.len > 0) {
+		} else if ((hdr.opcode == ZVOL_OPCODE_SYNC) && hdr.len > 0) {
 			LOG_ERR("Unexpected payload for opcode %d", hdr.opcode);
 			goto exit;
 		}

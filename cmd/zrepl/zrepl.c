@@ -21,7 +21,6 @@
 #define	MAXEVENTS 64
 #define	ZAP_UPDATE_TIME_INTERVAL 2
 
-__thread char tinfo[50] = {0};
 extern unsigned long zfs_arc_max;
 extern unsigned long zfs_arc_min;
 extern int zfs_autoimport_disable;
@@ -202,12 +201,12 @@ uzfs_zvol_io_receiver(void *arg)
 	zvol_io_cmd_t	*zio_cmd;
 	zvol_io_hdr_t	hdr;
 
+	prctl(PR_SET_NAME, "io_receiver", 0, 0, 0);
+
 	/* First command should be OPEN */
 	while (zinfo == NULL) {
 		if (open_zvol(fd, &zinfo) != 0)
 			goto exit;
-		snprintf(tinfo, 50, "io_receiver_%lu", zinfo->zvol_guid);
-		prctl(PR_SET_NAME, tinfo, 0, 0, 0);
 	}
 
 	while (1) {
@@ -250,6 +249,8 @@ uzfs_zvol_io_receiver(void *arg)
 	}
 exit:
 	if (zinfo != NULL) {
+		LOG_DEBUG("uzfs_zvol_io_receiver thread for zvol %s exiting",
+		    zinfo->name);
 		(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
 		zinfo->conn_closed = B_TRUE;
 		/*
@@ -270,8 +271,9 @@ exit:
 		}
 		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 		uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
+	} else {
+		LOG_DEBUG("uzfs_zvol_io_receiver thread exiting");
 	}
-	LOG_DEBUG("%s thread exiting", tinfo);
 	zk_thread_exit();
 }
 
@@ -676,8 +678,7 @@ uzfs_zvol_io_ack_sender(void *arg)
 	zinfo = thrd_arg->zinfo;
 	kmem_free(arg, sizeof (thread_args_t));
 
-	snprintf(tinfo, 50, "ack_sender_%lu", zinfo->zvol_guid);
-	prctl(PR_SET_NAME, tinfo, 0, 0, 0);
+	prctl(PR_SET_NAME, "ack_sender", 0, 0, 0);
 
 	while (1) {
 		int rc = 0;
@@ -766,6 +767,9 @@ uzfs_zvol_io_ack_sender(void *arg)
 		zio_cmd_free(&zio_cmd);
 	}
 exit:
+	LOG_DEBUG("uzfs_zvol_io_ack_sender thread for zvol %s exiting",
+	    zinfo->name);
+
 	zinfo->zio_cmd_in_ack = NULL;
 	shutdown(fd, SHUT_RDWR);
 	close(fd);
@@ -778,7 +782,6 @@ exit:
 	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 	uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
 
-	LOG_DEBUG("%s thread exiting", tinfo);
 	zk_thread_exit();
 }
 

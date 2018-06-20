@@ -497,7 +497,8 @@ uzfs_zvol_mgmt_do_handshake(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	 */
 	mgmt_ack.zvol_guid = dsl_dataset_phys(
 	    zv->zv_objset->os_dsl_dataset)->ds_guid;
-	zinfo->zvol_guid = mgmt_ack.zvol_guid;
+	if (zinfo->zvol_guid == 0)
+		zinfo->zvol_guid = mgmt_ack.zvol_guid;
 	LOG_INFO("Volume:%s has zvol_guid:%lu", zinfo->name, zinfo->zvol_guid);
 
 	bzero(&hdr, sizeof (hdr));
@@ -595,11 +596,12 @@ finish_async_tasks(void)
 			rc = reply_nodata(async_task->conn, async_task->status,
 			    async_task->hdr.opcode, async_task->hdr.io_seq);
 		}
-
 		free_async_task(async_task);
+		if (rc == -1)
+			break;
 	}
 	mutex_exit(&async_tasks_mtx);
-	return (0);
+	return (rc);
 }
 
 /*

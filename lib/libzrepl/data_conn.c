@@ -201,7 +201,6 @@ uzfs_zvol_worker(void *arg)
 	zvol_io_hdr_t 	*hdr;
 	metadata_desc_t	**metadata_desc;
 	int		rc = 0;
-	int 		write = 0;
 	boolean_t	rebuild_cmd_req;
 	boolean_t	read_metadata;
 
@@ -230,16 +229,19 @@ uzfs_zvol_worker(void *arg)
 			    (char *)zio_cmd->buf,
 			    hdr->offset, hdr->len,
 			    metadata_desc);
+			atomic_inc_64(&zinfo->read_req_received_cnt);
 			break;
 
 		case ZVOL_OPCODE_WRITE:
-			write = 1;
 			rc = uzfs_submit_writes(zinfo, zio_cmd);
+			atomic_inc_64(&zinfo->write_req_received_cnt);
 			break;
 
 		case ZVOL_OPCODE_SYNC:
 			uzfs_flush_data(zinfo->zv);
+			atomic_inc_64(&zinfo->sync_req_received_cnt);
 			break;
+
 		case ZVOL_OPCODE_REBUILD_STEP_DONE:
 			break;
 		default:
@@ -269,11 +271,6 @@ uzfs_zvol_worker(void *arg)
 		goto drop_refcount;
 	}
 	STAILQ_INSERT_TAIL(&zinfo->complete_queue, zio_cmd, cmd_link);
-	if (write) {
-		zinfo->write_req_received_cnt++;
-	} else {
-		zinfo->read_req_received_cnt++;
-	}
 
 	if (zinfo->io_ack_waiting) {
 		rc = pthread_cond_signal(&zinfo->io_ack_cond);

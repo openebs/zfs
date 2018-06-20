@@ -21,6 +21,7 @@
 #define	MAXEVENTS 64
 #define	ZAP_UPDATE_TIME_INTERVAL 2
 
+__thread char tinfo[50] = {0};
 extern unsigned long zfs_arc_max;
 extern unsigned long zfs_arc_min;
 extern int zfs_autoimport_disable;
@@ -201,12 +202,12 @@ uzfs_zvol_io_receiver(void *arg)
 	zvol_io_cmd_t	*zio_cmd;
 	zvol_io_hdr_t	hdr;
 
-	prctl(PR_SET_NAME, "io_receiver", 0, 0, 0);
-
 	/* First command should be OPEN */
 	while (zinfo == NULL) {
 		if (open_zvol(fd, &zinfo) != 0)
 			goto exit;
+		snprintf(tinfo, 50, "io_receiver_%lu", zinfo->zvol_guid);
+		prctl(PR_SET_NAME, tinfo, 0, 0, 0);
 	}
 
 	while (1) {
@@ -222,6 +223,15 @@ uzfs_zvol_io_receiver(void *arg)
 			goto exit;
 		}
 
+		if (((hdr.opcode == ZVOL_OPCODE_WRITE) ||
+		    (hdr.opcode == ZVOL_OPCODE_READ)) && !hdr.len) {
+			LOG_ERR("Zero Payload size for opcode %d", hdr.opcode);
+			goto exit;
+		} else if (hdr.len > 0) {
+			LOG_ERR("Unexpected payload for opcode %d", hdr.opcode);
+			goto exit;
+		}
+
 		zio_cmd = zio_cmd_alloc(&hdr, fd);
 		/* Read payload for commands which have it */
 		if (hdr.opcode == ZVOL_OPCODE_WRITE) {
@@ -230,11 +240,6 @@ uzfs_zvol_io_receiver(void *arg)
 				zio_cmd_free(&zio_cmd);
 				goto exit;
 			}
-		} else if (hdr.opcode != ZVOL_OPCODE_READ && hdr.len > 0) {
-			LOG_ERR("Unexpected payload for opcode %d",
-			    hdr.opcode);
-			zio_cmd_free(&zio_cmd);
-			goto exit;
 		}
 
 		/* Take refcount for uzfs_zvol_worker to work on it */
@@ -245,8 +250,6 @@ uzfs_zvol_io_receiver(void *arg)
 	}
 exit:
 	if (zinfo != NULL) {
-		LOG_DEBUG("uzfs_zvol_io_receiver thread for zvol %s exiting",
-		    zinfo->name);
 		(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
 		zinfo->conn_closed = B_TRUE;
 		/*
@@ -267,9 +270,8 @@ exit:
 		}
 		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 		uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
-	} else {
-		LOG_DEBUG("uzfs_zvol_io_receiver thread exiting");
 	}
+	LOG_DEBUG("%s thread exiting", tinfo);
 	zk_thread_exit();
 }
 
@@ -674,7 +676,8 @@ uzfs_zvol_io_ack_sender(void *arg)
 	zinfo = thrd_arg->zinfo;
 	kmem_free(arg, sizeof (thread_args_t));
 
-	prctl(PR_SET_NAME, "ack_sender", 0, 0, 0);
+	snprintf(tinfo, 50, "ack_sender_%lu", zinfo->zvol_guid);
+	prctl(PR_SET_NAME, tinfo, 0, 0, 0);
 
 	while (1) {
 		int rc = 0;
@@ -752,18 +755,19 @@ uzfs_zvol_io_ack_sender(void *arg)
 					}
 				}
 			}
-			zinfo->read_req_ack_cnt++;
+			atomic_inc_64(&zinfo->read_req_ack_cnt);
 		} else {
-			zinfo->write_req_ack_cnt++;
+			if (zio_cmd->hdr.opcode == ZVOL_OPCODE_WRITE)
+				atomic_inc_64(&zinfo->write_req_ack_cnt);
+			else if (zio_cmd->hdr.opcode == ZVOL_OPCODE_SYNC)
+				atomic_inc_64(&zinfo->sync_req_ack_cnt);
 		}
 		zinfo->zio_cmd_in_ack = NULL;
 		zio_cmd_free(&zio_cmd);
 	}
 exit:
-	LOG_DEBUG("uzfs_zvol_io_ack_sender thread for zvol %s exiting",
-	    zinfo->name);
-
 	zinfo->zio_cmd_in_ack = NULL;
+	shutdown(fd, SHUT_RDWR);
 	close(fd);
 	while (!STAILQ_EMPTY(&zinfo->complete_queue)) {
 		zio_cmd = STAILQ_FIRST(&zinfo->complete_queue);
@@ -774,6 +778,7 @@ exit:
 	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 	uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
 
+	LOG_DEBUG("%s thread exiting", tinfo);
 	zk_thread_exit();
 }
 

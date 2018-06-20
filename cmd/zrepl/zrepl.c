@@ -294,7 +294,7 @@ uzfs_zvol_rebuild_scanner_callback(off_t offset, size_t len,
 	hdr.len = len;
 	hdr.flags = ZVOL_OP_FLAG_REBUILD;
 	hdr.status = ZVOL_OP_STATUS_OK;
-	LOG_INFO("IO number for rebuild %ld", metadata->io_num);
+	LOG_DEBUG("IO number for rebuild %ld", metadata->io_num);
 	zio_cmd = zio_cmd_alloc(&hdr, warg->fd);
 	/* Take refcount for uzfs_zvol_worker to work on it */
 	uzfs_zinfo_take_refcnt(zinfo, B_FALSE);

@@ -64,8 +64,12 @@
  *     their state.
  */
 
-/* LOG_DEBUG wrapper which puts target address prefix to message */
+/* log wrappers which prefix log message by iscsi target address */
 #define	DBGCONN(c, fmt, ...)	LOG_DEBUG("[tgt %s:%u]: " fmt, \
+				(c)->conn_host, (c)->conn_port, ##__VA_ARGS__)
+#define	LOGCONN(c, fmt, ...)	LOG_INFO("[tgt %s:%u]: " fmt, \
+				(c)->conn_host, (c)->conn_port, ##__VA_ARGS__)
+#define	LOGERRCONN(c, fmt, ...)	LOG_ERR("[tgt %s:%u]: " fmt, \
 				(c)->conn_host, (c)->conn_port, ##__VA_ARGS__)
 
 /* Max # of events from epoll processed at once */
@@ -113,7 +117,7 @@ close_conn(uzfs_mgmt_conn_t *conn)
 	async_task_t *async_task;
 
 	if (conn->conn_state != CS_CONNECT)
-		DBGCONN(conn, "Closing the connection");
+		LOGCONN(conn, "Closing the connection");
 
 	/* Release resources tight to the conn */
 	if (conn->conn_buf != NULL) {
@@ -357,7 +361,7 @@ reply_nodata(uzfs_mgmt_conn_t *conn, zvol_op_status_t status,
 	struct epoll_event ev;
 
 	if (status != ZVOL_OP_STATUS_OK) {
-		DBGCONN(conn, "Error reply with status %d for OP %d",
+		LOGERRCONN(conn, "Error reply with status %d for OP %d",
 		    status, opcode);
 	} else {
 		DBGCONN(conn, "Reply without payload for OP %d", opcode);
@@ -465,8 +469,6 @@ uzfs_zvol_mgmt_do_handshake(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	mgmt_ack_t 	mgmt_ack;
 	zvol_io_hdr_t	hdr;
 
-	LOG_INFO("Handshake on zvol %s", name);
-
 	bzero(&mgmt_ack, sizeof (mgmt_ack));
 	if (uzfs_zvol_get_ip(mgmt_ack.ip) == -1) {
 		LOG_ERRNO("Unable to get IP");
@@ -485,7 +487,7 @@ uzfs_zvol_mgmt_do_handshake(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	 */
 	if (zv->zv_objset == NULL) {
 		if (uzfs_hold_dataset(zv) != 0) {
-			LOG_ERR("Failed to hold zvol during handshake");
+			LOG_ERR("Failed to hold zvol %s", zinfo->name);
 			return (reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
 			    hdrp->opcode, hdrp->io_seq));
 		}
@@ -906,7 +908,7 @@ process_message(uzfs_mgmt_conn_t *conn)
 		zvol_name[payload_size] = '\0';
 
 		if ((zinfo = uzfs_zinfo_lookup(zvol_name)) == NULL) {
-			LOG_ERR("Unknown zvol: %s", zvol_name);
+			LOGERRCONN(conn, "Unknown zvol: %s", zvol_name);
 			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
 			    hdrp->opcode, hdrp->io_seq);
 			break;
@@ -918,7 +920,7 @@ process_message(uzfs_mgmt_conn_t *conn)
 		 */
 		if (zinfo->mgmt_conn != conn) {
 			uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
-			LOG_ERR("Target used invalid connection for "
+			LOGERRCONN(conn, "Target used invalid connection for "
 			    "zvol %s\n", zvol_name);
 			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
 			    hdrp->opcode, hdrp->io_seq);
@@ -926,17 +928,17 @@ process_message(uzfs_mgmt_conn_t *conn)
 		}
 
 		if (hdrp->opcode == ZVOL_OPCODE_HANDSHAKE) {
-			DBGCONN(conn, "Handshake command for zvol %s",
+			LOGCONN(conn, "Handshake command for zvol %s",
 			    zvol_name);
 			rc = uzfs_zvol_mgmt_do_handshake(conn, hdrp, zvol_name,
 			    zinfo);
 		} else if (hdrp->opcode == ZVOL_OPCODE_PREPARE_FOR_REBUILD) {
-			DBGCONN(conn, "Prepare for rebuild command for zvol %s",
+			LOGCONN(conn, "Prepare for rebuild command for zvol %s",
 			    zvol_name);
 			rc = uzfs_zvol_mgmt_do_handshake(conn, hdrp, zvol_name,
 			    zinfo);
 		} else if (hdrp->opcode == ZVOL_OPCODE_REPLICA_STATUS) {
-			DBGCONN(conn, "Replica status command for zvol %s",
+			LOGCONN(conn, "Replica status command for zvol %s",
 			    zvol_name);
 			rc = uzfs_zvol_rebuild_status(conn, hdrp, zvol_name,
 			    zinfo);
@@ -969,24 +971,24 @@ process_message(uzfs_mgmt_conn_t *conn)
 		*snap++ = '\0';
 		/* ref will be released when async command has finished */
 		if ((zinfo = uzfs_zinfo_lookup(zvol_name)) == NULL) {
-			LOG_ERR("Unknown zvol: %s", zvol_name);
+			LOGERRCONN(conn, "Unknown zvol: %s", zvol_name);
 			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
 			    hdrp->opcode, hdrp->io_seq);
 			break;
 		}
 		if (zinfo->mgmt_conn != conn) {
 			uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
-			LOG_ERR("Target used invalid connection for "
+			LOGERRCONN(conn, "Target used invalid connection for "
 			    "zvol %s\n", zvol_name);
 			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
 			    hdrp->opcode, hdrp->io_seq);
 			break;
 		}
 		if (hdrp->opcode == ZVOL_OPCODE_SNAP_CREATE) {
-			DBGCONN(conn, "Create snapshot command for %s@%s",
+			LOGCONN(conn, "Create snapshot command for %s@%s",
 			    zinfo->name, snap);
 		} else {
-			DBGCONN(conn, "Destroy snapshot command for %s@%s",
+			LOGCONN(conn, "Destroy snapshot command for %s@%s",
 			    zinfo->name, snap);
 		}
 		rc = uzfs_zvol_dispatch_command(conn, hdrp, snap,
@@ -1003,20 +1005,20 @@ process_message(uzfs_mgmt_conn_t *conn)
 
 		/* ref will be released when async command has finished */
 		if ((zinfo = uzfs_zinfo_lookup(resize_data->volname)) == NULL) {
-			LOG_ERR("Unknown zvol: %s", zvol_name);
+			LOGERRCONN(conn, "Unknown zvol: %s", zvol_name);
 			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
 			    hdrp->opcode, hdrp->io_seq);
 			break;
 		}
 		if (zinfo->mgmt_conn != conn) {
 			uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
-			LOG_ERR("Target used invalid connection for "
+			LOGERRCONN(conn, "Target used invalid connection for "
 			    "zvol %s\n", zvol_name);
 			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
 			    hdrp->opcode, hdrp->io_seq);
 			break;
 		}
-		DBGCONN(conn, "Resize zvol %s to %lu bytes", zinfo->name,
+		LOGCONN(conn, "Resize zvol %s to %lu bytes", zinfo->name,
 		    resize_data->size);
 		rc = uzfs_zvol_dispatch_command(conn, hdrp, &resize_data->size,
 		    sizeof (uint64_t), zinfo);
@@ -1029,7 +1031,8 @@ process_message(uzfs_mgmt_conn_t *conn)
 		break;
 
 	default:
-		DBGCONN(conn, "Message with unknown OP code %d", hdrp->opcode);
+		LOGERRCONN(conn, "Message with unknown OP code %d",
+		    hdrp->opcode);
 		rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED, hdrp->opcode,
 		    hdrp->io_seq);
 		break;
@@ -1057,7 +1060,7 @@ move_to_next_state(uzfs_mgmt_conn_t *conn)
 
 	switch (conn->conn_state) {
 	case CS_CONNECT:
-		DBGCONN(conn, "Connected");
+		LOGCONN(conn, "Connected");
 		/* Fall-through */
 	case CS_INIT:
 		DBGCONN(conn, "Reading version..");
@@ -1076,7 +1079,7 @@ move_to_next_state(uzfs_mgmt_conn_t *conn)
 		kmem_free(conn->conn_buf, sizeof (uint16_t));
 		conn->conn_buf = NULL;
 		if (vers != REPLICA_VERSION) {
-			LOG_ERR("Invalid replica protocol version %d",
+			LOGERRCONN(conn, "Invalid replica protocol version %d",
 			    vers);
 			rc = reply_nodata(conn, ZVOL_OP_STATUS_VERSION_MISMATCH,
 			    0, 0);
@@ -1202,8 +1205,7 @@ uzfs_zvol_mgmt_thread(void *arg)
 					LOG_ERR("Failed to connect to %s:%d",
 					    conn->conn_host, conn->conn_port);
 				} else {
-					LOG_ERR("Error on connection to %s:%d",
-					    conn->conn_host, conn->conn_port);
+					LOGERRCONN(conn, "Error on connection");
 				}
 				if (close_conn(conn) != 0)
 					goto exit;

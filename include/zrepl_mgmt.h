@@ -84,6 +84,7 @@ typedef struct zvol_info_s {
 	int 		refcnt;
 	int		is_io_ack_sender_created;
 	uint32_t	timeout;	/* iSCSI timeout val for this zvol */
+	uint64_t	zvol_guid;
 	uint64_t	running_ionum;
 	uint64_t	checkpointed_ionum;
 	time_t		checkpointed_time;	/* time of the last chkpoint */
@@ -115,10 +116,12 @@ typedef struct zvol_info_s {
 	/* Perfromance counter */
 
 	/* Debug counters */
-	int 		read_req_received_cnt;
-	int 		write_req_received_cnt;
-	int 		read_req_ack_cnt;
-	int 		write_req_ack_cnt;
+	uint64_t 	read_req_received_cnt;
+	uint64_t 	write_req_received_cnt;
+	uint64_t 	sync_req_received_cnt;
+	uint64_t 	read_req_ack_cnt;
+	uint64_t	write_req_ack_cnt;
+	uint64_t	sync_req_ack_cnt;
 
 	/* ongoing command that is being worked on to ack to its sender */
 	void		*zio_cmd_in_ack;

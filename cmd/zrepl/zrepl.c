@@ -222,6 +222,15 @@ uzfs_zvol_io_receiver(void *arg)
 			goto exit;
 		}
 
+		if (((hdr.opcode == ZVOL_OPCODE_WRITE) ||
+		    (hdr.opcode == ZVOL_OPCODE_READ)) && !hdr.len) {
+			LOG_ERR("Zero Payload size for opcode %d", hdr.opcode);
+			goto exit;
+		} else if ((hdr.opcode == ZVOL_OPCODE_SYNC) && hdr.len > 0) {
+			LOG_ERR("Unexpected payload for opcode %d", hdr.opcode);
+			goto exit;
+		}
+
 		zio_cmd = zio_cmd_alloc(&hdr, fd);
 		/* Read payload for commands which have it */
 		if (hdr.opcode == ZVOL_OPCODE_WRITE) {
@@ -230,11 +239,6 @@ uzfs_zvol_io_receiver(void *arg)
 				zio_cmd_free(&zio_cmd);
 				goto exit;
 			}
-		} else if (hdr.opcode != ZVOL_OPCODE_READ && hdr.len > 0) {
-			LOG_ERR("Unexpected payload for opcode %d",
-			    hdr.opcode);
-			zio_cmd_free(&zio_cmd);
-			goto exit;
 		}
 
 		/* Take refcount for uzfs_zvol_worker to work on it */
@@ -292,7 +296,7 @@ uzfs_zvol_rebuild_scanner_callback(off_t offset, size_t len,
 	hdr.len = len;
 	hdr.flags = ZVOL_OP_FLAG_REBUILD;
 	hdr.status = ZVOL_OP_STATUS_OK;
-	LOG_INFO("IO number for rebuild %ld", metadata->io_num);
+	LOG_DEBUG("IO number for rebuild %ld", metadata->io_num);
 	zio_cmd = zio_cmd_alloc(&hdr, warg->fd);
 	/* Take refcount for uzfs_zvol_worker to work on it */
 	uzfs_zinfo_take_refcnt(zinfo, B_FALSE);
@@ -752,9 +756,12 @@ uzfs_zvol_io_ack_sender(void *arg)
 					}
 				}
 			}
-			zinfo->read_req_ack_cnt++;
+			atomic_inc_64(&zinfo->read_req_ack_cnt);
 		} else {
-			zinfo->write_req_ack_cnt++;
+			if (zio_cmd->hdr.opcode == ZVOL_OPCODE_WRITE)
+				atomic_inc_64(&zinfo->write_req_ack_cnt);
+			else if (zio_cmd->hdr.opcode == ZVOL_OPCODE_SYNC)
+				atomic_inc_64(&zinfo->sync_req_ack_cnt);
 		}
 		zinfo->zio_cmd_in_ack = NULL;
 		zio_cmd_free(&zio_cmd);
@@ -764,6 +771,7 @@ exit:
 	    zinfo->name);
 
 	zinfo->zio_cmd_in_ack = NULL;
+	shutdown(fd, SHUT_RDWR);
 	close(fd);
 	while (!STAILQ_EMPTY(&zinfo->complete_queue)) {
 		zio_cmd = STAILQ_FIRST(&zinfo->complete_queue);

@@ -60,9 +60,29 @@ typedef struct uzfs_mgmt_conn {
 	time_t		conn_last_connect;  // time of last attempted connect()
 } uzfs_mgmt_conn_t;
 
+/*
+ * Blocking or lengthy operations must be executed asynchronously not to block
+ * the main event loop. Following structure describes asynchronous task.
+ */
+typedef struct async_task {
+	SLIST_ENTRY(async_task) task_next;
+	uzfs_mgmt_conn_t *conn;	// conn ptr can be invalid if closed = true
+	boolean_t conn_closed;	// conn was closed before task finished
+	boolean_t finished;	// async cmd has finished
+	zvol_info_t *zinfo;
+	zvol_io_hdr_t hdr;	// header of the incoming request
+	void *payload; // snapshot name
+	int payload_length;	// length of payload in bytes
+	int status;		// status which should be sent back
+} async_task_t;
+
+SLIST_HEAD(, async_task) async_tasks;
+//extern async_task_t *async_tasks;
+
 extern char *target_addr;
 extern int mgmt_eventfd;
 extern kmutex_t conn_list_mtx;
+extern kmutex_t async_tasks_mtx;
 SLIST_HEAD(uzfs_mgmt_conn_list, uzfs_mgmt_conn);
 
 extern struct uzfs_mgmt_conn_list uzfs_mgmt_conns;
@@ -72,6 +92,7 @@ int handle_start_rebuild_req(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 void zinfo_create_cb(zvol_info_t *zinfo, nvlist_t *create_props);
 void zinfo_destroy_cb(zvol_info_t *zinfo);
 void uzfs_zvol_mgmt_thread(void *arg);
+int finish_async_tasks(void);
 
 #ifdef __cplusplus
 }

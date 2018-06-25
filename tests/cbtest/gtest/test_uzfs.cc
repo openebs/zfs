@@ -34,6 +34,7 @@
 #include <mgmt_conn.h>
 #include <data_conn.h>
 #include <uzfs_mgmt.h>
+#include <sys/epoll.h>
 
 char *ds_name;
 char *pool;
@@ -90,6 +91,7 @@ TEST(uZFS, Setup) {
 
 	mutex_init(&conn_list_mtx, NULL, MUTEX_DEFAULT, NULL);
 	SLIST_INIT(&uzfs_mgmt_conns);
+	mutex_init(&async_tasks_mtx, NULL, MUTEX_DEFAULT, NULL);
 	mgmt_eventfd = -1;
 
 	zinfo_create_hook = &zinfo_create_cb;
@@ -112,6 +114,87 @@ uzfs_mgmt_conn_list_count(struct uzfs_mgmt_conn_list *list)
 		count++;
 
 	return count;
+}
+
+extern int epollfd;
+TEST(uZFS, asyncTaskProps) {
+
+	async_task_t *arg;
+	uzfs_mgmt_conn_t *conn;
+
+
+	conn = SLIST_FIRST(&uzfs_mgmt_conns);
+
+	epollfd = epoll_create1(0);
+	if (epollfd < 0) {
+		perror("epoll_create1");
+		zk_thread_exit();
+		return;
+	}
+
+	uzfs_zinfo_take_refcnt(zinfo, B_TRUE);
+	arg = (async_task_t *)kmem_zalloc(sizeof (*arg), KM_SLEEP);
+	arg->conn = conn;
+	arg->zinfo = zinfo;
+	arg->payload_length = 0;
+	arg->payload = NULL;
+	arg->finished = B_FALSE;
+
+	/* async task should not be processed */
+	mutex_enter(&async_tasks_mtx);
+	SLIST_INSERT_HEAD(&async_tasks, arg, task_next);
+	mutex_exit(&async_tasks_mtx);
+	finish_async_tasks();
+
+	mutex_enter(&async_tasks_mtx);
+	EXPECT_EQ(arg, SLIST_FIRST(&async_tasks));
+	mutex_exit(&async_tasks_mtx);
+
+	/*
+	 * async task should be processed, should
+	 * send reply too. It will be freed
+	 */
+	arg->finished = B_TRUE;
+	arg->conn_closed = B_FALSE;
+	finish_async_tasks();
+
+	mutex_enter(&async_tasks_mtx);
+	EXPECT_EQ(NULL, SLIST_FIRST(&async_tasks));
+	mutex_exit(&async_tasks_mtx);
+
+	kmem_free(conn->conn_buf, sizeof (zvol_io_hdr_t));
+	conn->conn_buf = NULL;
+	/*async task finished and conn closed*/
+	uzfs_zinfo_take_refcnt(zinfo, B_TRUE);
+	arg = (async_task_t *)kmem_zalloc(sizeof (*arg), KM_SLEEP);
+	arg->conn = conn;
+	arg->zinfo = zinfo;
+	arg->payload_length = 0;
+	arg->payload = NULL;
+	arg->finished = B_TRUE;
+	arg->conn_closed = B_TRUE;
+
+	mutex_enter(&async_tasks_mtx);
+	SLIST_INSERT_HEAD(&async_tasks, arg, task_next);
+	mutex_exit(&async_tasks_mtx);
+
+	uzfs_zinfo_take_refcnt(zinfo, B_TRUE);
+	arg = (async_task_t *)kmem_zalloc(sizeof (*arg), KM_SLEEP);
+	arg->conn = conn;
+	arg->zinfo = zinfo;
+	arg->payload_length = 0;
+	arg->payload = NULL;
+	arg->finished = B_TRUE;
+	arg->conn_closed = B_TRUE;
+
+	mutex_enter(&async_tasks_mtx);
+	SLIST_INSERT_HEAD(&async_tasks, arg, task_next);
+	mutex_exit(&async_tasks_mtx);
+	finish_async_tasks();
+
+	mutex_enter(&async_tasks_mtx);
+	EXPECT_EQ(NULL, SLIST_FIRST(&async_tasks));
+	mutex_exit(&async_tasks_mtx);
 }
 
 TEST(uZFS, EmptyCreateProps) {

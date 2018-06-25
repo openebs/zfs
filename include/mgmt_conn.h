@@ -77,7 +77,6 @@ typedef struct async_task {
 } async_task_t;
 
 SLIST_HEAD(, async_task) async_tasks;
-//extern async_task_t *async_tasks;
 
 extern char *target_addr;
 extern int mgmt_eventfd;

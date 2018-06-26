@@ -116,7 +116,42 @@ uzfs_mgmt_conn_list_count(struct uzfs_mgmt_conn_list *list)
 	return count;
 }
 
-extern int epollfd;
+static void 
+test_alloc_async_task_and_add_to_list(zvol_info_t *zinfo,
+    uzfs_mgmt_conn_t *conn, boolean_t finished, boolean_t conn_closed)
+{
+	async_task_t *arg;
+
+	uzfs_zinfo_take_refcnt(zinfo, B_TRUE);
+	arg = (async_task_t *)kmem_zalloc(sizeof (async_task_t), KM_SLEEP);
+	arg->conn = conn;
+	arg->zinfo = zinfo;
+	arg->payload_length = 0;
+	arg->payload = NULL;
+	arg->finished = finished;
+	arg->conn_closed = conn_closed;
+	mutex_enter(&async_tasks_mtx);
+	SLIST_INSERT_HEAD(&async_tasks, arg, task_next);
+	mutex_exit(&async_tasks_mtx);
+	return;
+}
+
+static int
+async_tasks_count()
+{
+	int count = 0;
+	async_task_t *async_task = NULL;
+
+	mutex_enter(&async_tasks_mtx);
+
+	SLIST_FOREACH(async_task, &async_tasks, task_next)
+		count++;
+
+	mutex_exit(&async_tasks_mtx);
+
+	return count;
+}
+
 TEST(uZFS, asyncTaskProps) {
 
 	async_task_t *arg;
@@ -125,76 +160,48 @@ TEST(uZFS, asyncTaskProps) {
 
 	conn = SLIST_FIRST(&uzfs_mgmt_conns);
 
-	epollfd = epoll_create1(0);
-	if (epollfd < 0) {
-		perror("epoll_create1");
-		zk_thread_exit();
-		return;
-	}
-
-	uzfs_zinfo_take_refcnt(zinfo, B_TRUE);
-	arg = (async_task_t *)kmem_zalloc(sizeof (*arg), KM_SLEEP);
-	arg->conn = conn;
-	arg->zinfo = zinfo;
-	arg->payload_length = 0;
-	arg->payload = NULL;
-	arg->finished = B_FALSE;
-
-	/* async task should not be processed */
-	mutex_enter(&async_tasks_mtx);
-	SLIST_INSERT_HEAD(&async_tasks, arg, task_next);
-	mutex_exit(&async_tasks_mtx);
+	/*
+	 * Create async_task and mark it un-finished so
+	 * that finish_async_tasks() should not process it.
+	 */
+	test_alloc_async_task_and_add_to_list(zinfo, conn, B_FALSE, B_FALSE);
 	finish_async_tasks();
 
-	mutex_enter(&async_tasks_mtx);
-	EXPECT_EQ(arg, SLIST_FIRST(&async_tasks));
-	mutex_exit(&async_tasks_mtx);
+	EXPECT_EQ(1, async_tasks_count());
 
 	/*
-	 * async task should be processed, should
-	 * send reply too. It will be freed
+	 * Mark async_task finished to true, so that
+	 * finish_async_task process it. Since conn_clossed
+	 * set to false, it should able to send reply too.
+	 * Reply would be failed because of fd is -1.
+	 * It should error out after freeing task.
 	 */
+	arg = SLIST_FIRST(&async_tasks);
 	arg->finished = B_TRUE;
-	arg->conn_closed = B_FALSE;
 	finish_async_tasks();
 
-	mutex_enter(&async_tasks_mtx);
-	EXPECT_EQ(NULL, SLIST_FIRST(&async_tasks));
-	mutex_exit(&async_tasks_mtx);
+	EXPECT_EQ(0, async_tasks_count());
 
 	kmem_free(conn->conn_buf, sizeof (zvol_io_hdr_t));
 	conn->conn_buf = NULL;
-	/*async task finished and conn closed*/
-	uzfs_zinfo_take_refcnt(zinfo, B_TRUE);
-	arg = (async_task_t *)kmem_zalloc(sizeof (*arg), KM_SLEEP);
-	arg->conn = conn;
-	arg->zinfo = zinfo;
-	arg->payload_length = 0;
-	arg->payload = NULL;
-	arg->finished = B_TRUE;
-	arg->conn_closed = B_TRUE;
 
-	mutex_enter(&async_tasks_mtx);
-	SLIST_INSERT_HEAD(&async_tasks, arg, task_next);
-	mutex_exit(&async_tasks_mtx);
+	/*
+	 * Create async_task and mark it finished as well as
+	 * conn closed so that that finish_async_tasks()
+	 * should process it, free it.
+	 */
+	test_alloc_async_task_and_add_to_list(zinfo, conn, B_TRUE, B_TRUE);
 
-	uzfs_zinfo_take_refcnt(zinfo, B_TRUE);
-	arg = (async_task_t *)kmem_zalloc(sizeof (*arg), KM_SLEEP);
-	arg->conn = conn;
-	arg->zinfo = zinfo;
-	arg->payload_length = 0;
-	arg->payload = NULL;
-	arg->finished = B_TRUE;
-	arg->conn_closed = B_TRUE;
+	/*
+	 * Create async_task and mark it finished as well as
+	 * conn closed so that that finish_async_tasks()
+	 *  should process it, free it.
+	 */
+	test_alloc_async_task_and_add_to_list(zinfo, conn, B_TRUE, B_TRUE);
+	EXPECT_EQ(2, async_tasks_count());
 
-	mutex_enter(&async_tasks_mtx);
-	SLIST_INSERT_HEAD(&async_tasks, arg, task_next);
-	mutex_exit(&async_tasks_mtx);
 	finish_async_tasks();
-
-	mutex_enter(&async_tasks_mtx);
-	EXPECT_EQ(NULL, SLIST_FIRST(&async_tasks));
-	mutex_exit(&async_tasks_mtx);
+	EXPECT_EQ(0, async_tasks_count());
 }
 
 TEST(uZFS, EmptyCreateProps) {

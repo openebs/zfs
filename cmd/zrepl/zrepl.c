@@ -29,39 +29,6 @@ static void uzfs_zvol_io_ack_sender(void *arg);
 kthread_t	*conn_accpt_thread;
 kthread_t	*uzfs_timer_thread;
 kthread_t	*mgmt_conn_thread;
-
-/*
- * Read header message from socket in safe manner, which is: first we read a
- * version number and if valid then we read the rest of the message.
- *
- * Return value < 0 => error
- *              > 0 => invalid version
- *              = 0 => ok
- */
-static int
-uzfs_zvol_read_header(int fd, zvol_io_hdr_t *hdr)
-{
-	int rc;
-
-	rc = uzfs_zvol_socket_read(fd, (char *)hdr,
-	    sizeof (hdr->version));
-	if (rc != 0)
-		return (-1);
-
-	if (hdr->version != REPLICA_VERSION) {
-		LOG_ERR("invalid replica protocol version %d",
-		    hdr->version);
-		return (1);
-	}
-	rc = uzfs_zvol_socket_read(fd,
-	    ((char *)hdr) + sizeof (hdr->version),
-	    sizeof (*hdr) - sizeof (hdr->version));
-	if (rc != 0)
-		return (-1);
-
-	return (0);
-}
-
 /*
  * Process open request on data connection, the first message.
  *
@@ -276,160 +243,6 @@ exit:
 	zk_thread_exit();
 }
 
-static int
-uzfs_zvol_rebuild_scanner_callback(off_t offset, size_t len,
-    blk_metadata_t *metadata, zvol_state_t *zv, void *args)
-{
-	zvol_io_hdr_t	hdr;
-	zvol_io_cmd_t	*zio_cmd;
-	zvol_rebuild_t  *warg;
-	zvol_info_t	*zinfo;
-
-	warg = (zvol_rebuild_t *)args;
-	zinfo = warg->zinfo;
-
-	hdr.version = REPLICA_VERSION;
-	hdr.opcode = ZVOL_OPCODE_READ;
-	hdr.io_seq = metadata->io_num;
-	hdr.offset = offset;
-	hdr.len = len;
-	hdr.flags = ZVOL_OP_FLAG_REBUILD;
-	hdr.status = ZVOL_OP_STATUS_OK;
-	LOG_DEBUG("IO number for rebuild %ld", metadata->io_num);
-	zio_cmd = zio_cmd_alloc(&hdr, warg->fd);
-	/* Take refcount for uzfs_zvol_worker to work on it */
-	uzfs_zinfo_take_refcnt(zinfo, B_FALSE);
-	zio_cmd->zv = zinfo;
-
-	/*
-	 * Any error in uzfs_zvol_worker will send FAILURE status to degraded
-	 * replica. Degraded replica will take care of breaking the connection
-	 */
-	uzfs_zvol_worker(zio_cmd);
-	return (0);
-}
-
-/*
- * Rebuild scanner function which after receiving
- * vol_name and IO number, will scan metadata and
- * read data and send across.
- */
-static void
-uzfs_zvol_rebuild_scanner(void *arg)
-{
-	int		fd = (uintptr_t)arg;
-	zvol_info_t	*zinfo = NULL;
-	zvol_io_hdr_t	hdr;
-	int 		rc = 0;
-	zvol_rebuild_t  warg;
-	char 		*name;
-	blk_metadata_t	metadata;
-	uint64_t	rebuild_req_offset;
-	uint64_t	rebuild_req_len;
-	zvol_io_cmd_t	*zio_cmd;
-
-read_socket:
-	rc = uzfs_zvol_read_header(fd, &hdr);
-	if (rc != 0) {
-		goto exit;
-	}
-
-	LOG_DEBUG("op_code=%d io_seq=%ld", hdr.opcode, hdr.io_seq);
-
-	/* Handshake yet to happen */
-	if ((hdr.opcode != ZVOL_OPCODE_HANDSHAKE) && (zinfo == NULL)) {
-		rc = -1;
-		goto exit;
-	}
-	switch (hdr.opcode) {
-		case ZVOL_OPCODE_HANDSHAKE:
-			name = kmem_alloc(hdr.len, KM_SLEEP);
-			rc = uzfs_zvol_socket_read(fd, name, hdr.len);
-			if (rc != 0) {
-				kmem_free(name, hdr.len);
-				goto exit;
-			}
-
-			/* Handshake already happened */
-			if (zinfo != NULL) {
-				LOG_ERR("Second handshake on %s connection for "
-				    "zvol %s",
-				    zinfo->name, name);
-				kmem_free(name, hdr.len);
-				rc = -1;
-				goto exit;
-			}
-
-			zinfo = uzfs_zinfo_lookup(name);
-			if (zinfo == NULL) {
-				LOG_ERR("zvol %s not found", name);
-				kmem_free(name, hdr.len);
-				rc = -1;
-				goto exit;
-			}
-
-			LOG_INFO("Rebuild scanner started on zvol %s", name);
-			kmem_free(name, hdr.len);
-			warg.zinfo = zinfo;
-			warg.fd = fd;
-			goto read_socket;
-
-		case ZVOL_OPCODE_REBUILD_STEP:
-
-			metadata.io_num = hdr.checkpointed_io_seq;
-			rebuild_req_offset = hdr.offset;
-			rebuild_req_len = hdr.len;
-
-			LOG_INFO("Checkpointed IO_seq: %ld, "
-			    "Rebuild Req offset: %ld, Rebuild Req length: %ld",
-			    metadata.io_num, rebuild_req_offset,
-			    rebuild_req_len);
-
-			rc = uzfs_get_io_diff(zinfo->zv, &metadata,
-			    uzfs_zvol_rebuild_scanner_callback,
-			    rebuild_req_offset, rebuild_req_len, &warg);
-			if (rc != 0) {
-				LOG_ERR("Rebuild scanning failed on zvol %s ",
-				    "err(%d)", zinfo->name, rc);
-				goto exit;
-			}
-			bzero(&hdr, sizeof (hdr));
-			hdr.status = ZVOL_OP_STATUS_OK;
-			hdr.version = REPLICA_VERSION;
-			hdr.opcode = ZVOL_OPCODE_REBUILD_STEP_DONE;
-			zio_cmd = zio_cmd_alloc(&hdr, fd);
-			/* Take refcount for uzfs_zvol_worker to work on it */
-			uzfs_zinfo_take_refcnt(zinfo, B_FALSE);
-			zio_cmd->zv = zinfo;
-			uzfs_zvol_worker(zio_cmd);
-			zio_cmd = NULL;
-			goto read_socket;
-
-		case ZVOL_OPCODE_REBUILD_COMPLETE:
-			LOG_INFO("Rebuild process is over on zvol %s",
-			    zinfo->name);
-			goto exit;
-
-		default:
-			LOG_ERR("Wrong opcode: %d", hdr.opcode);
-			goto exit;
-	}
-
-exit:
-	if (zinfo != NULL) {
-		LOG_DEBUG("uzfs_zvol_rebuild_scanner thread for zvol %s "
-		    "exiting", zinfo->name);
-		remove_pending_cmds_to_ack(fd, zinfo);
-		uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
-	} else {
-		LOG_DEBUG("uzfs_zvol_rebuild_scanner thread exiting");
-	}
-
-	shutdown(fd, SHUT_RDWR);
-	close(fd);
-	zk_thread_exit();
-}
-
 /*
  * This func takes care of sending potentially multiple read blocks each
  * prefixed by metainfo.
@@ -618,7 +431,7 @@ exit:
 	zk_thread_exit();
 }
 
-void
+static void
 zrepl_svc_run(void)
 {
 	mgmt_conn_thread = zk_thread_create(NULL, 0,
@@ -640,7 +453,7 @@ zrepl_svc_run(void)
 /*
  * Print a stack trace before program exits.
  */
-void
+static void
 fatal_handler(int sig)
 {
 	void *array[20];
@@ -678,7 +491,7 @@ fatal_handler(int sig)
  *
  * For now we keep it simple and just exit.
  */
-void
+static void
 exit_handler(int sig)
 {
 	LOG_INFO("Caught SIGTERM. Exiting...");

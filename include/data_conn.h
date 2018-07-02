@@ -62,9 +62,11 @@ void remove_pending_cmds_to_ack(int fd, zvol_info_t *zinfo);
 zvol_io_cmd_t *zio_cmd_alloc(zvol_io_hdr_t *hdr, int fd);
 void zio_cmd_free(zvol_io_cmd_t **cmd);
 int uzfs_zvol_socket_read(int fd, char *buf, uint64_t nbytes);
+int uzfs_zvol_read_header(int fd, zvol_io_hdr_t *hdr);
 int uzfs_zvol_socket_write(int fd, char *buf, uint64_t nbytes);
 void uzfs_zvol_worker(void *arg);
 void uzfs_zvol_rebuild_dw_replica(void *arg);
+void uzfs_zvol_rebuild_scanner(void *arg);
 void uzfs_update_ionum_interval(zvol_info_t *zinfo, uint32_t timeout);
 void uzfs_zvol_timer_thread(void);
 

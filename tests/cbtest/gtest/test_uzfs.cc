@@ -40,10 +40,13 @@
 #include <sys/epoll.h>
 
 char *ds_name;
+char *ds_name2;
 char *pool;
 spa_t *spa;
 zvol_state_t *zv;
+zvol_state_t *zv2;
 zvol_info_t *zinfo;
+zvol_info_t *zinfo2;
 int rebuild_test_case = 0;
 
 extern void (*zinfo_create_hook)(zvol_info_t *, nvlist_t *);
@@ -229,15 +232,20 @@ TEST(uZFS, Setup) {
 	char *path;
 	int ret;
 	char *pool_ds;
+	char *pool_ds2;
 	ds_name = (char *)malloc(MAXNAMELEN);
+	ds_name2 = (char *)malloc(MAXNAMELEN);
 	pool_ds = (char *)malloc(MAXNAMELEN);
+	pool_ds2 = (char *)malloc(MAXNAMELEN);
 	path = (char *)malloc(MAXNAMELEN);
 	pool = (char *)malloc(MAXNAMELEN);
 
 	strncpy(path, "/tmp/uztest.1a", MAXNAMELEN);
 	strncpy(pool, "pool1", MAXNAMELEN);
 	strncpy(ds_name, "vol1", MAXNAMELEN);
+	strncpy(ds_name2, "vol3", MAXNAMELEN);
 	strncpy(pool_ds, "pool1/vol1", MAXNAMELEN);
+	strncpy(pool_ds2, "pool1/vol3", MAXNAMELEN);
 	signal(SIGPIPE, SIG_IGN);
 
 	uzfs_init();
@@ -265,6 +273,15 @@ TEST(uZFS, Setup) {
 
 	/* give time to get the zfs threads created */
 	sleep(5);
+	/*Create vol3 */
+	uzfs_create_dataset(spa, ds_name2, 1024*1024*1024, 512, &zv2);
+	uzfs_hold_dataset(zv2);
+	uzfs_update_metadata_granularity(zv2, 512);
+	strncpy(zv2->zv_target_host,"127.0.0.1:5050", MAXNAMELEN);
+	uzfs_zinfo_init(zv2, pool_ds2, NULL);
+	zinfo2 = uzfs_zinfo_lookup(ds_name2);
+	EXPECT_EQ(0, !zinfo2);
+
 	uzfs_zinfo_init(zv, pool_ds, NULL);
 	zinfo = uzfs_zinfo_lookup(ds_name);
 	EXPECT_EQ(0, !zinfo);
@@ -375,12 +392,12 @@ TEST(uZFS, asyncTaskProps) {
 TEST(uZFS, EmptyCreateProps) {
 	uzfs_mgmt_conn_t *conn;
 
-	EXPECT_EQ(1, uzfs_mgmt_conn_list_count(&uzfs_mgmt_conns));
+	EXPECT_EQ(2, uzfs_mgmt_conn_list_count(&uzfs_mgmt_conns));
 	conn = SLIST_FIRST(&uzfs_mgmt_conns);
 	EXPECT_EQ(1, conn->conn_refcount);
 
 	zinfo_create_cb(zinfo, NULL);
-	EXPECT_EQ(1, uzfs_mgmt_conn_list_count(&uzfs_mgmt_conns));
+	EXPECT_EQ(2, uzfs_mgmt_conn_list_count(&uzfs_mgmt_conns));
 	conn = SLIST_FIRST(&uzfs_mgmt_conns);
 	EXPECT_EQ(2, conn->conn_refcount);
 }
@@ -473,7 +490,7 @@ TEST(uZFS, TestStartRebuild) {
 	rebuild_status[3] = ZVOL_REBUILDING_ERRORED;
 	rebuild_status[4] = ZVOL_REBUILDING_FAILED;
 
-	EXPECT_EQ(1, uzfs_mgmt_conn_list_count(&uzfs_mgmt_conns));
+	EXPECT_EQ(2, uzfs_mgmt_conn_list_count(&uzfs_mgmt_conns));
 	EXPECT_EQ(2, zinfo->refcnt);
 	conn = SLIST_FIRST(&uzfs_mgmt_conns);
 
@@ -767,12 +784,207 @@ TEST(uZFS, TestIOConnAcceptor) {
 	close(fd);
 }
 
-void execute_rebuild_test_case(const char *s, int test_case, zvol_rebuild_status_t status)
+void
+uzfs_mock_zvol_rebuild_dw_replica(void *arg)
+{
+	rebuild_thread_arg_t *rebuild_args = (rebuild_thread_arg_t *)arg;
+
+	struct sockaddr_in replica_ip;
+
+	int		rc = 0;
+	int		sfd = -1;
+	uint64_t	offset = 0;
+	uint64_t	checkpointed_ionum;
+	zvol_info_t	*zinfo = NULL;
+	zvol_state_t	*zvol_state;
+	zvol_io_cmd_t	*zio_cmd = NULL;
+	zvol_io_hdr_t 	hdr;
+	struct linger lo = { 1, 0 };
+	char zvol_name[MAXNAMELEN];
+
+	strncpy(rebuild_args->zvol_name, "vol3", MAXNAMELEN);
+	sfd = rebuild_args->fd;
+	zinfo = rebuild_args->zinfo;
+
+	if ((rc = setsockopt(sfd, SOL_SOCKET, SO_LINGER, &lo, sizeof (lo)))
+	    != 0) {
+		LOG_ERRNO("setsockopt failed");
+		goto exit;
+	}
+
+	bzero(&replica_ip, sizeof (replica_ip));
+	replica_ip.sin_family = AF_INET;
+	replica_ip.sin_addr.s_addr = inet_addr(rebuild_args->ip);
+	replica_ip.sin_port = htons(rebuild_args->port);
+
+	if ((rc = connect(sfd, (struct sockaddr *)&replica_ip,
+	    sizeof (replica_ip))) != 0) {
+		LOG_ERRNO("connect failed");
+		perror("connect");
+		goto exit;
+	}
+
+	if (rebuild_test_case == 1) {
+		rc =-1;
+		goto exit;
+	}
+
+send_hdr_again:
+	/* Set state in-progess state now */
+	checkpointed_ionum = uzfs_zvol_get_last_committed_io_no(zinfo->zv);
+	zvol_state = zinfo->zv;
+	bzero(&hdr, sizeof (hdr));
+	hdr.status = ZVOL_OP_STATUS_OK;
+	hdr.version = REPLICA_VERSION;
+	hdr.opcode = ZVOL_OPCODE_HANDSHAKE;
+	hdr.len = strlen(rebuild_args->zvol_name) + 1;
+	if (rebuild_test_case == 2)
+		hdr.opcode = ZVOL_OPCODE_WRITE;
+
+	rc = uzfs_zvol_socket_write(sfd, (char *)&hdr, sizeof (hdr));
+	if (rc != 0) {
+		LOG_ERR("Socket hdr write failed");
+		goto exit;
+	}
+
+	if (rebuild_test_case == 3) {
+		rc = -1;
+		goto exit;
+	}
+
+	strncpy(zvol_name, rebuild_args->zvol_name, hdr.len);
+	if (rebuild_test_case == 4)
+		strncpy(zvol_name, "X", hdr.len);
+
+	printf("Volname:%s\n", zvol_name);
+	rc = uzfs_zvol_socket_write(sfd, zvol_name, hdr.len);
+	if (rc != 0) {
+		LOG_ERR("Socket handshake write failed");
+		goto exit;
+	}
+
+	if (rebuild_test_case == 5)
+		goto send_hdr_again;
+
+next_step:
+
+	bzero(&hdr, sizeof (hdr));
+	hdr.status = ZVOL_OP_STATUS_OK;
+	hdr.version = REPLICA_VERSION;
+	hdr.opcode = ZVOL_OPCODE_REBUILD_STEP;
+	hdr.checkpointed_io_seq = checkpointed_ionum;
+	hdr.offset = 0;
+	hdr.len = zvol_rebuild_step_size;
+
+	if (rebuild_test_case == 6) {
+		hdr.opcode = ZVOL_OPCODE_REBUILD_COMPLETE;
+		rc = uzfs_zvol_socket_write(sfd, (char *)&hdr, sizeof (hdr));
+		if (rc != 0) {
+			LOG_ERRNO("Socket rebuild_complete write failed, but,"
+			    "counting as success with this replica");
+			rc = 0;
+			goto exit;
+		}
+
+		rc = 0;
+		LOG_INFO("Rebuilding zvol %s completed", zinfo->name);
+		goto exit;
+	}
+
+	while (1) {
+
+		rc = uzfs_zvol_socket_read(sfd, (char *)&hdr, sizeof (hdr));
+		if (rc != 0) {
+			LOG_ERR("Socket read failed");
+			goto exit;
+		}
+
+		if (hdr.status != ZVOL_OP_STATUS_OK) {
+			LOG_ERR("received err in rebuild.. for %s..",
+			    zinfo->name);
+			rc = -1;
+			goto exit;
+		}
+
+		if (hdr.opcode == ZVOL_OPCODE_REBUILD_STEP_DONE) {
+			offset += zvol_rebuild_step_size;
+			LOG_DEBUG("ZVOL_OPCODE_REBUILD_STEP_DONE received");
+			goto next_step;
+		}
+
+		ASSERT((hdr.opcode == ZVOL_OPCODE_READ) &&
+		    (hdr.flags & ZVOL_OP_FLAG_REBUILD));
+		hdr.opcode = ZVOL_OPCODE_WRITE;
+
+		zio_cmd = zio_cmd_alloc(&hdr, sfd);
+		rc = uzfs_zvol_socket_read(sfd, (char *)zio_cmd->buf, hdr.len);
+		if (rc != 0) {
+			LOG_ERR("Socket read writeIO failed");
+			goto exit;
+		}
+
+		/*
+		 * Take refcount for uzfs_zvol_worker to work on it.
+		 * Will dropped by uzfs_zvol_worker once cmd is executed.
+		 */
+		uzfs_zinfo_take_refcnt(zinfo, B_FALSE);
+		zio_cmd->zv = zinfo;
+		uzfs_zvol_worker(zio_cmd);
+		if (zio_cmd->hdr.status != ZVOL_OP_STATUS_OK) {
+			LOG_ERR("rebuild IO failed.. for %s..", zinfo->name);
+			rc = -1;
+			goto exit;
+		}
+		zio_cmd_free(&zio_cmd);
+	}
+
+exit:
+	mutex_enter(&zinfo->zv->rebuild_mtx);
+	if (rc != 0) {
+		uzfs_zvol_set_rebuild_status(zinfo->zv,
+		    ZVOL_REBUILDING_ERRORED);
+		(zinfo->zv->rebuild_info.rebuild_failed_cnt) += 1;
+		LOG_ERR("uzfs_zvol_rebuild_dw_replica thread exiting, "
+		    "rebuilding failed zvol: %s", zinfo->name);
+	}
+	(zinfo->zv->rebuild_info.rebuild_done_cnt) += 1;
+	if (zinfo->zv->rebuild_info.rebuild_cnt ==
+	    zinfo->zv->rebuild_info.rebuild_done_cnt) {
+		if (zinfo->zv->rebuild_info.rebuild_failed_cnt != 0)
+			uzfs_zvol_set_rebuild_status(zinfo->zv,
+			    ZVOL_REBUILDING_FAILED);
+		else {
+			/* Mark replica healthy now */
+			uzfs_zvol_set_rebuild_status(zinfo->zv,
+			    ZVOL_REBUILDING_DONE);
+			uzfs_zvol_set_status(zinfo->zv, ZVOL_STATUS_HEALTHY);
+			uzfs_update_ionum_interval(zinfo, 0);
+		}
+	}
+	mutex_exit(&zinfo->zv->rebuild_mtx);
+
+	kmem_free(arg, sizeof (rebuild_thread_arg_t));
+	if (zio_cmd != NULL)
+		zio_cmd_free(&zio_cmd);
+	if (sfd != -1) {
+		shutdown(sfd, SHUT_RDWR);
+		close(sfd);
+	}
+	/* Parent thread have taken refcount, drop it now */
+	uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
+
+	rebuild_test_case = 0;
+	zk_thread_exit();
+}
+
+void execute_rebuild_test_case(const char *s, int test_case,
+    zvol_rebuild_status_t status, boolean_t is_test_positive,
+    boolean_t is_rebuild_scanner)
 {
 	kthread_t *thrd;
 	rebuild_thread_arg_t *rebuild_args;
 
-	printf("%s\n", s);
+	printf("========%s========\n", s);
 
 	rebuild_test_case = test_case;
 	create_rebuild_args(&rebuild_args);
@@ -782,7 +994,12 @@ void execute_rebuild_test_case(const char *s, int test_case, zvol_rebuild_status
 	uzfs_zinfo_take_refcnt(zinfo, B_FALSE);
 	uzfs_zvol_set_rebuild_status(zinfo->zv, status);
 
-	thrd = zk_thread_create(NULL, 0, uzfs_zvol_rebuild_dw_replica, rebuild_args, 0, NULL, TS_RUN, 0, 0);
+	if (!is_rebuild_scanner)
+		thrd = zk_thread_create(NULL, 0, uzfs_zvol_rebuild_dw_replica,
+		    rebuild_args, 0, NULL, TS_RUN, 0, 0);
+	else
+		thrd = zk_thread_create(NULL, 0, uzfs_mock_zvol_rebuild_dw_replica,
+		    rebuild_args, 0, NULL, TS_RUN, 0, 0);
 	zk_thread_join(thrd->t_tid);
 
 	EXPECT_EQ(2, zinfo->refcnt);
@@ -794,7 +1011,8 @@ void execute_rebuild_test_case(const char *s, int test_case, zvol_rebuild_status
 		else
 			break;
 	}
-	if (test_case != 7)
+
+	if (!is_test_positive)
 		EXPECT_EQ(ZVOL_REBUILDING_FAILED, uzfs_zvol_get_rebuild_status(zinfo->zv));
 	else
 		EXPECT_EQ(ZVOL_REBUILDING_DONE, uzfs_zvol_get_rebuild_status(zinfo->zv));
@@ -810,28 +1028,66 @@ TEST(uZFS, TestRebuild) {
 
 	zvol_rebuild_step_size = (1024ULL * 1024ULL * 1024ULL) / 2 + 1000;
 	/* thread that helps rebuilding exits abruptly just after connects */
-	execute_rebuild_test_case("rebuild abrupt", 1, ZVOL_REBUILDING_IN_PROGRESS);
+	execute_rebuild_test_case("rebuild abrupt", 1, ZVOL_REBUILDING_IN_PROGRESS, B_FALSE, B_FALSE);
 
 	/* thread that helps rebuilding exits gracefully just after connects */
-	execute_rebuild_test_case("rebuild grace", 2, ZVOL_REBUILDING_IN_PROGRESS);
+	execute_rebuild_test_case("rebuild grace", 2, ZVOL_REBUILDING_IN_PROGRESS, B_FALSE, B_FALSE);
 
 	/* rebuild state is ERRORED on dw replica */
-	execute_rebuild_test_case("rebuild error state", 2, ZVOL_REBUILDING_ERRORED);
+	execute_rebuild_test_case("rebuild error state", 2, ZVOL_REBUILDING_ERRORED, B_FALSE, B_FALSE);
 
 	/* thread helping rebuild will exit after reading REBUILD_STEP */
-	execute_rebuild_test_case("rebuild exit after step", 3, ZVOL_REBUILDING_IN_PROGRESS);
+	execute_rebuild_test_case("rebuild exit after step", 3, ZVOL_REBUILDING_IN_PROGRESS, B_FALSE, B_FALSE);
 
 	/* thread helping rebuild will exit after writng invalid write IO */
-	execute_rebuild_test_case("rebuild exit after invalid write", 4, ZVOL_REBUILDING_IN_PROGRESS);
+	execute_rebuild_test_case("rebuild exit after invalid write", 4, ZVOL_REBUILDING_IN_PROGRESS, B_FALSE, B_FALSE);
 
 	/* thread helping rebuild will exit after writng valid write IO */
-	execute_rebuild_test_case("rebuild exit after valid write", 5, ZVOL_REBUILDING_IN_PROGRESS);
+	execute_rebuild_test_case("rebuild exit after valid write", 5, ZVOL_REBUILDING_IN_PROGRESS, B_FALSE, B_FALSE);
 
 	/* thread helping rebuild will exit after writng valid write IO and REBUILD_STEP_DONE */
-	execute_rebuild_test_case("rebuild exit after valid write and rebuild_step", 6, ZVOL_REBUILDING_IN_PROGRESS);
+	execute_rebuild_test_case("rebuild exit after valid write and rebuild_step", 6, ZVOL_REBUILDING_IN_PROGRESS, B_FALSE, B_FALSE);
 
 	/* thread helping rebuild will exit after writing valid write IO and REBUILD_STEP_DONE, and reads REBUILD_STEP, writes REBUILD_STEP_DONE */
-	execute_rebuild_test_case("complete rebuild", 7, ZVOL_REBUILDING_IN_PROGRESS);
+	execute_rebuild_test_case("complete rebuild", 7, ZVOL_REBUILDING_IN_PROGRESS, B_TRUE, B_FALSE);
+	EXPECT_EQ(ZVOL_STATUS_HEALTHY, uzfs_zvol_get_status(zinfo->zv));
+
+	memset(&zinfo->zv->rebuild_info, 0, sizeof (zvol_rebuild_info_t));
+}
+
+TEST(uZFS, TestRebuildScanner) {
+	uzfs_mgmt_conn_t *conn;
+	mgmt_ack_t *mack;
+	char ip[MAX_IP_LEN];
+	kthread_t *thrd;
+	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
+	rebuild_thread_arg_t *rebuild_args;
+
+	zvol_rebuild_step_size = (1024ULL * 1024ULL * 1024ULL) / 2 + 1000;
+
+	/* Rebuild thread exits abruptly just after connect */
+	execute_rebuild_test_case("Rebuild abrupt", 1,
+	    ZVOL_REBUILDING_IN_PROGRESS, B_FALSE, B_TRUE);
+
+	/* Rebuild thread sending wrong opcode after connectg */
+	execute_rebuild_test_case("Wrong opcode", 2,
+	    ZVOL_REBUILDING_IN_PROGRESS, B_FALSE, B_TRUE);
+
+	/* Rebuild thread exits after handshake */
+	execute_rebuild_test_case("Rebuild error out", 3,
+	    ZVOL_REBUILDING_ERRORED, B_FALSE, B_TRUE);
+
+	/* Rebuild thread sending wrong vol name */
+	execute_rebuild_test_case("Wrong vol name", 4,
+	    ZVOL_REBUILDING_IN_PROGRESS, B_FALSE, B_TRUE);
+
+	/* Rebuild thread sending handshake again on same volume */
+	execute_rebuild_test_case("Send handshake again", 5,
+	    ZVOL_REBUILDING_IN_PROGRESS, B_FALSE, B_TRUE);
+
+	/* Rebuild thread sendinc complete opcode */
+	execute_rebuild_test_case("complete rebuild", 6,
+	    ZVOL_REBUILDING_IN_PROGRESS, B_TRUE, B_TRUE);
 	EXPECT_EQ(ZVOL_STATUS_HEALTHY, uzfs_zvol_get_status(zinfo->zv));
 
 	memset(&zinfo->zv->rebuild_info, 0, sizeof (zvol_rebuild_info_t));

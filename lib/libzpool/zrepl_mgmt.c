@@ -66,16 +66,18 @@ zrepl_log(enum zrepl_log_level lvl, const char *fmt, ...)
 int
 create_and_bind(const char *port, int bind_needed, boolean_t nonblock)
 {
-	int s, sfd;
+	int rc = 0;
+	int sfd = -1;
 	struct addrinfo hints = {0, };
-	struct addrinfo *result, *rp;
+	struct addrinfo *result = NULL;
+	struct addrinfo *rp = NULL;
 
 	hints.ai_family = AF_INET;
 	hints.ai_socktype = SOCK_STREAM;
 	hints.ai_flags = AI_PASSIVE;
 
-	s = getaddrinfo(NULL, port, &hints, &result);
-	if (s != 0) {
+	rc = getaddrinfo(NULL, port, &hints, &result);
+	if (rc != 0) {
 		perror("getaddrinfo");
 		return (-1);
 	}
@@ -94,23 +96,26 @@ create_and_bind(const char *port, int bind_needed, boolean_t nonblock)
 		if (bind_needed == 0) {
 			break;
 		}
+
 		if (setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, &enable,
 		    sizeof (int)) < 0) {
 			perror("setsockopt(SO_REUSEADDR) failed");
 		}
-		s = bind(sfd, rp->ai_addr, rp->ai_addrlen);
-		if (s == 0) {
+
+		rc = bind(sfd, rp->ai_addr, rp->ai_addrlen);
+		if (rc == 0) {
 			break;
 		}
 
 		close(sfd);
 	}
 
-	if (rp == NULL) {
-		return (-1);
-	}
+	if (result != NULL)
+		freeaddrinfo(result);
 
-	freeaddrinfo(result);
+	if (rp == NULL)
+		return (-1);
+
 	return (sfd);
 }
 

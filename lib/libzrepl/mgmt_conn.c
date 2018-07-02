@@ -909,7 +909,7 @@ process_message(uzfs_mgmt_conn_t *conn)
 		if (zinfo->mgmt_conn != conn) {
 			uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
 			LOGERRCONN(conn, "Target used invalid connection for "
-			    "zvol %s\n", zvol_name);
+			    "zvol %s", zvol_name);
 			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
 			    hdrp->opcode, hdrp->io_seq);
 			break;
@@ -967,7 +967,7 @@ process_message(uzfs_mgmt_conn_t *conn)
 		if (zinfo->mgmt_conn != conn) {
 			uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
 			LOGERRCONN(conn, "Target used invalid connection for "
-			    "zvol %s\n", zvol_name);
+			    "zvol %s", zvol_name);
 			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
 			    hdrp->opcode, hdrp->io_seq);
 			break;
@@ -1001,7 +1001,7 @@ process_message(uzfs_mgmt_conn_t *conn)
 		if (zinfo->mgmt_conn != conn) {
 			uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
 			LOGERRCONN(conn, "Target used invalid connection for "
-			    "zvol %s\n", zvol_name);
+			    "zvol %s", zvol_name);
 			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
 			    hdrp->opcode, hdrp->io_seq);
 			break;

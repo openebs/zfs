@@ -85,7 +85,7 @@ etc. Explanation of the two mounted volumes follows:
 ```bash
 sudo docker build -t my-cstor .
 sudo mkdir /tmp/cstor
-sudo docker run --privileged -it -v /dev:/dev --mount source=cstortmp,target=/tmp my-cstor
+sudo docker run --privileged -it -v /dev:/dev -v /run/udev:/run/udev --mount source=cstortmp,target=/tmp my-cstor
 sudo docker exec -it <container-id> /bin/bash
 ```
 
@@ -95,6 +95,30 @@ You could also run local image repo and upload the test image there:
 sudo docker run -d -p 5000:5000 --restart=always --name registry registry:2
 sudo docker build -t localhost:5000/my-cstor .
 sudo docker push localhost:5000/my-cstor
+```
+
+# Troubleshooting
+
+In order to print debug messages start zrepl with `-l debug` argument. If
+running zrepl in container with standard entrypoint.sh script, set env
+variable LOGLEVEL=debug. To do the same when running zrepl on k8s cluster
+use patch command to insert the same env variable to pod definition.
+Details differ based on how zrepl container was deployed on k8s cluster:
+
+```bash
+kubectl patch deployment cstor-deployment-name --patch "$(cat patch.yaml)"
+```
+
+where patch.yaml content is:
+```
+spec:
+  template:
+    spec:
+      containers:
+      - name: cstor-container-name
+        env:
+        - name: LOGLEVEL
+          value: "debug"
 ```
 
 # Caveats

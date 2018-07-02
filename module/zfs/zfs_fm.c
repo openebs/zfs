@@ -101,7 +101,7 @@
  * good and bad versions of the buffer (if available), and we annotate the
  * ereport with information about the differences.
  */
-#ifdef _KERNEL
+
 void
 zfs_zevent_post_cb(nvlist_t *nvl, nvlist_t *detector)
 {
@@ -768,13 +768,11 @@ annotate_ecksum(nvlist_t *ereport, zio_bad_cksum_t *info,
 	}
 	return (eip);
 }
-#endif
 
 void
 zfs_ereport_post(const char *subclass, spa_t *spa, vdev_t *vd, zio_t *zio,
     uint64_t stateoroffset, uint64_t size)
 {
-#ifdef _KERNEL
 	nvlist_t *ereport = NULL;
 	nvlist_t *detector = NULL;
 
@@ -789,7 +787,6 @@ zfs_ereport_post(const char *subclass, spa_t *spa, vdev_t *vd, zio_t *zio,
 
 	/* Cleanup is handled by the callback function */
 	zfs_zevent_post(ereport, detector, zfs_zevent_post_cb);
-#endif
 }
 
 void
@@ -800,10 +797,8 @@ zfs_ereport_start_checksum(spa_t *spa, vdev_t *vd,
 	zio_cksum_report_t *report;
 
 
-#ifdef _KERNEL
 	if (zfs_is_ratelimiting_event(FM_EREPORT_ZFS_CHECKSUM, vd))
 		return;
-#endif
 
 	report = kmem_zalloc(sizeof (*report), KM_SLEEP);
 
@@ -821,7 +816,6 @@ zfs_ereport_start_checksum(spa_t *spa, vdev_t *vd,
 	report->zcr_align = 1ULL << vd->vdev_top->vdev_ashift;
 	report->zcr_length = length;
 
-#ifdef _KERNEL
 	zfs_ereport_start(&report->zcr_ereport, &report->zcr_detector,
 	    FM_EREPORT_ZFS_CHECKSUM, spa, vd, zio, offset, length);
 
@@ -829,7 +823,6 @@ zfs_ereport_start_checksum(spa_t *spa, vdev_t *vd,
 		zfs_ereport_free_checksum(report);
 		return;
 	}
-#endif
 
 	mutex_enter(&spa->spa_errlist_lock);
 	report->zcr_next = zio->io_logical->io_cksum_report;
@@ -841,7 +834,6 @@ void
 zfs_ereport_finish_checksum(zio_cksum_report_t *report, const abd_t *good_data,
     const abd_t *bad_data, boolean_t drop_if_identical)
 {
-#ifdef _KERNEL
 	zfs_ecksum_info_t *info;
 
 	info = annotate_ecksum(report->zcr_ereport, report->zcr_ckinfo,
@@ -855,20 +847,17 @@ zfs_ereport_finish_checksum(zio_cksum_report_t *report, const abd_t *good_data,
 	report->zcr_ereport = report->zcr_detector = NULL;
 	if (info != NULL)
 		kmem_free(info, sizeof (*info));
-#endif
 }
 
 void
 zfs_ereport_free_checksum(zio_cksum_report_t *rpt)
 {
-#ifdef _KERNEL
 	if (rpt->zcr_ereport != NULL) {
 		fm_nvlist_destroy(rpt->zcr_ereport,
 		    FM_NVA_FREE);
 		fm_nvlist_destroy(rpt->zcr_detector,
 		    FM_NVA_FREE);
 	}
-#endif
 	rpt->zcr_free(rpt->zcr_cbdata, rpt->zcr_cbinfo);
 
 	if (rpt->zcr_ckinfo != NULL)
@@ -883,7 +872,6 @@ zfs_ereport_post_checksum(spa_t *spa, vdev_t *vd,
     struct zio *zio, uint64_t offset, uint64_t length,
     const abd_t *good_data, const abd_t *bad_data, zio_bad_cksum_t *zbc)
 {
-#ifdef _KERNEL
 	nvlist_t *ereport = NULL;
 	nvlist_t *detector = NULL;
 	zfs_ecksum_info_t *info;
@@ -901,7 +889,6 @@ zfs_ereport_post_checksum(spa_t *spa, vdev_t *vd,
 		zfs_zevent_post(ereport, detector, zfs_zevent_post_cb);
 		kmem_free(info, sizeof (*info));
 	}
-#endif
 }
 
 /*
@@ -915,7 +902,6 @@ zfs_event_create(spa_t *spa, vdev_t *vd, const char *type, const char *name,
     nvlist_t *aux)
 {
 	nvlist_t *resource = NULL;
-#ifdef _KERNEL
 	char class[64];
 
 	if (spa_load_state(spa) == SPA_LOAD_TRYIMPORT)
@@ -965,7 +951,6 @@ zfs_event_create(spa_t *spa, vdev_t *vd, const char *type, const char *name,
 			(void) nvlist_add_nvpair(resource, elem);
 	}
 
-#endif
 	return (resource);
 }
 
@@ -973,13 +958,11 @@ static void
 zfs_post_common(spa_t *spa, vdev_t *vd, const char *type, const char *name,
     nvlist_t *aux)
 {
-#ifdef _KERNEL
 	nvlist_t *resource;
 
 	resource = zfs_event_create(spa, vd, type, name, aux);
 	if (resource)
 		zfs_zevent_post(resource, NULL, zfs_zevent_post_cb);
-#endif
 }
 
 /*
@@ -1014,7 +997,6 @@ zfs_post_autoreplace(spa_t *spa, vdev_t *vd)
 void
 zfs_post_state_change(spa_t *spa, vdev_t *vd, uint64_t laststate)
 {
-#ifdef _KERNEL
 	nvlist_t *aux;
 
 	/*
@@ -1042,7 +1024,6 @@ zfs_post_state_change(spa_t *spa, vdev_t *vd, uint64_t laststate)
 
 	if (aux)
 		fm_nvlist_destroy(aux, FM_NVA_FREE);
-#endif
 }
 
 #if defined(_KERNEL) && defined(HAVE_SPL)
@@ -1051,4 +1032,4 @@ EXPORT_SYMBOL(zfs_ereport_post_checksum);
 EXPORT_SYMBOL(zfs_post_remove);
 EXPORT_SYMBOL(zfs_post_autoreplace);
 EXPORT_SYMBOL(zfs_post_state_change);
-#endif /* _KERNEL */
+#endif	/* _KERNEL */

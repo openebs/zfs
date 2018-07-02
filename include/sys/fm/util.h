@@ -30,6 +30,7 @@
 extern "C" {
 #endif
 
+#include <sys/zfs_context.h>
 #include <sys/nvpair.h>
 
 /*
@@ -69,8 +70,6 @@ typedef struct erpt_dump {
 	} ed_tod_base;
 } erpt_dump_t;
 
-#ifdef _KERNEL
-
 #define	ZEVENT_SHUTDOWN		0x1
 
 typedef void zevent_cb_t(nvlist_t *, nvlist_t *);
@@ -96,20 +95,17 @@ extern void fm_nvprint(nvlist_t *);
 extern void zfs_zevent_post_cb(nvlist_t *nvl, nvlist_t *detector);
 extern int zfs_zevent_post(nvlist_t *, nvlist_t *, zevent_cb_t *);
 extern void zfs_zevent_drain_all(int *);
+#ifdef _KERNEL
 extern int zfs_zevent_fd_hold(int, minor_t *, zfs_zevent_t **);
 extern void zfs_zevent_fd_rele(int);
+#endif
 extern int zfs_zevent_next(zfs_zevent_t *, nvlist_t **, uint64_t *, uint64_t *);
 extern int zfs_zevent_wait(zfs_zevent_t *);
+#ifdef _KERNEL
 extern int zfs_zevent_seek(zfs_zevent_t *, uint64_t);
+#endif
 extern void zfs_zevent_init(zfs_zevent_t **);
 extern void zfs_zevent_destroy(zfs_zevent_t *);
-
-#else
-
-static inline void fm_init(void) { }
-static inline void fm_fini(void) { }
-
-#endif  /* _KERNEL */
 
 #ifdef	__cplusplus
 }

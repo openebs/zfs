@@ -75,6 +75,7 @@
 #include <sys/kobj.h>
 #include <sys/time.h>
 #include <sys/zfs_ioctl.h>
+#endif /* _KERNEL */
 
 int zfs_zevent_len_max = 0;
 int zfs_zevent_cols = 80;
@@ -98,7 +99,6 @@ static uint64_t zevent_eid = 0;
 static kmutex_t zevent_lock;
 static list_t zevent_list;
 static kcondvar_t zevent_cv;
-#endif /* _KERNEL */
 
 
 /*
@@ -120,8 +120,6 @@ static struct erpt_kstat erpt_kstat_data = {
 };
 
 kstat_t *fm_ksp;
-
-#ifdef _KERNEL
 
 /*
  * Formatting utility function for fm_nvprintr.  We attempt to wrap chunks of
@@ -400,6 +398,11 @@ fm_nvprintr(nvlist_t *nvl, int d, int c, int cols)
 		case DATA_TYPE_UNKNOWN:
 			c = fm_printf(d + 1, c, cols, "<unknown>");
 			break;
+#ifndef _KERNEL
+		case DATA_TYPE_DOUBLE:
+			/* not used by zfs kernel */
+			break;
+#endif
 		}
 	}
 
@@ -573,6 +576,8 @@ out:
 	return (error);
 }
 
+#ifdef _KERNEL
+
 static int
 zfs_zevent_minor_to_state(minor_t minor, zfs_zevent_t **ze)
 {
@@ -608,6 +613,8 @@ zfs_zevent_fd_rele(int fd)
 {
 	releasef(fd);
 }
+
+#endif	/* _KERNEL */
 
 /*
  * Get the next zevent in the stream and place a copy in 'event'.  This
@@ -658,11 +665,9 @@ zfs_zevent_next(zfs_zevent_t *ze, nvlist_t **event, uint64_t *event_size,
 	(void) nvlist_dup(ev->ev_nvl, event, KM_SLEEP);
 	*dropped = ze->ze_dropped;
 
-#ifdef _KERNEL
 	/* Include events dropped due to rate limiting */
 	*dropped += ratelimit_dropped;
 	ratelimit_dropped = 0;
-#endif
 	ze->ze_dropped = 0;
 out:
 	mutex_exit(&zevent_lock);
@@ -694,6 +699,7 @@ out:
 	return (error);
 }
 
+#ifdef _KERNEL
 /*
  * The caller may seek to a specific EID by passing that EID.  If the EID
  * is still available in the posted list of events the cursor is positioned
@@ -754,6 +760,7 @@ out:
 
 	return (error);
 }
+#endif	/* _KERNEL */
 
 void
 zfs_zevent_init(zfs_zevent_t **zep)
@@ -774,7 +781,6 @@ zfs_zevent_destroy(zfs_zevent_t *ze)
 
 	kmem_free(ze, sizeof (zfs_zevent_t));
 }
-#endif /* _KERNEL */
 
 /*
  * Wrapppers for FM nvlist allocators
@@ -1595,7 +1601,6 @@ fm_ena_time_get(uint64_t ena)
 	return (time);
 }
 
-#ifdef _KERNEL
 /*
  * Helper function to increment ereport dropped count.  Used by the event
  * rate limiting code to give feedback to the user about how many events were
@@ -1606,9 +1611,7 @@ fm_erpt_dropped_increment(void)
 {
 	atomic_inc_64(&ratelimit_dropped);
 }
-#endif
 
-#ifdef _KERNEL
 void
 fm_init(void)
 {
@@ -1663,6 +1666,8 @@ fm_fini(void)
 		fm_ksp = NULL;
 	}
 }
+
+#ifdef _KERNEL
 
 module_param(zfs_zevent_len_max, int, 0644);
 MODULE_PARM_DESC(zfs_zevent_len_max, "Max event queue length");

@@ -25,6 +25,7 @@
 #include <uzfs_rebuilding.h>
 #include <sys/dsl_dataset.h>
 #include <uzfs_io.h>
+#include <zrepl_mgmt.h>
 
 #define	GET_NEXT_CHUNK(chunk_io, offset, len, end)		\
 	do {							\
@@ -341,6 +342,40 @@ uzfs_flush_data(zvol_state_t *zv)
 	zil_commit(zv->zv_zilog, ZVOL_OBJ);
 }
 
+static const char *
+zvol_status_to_str(zvol_status_t status)
+{
+	switch (status) {
+	case ZVOL_STATUS_HEALTHY:
+		return ("HEALTHY");
+	case ZVOL_STATUS_DEGRADED:
+		return ("DEGRADED");
+	default:
+		break;
+	}
+	return ("UNKNOWN");
+}
+
+static const char *
+rebuild_status_to_str(zvol_rebuild_status_t status)
+{
+	switch (status) {
+	case ZVOL_REBUILDING_INIT:
+		return ("INIT");
+	case ZVOL_REBUILDING_IN_PROGRESS:
+		return ("INPROGRESS");
+	case ZVOL_REBUILDING_DONE:
+		return ("DONE");
+	case ZVOL_REBUILDING_ERRORED:
+		return ("ERRORED");
+	case ZVOL_REBUILDING_FAILED:
+		return ("FAILED");
+	default:
+		break;
+	}
+	return ("UNKNOWN");
+}
+
 /*
  * Caller is responsible for locking to ensure
  * synchronization across below four functions
@@ -348,6 +383,8 @@ uzfs_flush_data(zvol_state_t *zv)
 void
 uzfs_zvol_set_status(zvol_state_t *zv, zvol_status_t status)
 {
+	LOG_INFO("zvol %s status change: %s -> %s", zv->zv_name,
+	    zvol_status_to_str(zv->zv_status), zvol_status_to_str(status));
 	zv->zv_status = status;
 }
 
@@ -359,6 +396,9 @@ uzfs_zvol_get_status(zvol_state_t *zv)
 void
 uzfs_zvol_set_rebuild_status(zvol_state_t *zv, zvol_rebuild_status_t status)
 {
+	LOG_INFO("zvol %s rebuild status change: %s -> %s", zv->zv_name,
+	    rebuild_status_to_str(zv->zv_status),
+	    rebuild_status_to_str(status));
 	zv->rebuild_info.zv_rebuild_status = status;
 }
 

@@ -725,9 +725,9 @@ uzfs_zvol_io_conn_acceptor(void *arg)
 #ifdef DEBUG
 			hbuf = kmem_alloc(sizeof (NI_MAXHOST), KM_SLEEP);
 			sbuf = kmem_alloc(sizeof (NI_MAXSERV), KM_SLEEP);
-			rc = getnameinfo(&in_addr, in_len, hbuf, sizeof (hbuf),
-			    sbuf, sizeof (sbuf), NI_NUMERICHOST |
-			    NI_NUMERICSERV);
+			rc = getnameinfo(&in_addr, in_len, hbuf,
+			    sizeof (NI_MAXHOST), sbuf, sizeof (NI_MAXSERV),
+			    NI_NUMERICHOST | NI_NUMERICSERV);
 			if (rc == 0) {
 				LOG_DEBUG("Accepted connection from %s:%s",
 				    hbuf, sbuf);

@@ -723,18 +723,18 @@ uzfs_zvol_io_conn_acceptor(void *arg)
 				continue;
 			}
 #ifdef DEBUG
-			hbuf = kmem_alloc(sizeof (NI_MAXHOST), KM_SLEEP);
-			sbuf = kmem_alloc(sizeof (NI_MAXSERV), KM_SLEEP);
+			hbuf = kmem_alloc(NI_MAXHOST, KM_SLEEP);
+			sbuf = kmem_alloc(NI_MAXSERV, KM_SLEEP);
 			rc = getnameinfo(&in_addr, in_len, hbuf,
-			    sizeof (NI_MAXHOST), sbuf, sizeof (NI_MAXSERV),
+			    NI_MAXHOST, sbuf, NI_MAXSERV,
 			    NI_NUMERICHOST | NI_NUMERICSERV);
 			if (rc == 0) {
 				LOG_DEBUG("Accepted connection from %s:%s",
 				    hbuf, sbuf);
 			}
 
-			kmem_free(hbuf, sizeof (NI_MAXHOST));
-			kmem_free(sbuf, sizeof (NI_MAXSERV));
+			kmem_free(hbuf, NI_MAXHOST);
+			kmem_free(sbuf, NI_MAXSERV);
 #endif
 			if (events[i].data.fd == io_sfd) {
 				LOG_INFO("Connection req for data IO");

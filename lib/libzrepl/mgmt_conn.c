@@ -403,6 +403,7 @@ uzfs_zvol_get_ip(char *host)
 	struct ifaddrs *ifaddr, *ifa;
 	int family, n;
 	int rc = -1;
+	size_t host_len = strlen(host) + 1;
 
 	if (getifaddrs(&ifaddr) == -1) {
 		perror("getifaddrs");
@@ -423,7 +424,7 @@ uzfs_zvol_get_ip(char *host)
 			rc = getnameinfo(ifa->ifa_addr, (family == AF_INET) ?
 			    sizeof (struct sockaddr_in) :
 			    sizeof (struct sockaddr_in6),
-			    host, NI_MAXHOST,
+			    host, host_len,
 			    NULL, 0, NI_NUMERICHOST);
 			if (rc != 0) {
 				perror("getnameinfo");

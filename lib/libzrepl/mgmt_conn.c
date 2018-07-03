@@ -398,12 +398,11 @@ reply_data(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp, void *buf, int size)
  * Get IP address of first external network interface we encounter.
  */
 int
-uzfs_zvol_get_ip(char *host)
+uzfs_zvol_get_ip(char *host, size_t host_len)
 {
 	struct ifaddrs *ifaddr, *ifa;
 	int family, n;
 	int rc = -1;
-	size_t host_len = strlen(host) + 1;
 
 	if (getifaddrs(&ifaddr) == -1) {
 		perror("getifaddrs");
@@ -458,7 +457,7 @@ uzfs_zvol_mgmt_do_handshake(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	zvol_io_hdr_t	hdr;
 
 	bzero(&mgmt_ack, sizeof (mgmt_ack));
-	if (uzfs_zvol_get_ip(mgmt_ack.ip) == -1) {
+	if (uzfs_zvol_get_ip(mgmt_ack.ip, MAX_IP_LEN) == -1) {
 		LOG_ERRNO("Unable to get IP");
 		return (reply_nodata(conn, ZVOL_OP_STATUS_FAILED, hdrp->opcode,
 		    hdrp->io_seq));

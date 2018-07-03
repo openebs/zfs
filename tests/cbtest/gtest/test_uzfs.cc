@@ -609,7 +609,9 @@ create_rebuild_args(rebuild_thread_arg_t **r)
 	rebuild_args->fd = fd;
 	rebuild_args->zinfo = zinfo;
 	rebuild_args->port = REBUILD_IO_SERVER_PORT;
-	uzfs_zvol_get_ip(rebuild_args->ip);
+	rc = uzfs_zvol_get_ip(rebuild_args->ip, MAX_IP_LEN);
+	EXPECT_NE(rc, -1);
+	
 	strncpy(rebuild_args->zvol_name, "vol2", MAXNAMELEN);
 	*r = rebuild_args;
 }
@@ -718,7 +720,9 @@ TEST(uZFS, TestIOConnAcceptor) {
 
 	/* connect to io_conn_acceptor */
 	bzero((char *)&replica_io_addr, sizeof (replica_io_addr));
-	uzfs_zvol_get_ip(ip);
+	rc = uzfs_zvol_get_ip(ip, MAX_IP_LEN);
+	EXPECT_NE(rc, -1);
+
 	replica_io_addr.sin_family = AF_INET;
 	replica_io_addr.sin_addr.s_addr = inet_addr(ip);
 	replica_io_addr.sin_port = htons(IO_SERVER_PORT);
@@ -743,7 +747,9 @@ TEST(uZFS, TestIOConnAcceptor) {
 
 	/* connect to rebuild_conn_acceptor */
 	bzero((char *)&replica_io_addr, sizeof (replica_io_addr));
-	uzfs_zvol_get_ip(ip);
+	rc = uzfs_zvol_get_ip(ip, MAX_IP_LEN);
+	EXPECT_NE(rc, -1);
+
 	replica_io_addr.sin_family = AF_INET;
 	replica_io_addr.sin_addr.s_addr = inet_addr(ip);
 	replica_io_addr.sin_port = htons(REBUILD_IO_SERVER_PORT);

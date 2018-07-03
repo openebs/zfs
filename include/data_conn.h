@@ -55,7 +55,7 @@ extern uint16_t io_server_port;
 extern uint16_t rebuild_io_server_port;
 extern uint64_t zvol_rebuild_step_size;
 
-int uzfs_zvol_get_ip(char *host);
+int uzfs_zvol_get_ip(char *host, size_t host_len);
 void uzfs_zvol_io_conn_acceptor(void *arg);
 void init_zrepl(void);
 void remove_pending_cmds_to_ack(int fd, zvol_info_t *zinfo);

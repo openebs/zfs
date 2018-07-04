@@ -1,6 +1,6 @@
 #!/bin/bash
 
-while sleep 30; do
+while sleep 300; do
     echo "=====[ $SECONDS seconds still running ]=====";
     ps -auxwww;
     netstat -nap;

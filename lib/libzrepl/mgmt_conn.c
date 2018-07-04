@@ -558,7 +558,6 @@ static void
 free_async_task(async_task_t *async_task)
 {
 	ASSERT(MUTEX_HELD(&async_tasks_mtx));
-	SLIST_REMOVE(&async_tasks, async_task, async_task, task_next);
 	uzfs_zinfo_drop_refcnt(async_task->zinfo, B_FALSE);
 	kmem_free(async_task->payload, async_task->payload_length);
 	kmem_free(async_task, sizeof (*async_task));
@@ -585,8 +584,9 @@ finish_async_tasks(void)
 			rc = reply_nodata(async_task->conn, async_task->status,
 			    async_task->hdr.opcode, async_task->hdr.io_seq);
 		}
+		SLIST_REMOVE(&async_tasks, async_task, async_task, task_next);
 		free_async_task(async_task);
-		if (rc == -1)
+		if (rc != 0)
 			break;
 	}
 	mutex_exit(&async_tasks_mtx);
@@ -1115,6 +1115,9 @@ move_to_next_state(uzfs_mgmt_conn_t *conn)
 /*
  * One thread to serve all management connections operating in non-blocking
  * event driven style.
+ *
+ * Error handling: the thread may terminate the whole process and it is
+ * appropriate response to unrecoverable error.
  */
 void
 uzfs_zvol_mgmt_thread(void *arg)
@@ -1133,20 +1136,18 @@ uzfs_zvol_mgmt_thread(void *arg)
 	mgmt_eventfd = eventfd(0, EFD_NONBLOCK);
 	if (mgmt_eventfd < 0) {
 		perror("eventfd");
-		zk_thread_exit();
-		return;
+		goto exit;
 	}
 	epollfd = epoll_create1(0);
 	if (epollfd < 0) {
 		perror("epoll_create1");
-		zk_thread_exit();
-		return;
+		goto exit;
 	}
 	ev.events = EPOLLIN;
 	ev.data.ptr = NULL;
 	if (epoll_ctl(epollfd, EPOLL_CTL_ADD, mgmt_eventfd, &ev) == -1) {
 		perror("epoll_ctl");
-		zk_thread_exit();
+		goto exit;
 	}
 
 	prctl(PR_SET_NAME, "mgmt_conn", 0, 0, 0);
@@ -1182,8 +1183,9 @@ uzfs_zvol_mgmt_thread(void *arg)
 				/* consume the event */
 				rc = read(mgmt_eventfd, &value, sizeof (value));
 				ASSERT3P(rc, ==, sizeof (value));
-				if (finish_async_tasks() != 0)
+				if (finish_async_tasks() != 0) {
 					goto exit;
+				}
 				continue;
 			}
 
@@ -1194,8 +1196,9 @@ uzfs_zvol_mgmt_thread(void *arg)
 				} else {
 					LOGERRCONN(conn, "Error on connection");
 				}
-				if (close_conn(conn) != 0)
+				if (close_conn(conn) != 0) {
 					goto exit;
+				}
 			/* tcp connected event */
 			} else if ((events[i].events & EPOLLOUT) &&
 			    conn->conn_state == CS_CONNECT) {
@@ -1221,8 +1224,9 @@ uzfs_zvol_mgmt_thread(void *arg)
 				if (cnt == 0) {
 					/* the other peer closed the conn */
 					if (events[i].events & EPOLLIN) {
-						if (close_conn(conn) != 0)
+						if (close_conn(conn) != 0) {
 							goto exit;
+						}
 					}
 				} else if (cnt < 0) {
 					if (errno == EAGAIN ||
@@ -1231,8 +1235,9 @@ uzfs_zvol_mgmt_thread(void *arg)
 						continue;
 					}
 					perror("read/write");
-					if (close_conn(conn) != 0)
+					if (close_conn(conn) != 0) {
 						goto exit;
+					}
 				} else if (cnt <= nbytes) {
 					conn->conn_procn += cnt;
 					/*
@@ -1240,8 +1245,9 @@ uzfs_zvol_mgmt_thread(void *arg)
 					 * move to the next state.
 					 */
 					if (cnt == nbytes &&
-					    move_to_next_state(conn) != 0)
+					    move_to_next_state(conn) != 0) {
 						goto exit;
+					}
 				}
 			}
 		}
@@ -1250,33 +1256,51 @@ uzfs_zvol_mgmt_thread(void *arg)
 		 * for event
 		 */
 		if (nfds == 0 || do_scan) {
-			if (scan_conn_list() != 0)
+			if (scan_conn_list() != 0) {
 				goto exit;
+			}
 		}
 	}
 
 exit:
-	(void) close(epollfd);
-	epollfd = -1;
+	/*
+	 * If we get here it means we encountered encoverable error and
+	 * the whole process needs to terminate now. We try to be nice
+	 * and release all held resources before exiting.
+	 */
+	if (epollfd >= 0) {
+		(void) close(epollfd);
+		epollfd = -1;
+	}
 	mutex_enter(&conn_list_mtx);
 	SLIST_FOREACH(conn, &uzfs_mgmt_conns, conn_next) {
 		if (conn->conn_fd >= 0)
 			close_conn(conn);
 	}
 	mutex_exit(&conn_list_mtx);
-	mutex_destroy(&conn_list_mtx);
 
 	mutex_enter(&async_tasks_mtx);
-	(void) close(mgmt_eventfd);
-	mgmt_eventfd = -1;
+	if (mgmt_eventfd >= 0) {
+		(void) close(mgmt_eventfd);
+		mgmt_eventfd = -1;
+	}
 	while ((async_task = SLIST_FIRST(&async_tasks)) != NULL) {
 		SLIST_REMOVE_HEAD(&async_tasks, task_next);
-		uzfs_zinfo_drop_refcnt(async_task->zinfo, B_FALSE);
-		kmem_free(async_task, sizeof (*async_task));
+		/*
+		 * We can't free the task if async thread is still referencing
+		 * it. It will be freed by async thread when it is done.
+		 */
+		if (async_task->finished)
+			free_async_task(async_task);
 	}
 	mutex_exit(&async_tasks_mtx);
-	mutex_destroy(&async_tasks_mtx);
-
-	LOG_DEBUG("uzfs_zvol_mgmt thread exiting");
-	zk_thread_exit();
+	/*
+	 * We don't destroy the mutexes as other threads might be still using
+	 * them, although that our care here is a bit pointless because
+	 * we are going to exit from process in a moment.
+	 *
+	 *	mutex_destroy(&conn_list_mtx);
+	 *	mutex_destroy(&async_tasks_mtx);
+	 */
+	exit(2);
 }

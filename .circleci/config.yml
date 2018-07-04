@@ -48,11 +48,12 @@ jobs:
             make -j4;
             cd ../zfs
             sh autogen.sh
-            ./configure --with-config=user --enable-code-coverage=yes --enable-debug --enable-uzfs=yes --with-jemalloc --with-fio=$PWD/../fio || true;
+            ./configure --with-config=user --enable-code-coverage=yes --enable-debug --enable-uzfs=yes --with-jemalloc --with-fio=$PWD/../fio
             make -j4;
             make cstyle;
+            sudo sh -c 'echo "/tmp/core.%e.%p.%h.%t" > /proc/sys/kernel/core_pattern';
             export FIO_SRCDIR=$PWD/../fio;
-            sudo -E bash ./tests/cbtest/script/test_uzfs.sh -T all || true;
+            sudo -E bash ./tests/cbtest/script/test_uzfs.sh -T all
             bash <(curl -s https://codecov.io/bash)
   build_tag_1:
     machine: 
@@ -68,24 +69,11 @@ jobs:
             sudo apt-get install --yes -qq gcc-6 g++-6
             sudo apt-get install --yes -qq build-essential autoconf libtool gawk alien fakeroot linux-headers-$(uname -r) libaio-dev
             sudo apt-get install --yes -qq zlib1g-dev uuid-dev libattr1-dev libblkid-dev libselinux-dev libudev-dev libssl-dev
-            sudo apt-get install --yes -qq lcov libjemalloc-dev
-            sudo apt-get install --yes -qq parted lsscsi ksh attr acl nfs-kernel-server fio
-            sudo apt-get install --yes -qq libgtest-dev cmake
+            sudo apt-get install --yes -qq lcov
+            sudo apt-get install --yes -qq parted lsscsi ksh attr acl nfs-kernel-server
             sudo apt-get install gdb
             sudo unlink /usr/bin/gcc && sudo ln -s /usr/bin/gcc-6 /usr/bin/gcc
             sudo unlink /usr/bin/g++ && sudo ln -s /usr/bin/g++-6 /usr/bin/g++
-            pushd .
-            cd /usr/src/gtest
-            sudo cmake CMakeLists.txt
-            sudo make -j4
-            sudo cp *.a /usr/lib
-            popd
-            cd ..
-            git clone https://github.com/axboe/fio
-            cd fio
-            git checkout fio-3.7
-            ./configure
-            make -j4
             cd ..
             git clone https://github.com/openebs/spl
             cd spl
@@ -96,12 +84,13 @@ jobs:
             sudo dpkg -i *.deb;
             cd ../zfs
             sh autogen.sh
-            ./configure --enable-code-coverage=yes --enable-debug || true;
-            make --no-print-directory -s pkg-utils pkg-kmod || true;
+            ./configure --enable-code-coverage=yes --enable-debug
+            make --no-print-directory -s pkg-utils pkg-kmod
             sudo dpkg -i *.deb || true;
             make cstyle;
             sudo modprobe zfs;
-            ztest || true;
+            sudo sh -c 'echo "/tmp/core.%e.%p.%h.%t" > /proc/sys/kernel/core_pattern';
+            ztest
 workflows:
   version: 2
   TAGS:

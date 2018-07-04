@@ -862,7 +862,6 @@ send_hdr_again:
 	if (rebuild_test_case == 4)
 		strncpy(zvol_name, "X", hdr.len);
 
-	printf("Volname:%s\n", zvol_name);
 	rc = uzfs_zvol_socket_write(sfd, zvol_name, hdr.len);
 	if (rc != 0) {
 		LOG_ERR("Socket handshake write failed");
@@ -1061,35 +1060,61 @@ TEST(uZFS, TestRebuild) {
 	memset(&zinfo->zv->rebuild_info, 0, sizeof (zvol_rebuild_info_t));
 }
 
-TEST(uZFS, TestRebuildScanner) {
-	uzfs_mgmt_conn_t *conn;
-	mgmt_ack_t *mack;
-	char ip[MAX_IP_LEN];
-	kthread_t *thrd;
+TEST(uZFS, TestRebuildScannerAbruptClose) {
 	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
-	rebuild_thread_arg_t *rebuild_args;
-
-	zvol_rebuild_step_size = (1024ULL * 1024ULL * 1024ULL) / 2 + 1000;
+	zvol_rebuild_step_size = (1024ULL * 1024ULL * 100);
 
 	/* Rebuild thread exits abruptly just after connect */
 	execute_rebuild_test_case("Rebuild abrupt", 1,
 	    ZVOL_REBUILDING_IN_PROGRESS, B_FALSE, B_TRUE);
+	EXPECT_EQ(ZVOL_REBUILDING_FAILED, uzfs_zvol_get_rebuild_status(zinfo->zv));
+}
+
+TEST(uZFS, TestRebuildScannerWrongOpcode) {
+	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
+	zvol_rebuild_step_size = (1024ULL * 1024ULL * 100);
 
 	/* Rebuild thread sending wrong opcode after connectg */
 	execute_rebuild_test_case("Wrong opcode", 2,
 	    ZVOL_REBUILDING_IN_PROGRESS, B_FALSE, B_TRUE);
+	EXPECT_EQ(ZVOL_REBUILDING_FAILED, uzfs_zvol_get_rebuild_status(zinfo->zv));
+}
+
+TEST(uZFS, TestRebuildScannerErrorOut) {
+	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
+	zvol_rebuild_step_size = (1024ULL * 1024ULL * 100);
 
 	/* Rebuild thread exits after handshake */
 	execute_rebuild_test_case("Rebuild error out", 3,
 	    ZVOL_REBUILDING_ERRORED, B_FALSE, B_TRUE);
+	EXPECT_EQ(ZVOL_REBUILDING_FAILED, uzfs_zvol_get_rebuild_status(zinfo->zv));
+}
+
+TEST(uZFS, TestRebuildScannerWrongVolname) {
+	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
+	zvol_rebuild_step_size = (1024ULL * 1024ULL * 100);
 
 	/* Rebuild thread sending wrong vol name */
 	execute_rebuild_test_case("Wrong vol name", 4,
 	    ZVOL_REBUILDING_IN_PROGRESS, B_FALSE, B_TRUE);
 
+	EXPECT_EQ(ZVOL_REBUILDING_FAILED, uzfs_zvol_get_rebuild_status(zinfo->zv));
+}
+
+TEST(uZFS, TestRebuildScannerHandshakeAgaian) {
+	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
+	zvol_rebuild_step_size = (1024ULL * 1024ULL * 100);
+
 	/* Rebuild thread sending handshake again on same volume */
 	execute_rebuild_test_case("Send handshake again", 5,
 	    ZVOL_REBUILDING_IN_PROGRESS, B_FALSE, B_TRUE);
+	EXPECT_EQ(ZVOL_REBUILDING_FAILED, uzfs_zvol_get_rebuild_status(zinfo->zv));
+}
+
+TEST(uZFS, TestRebuildScannerSuccess) {
+	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
+
+	zvol_rebuild_step_size = (1024ULL * 1024ULL * 100);
 
 	/* Rebuild thread sendinc complete opcode */
 	execute_rebuild_test_case("complete rebuild", 6,

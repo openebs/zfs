@@ -989,8 +989,6 @@ void execute_rebuild_test_case(const char *s, int test_case,
 	kthread_t *thrd;
 	rebuild_thread_arg_t *rebuild_args;
 
-	printf("========%s========\n", s);
-
 	rebuild_test_case = test_case;
 	create_rebuild_args(&rebuild_args);
 	zinfo->zv->zv_status = ZVOL_STATUS_DEGRADED;
@@ -1060,7 +1058,7 @@ TEST(uZFS, TestRebuild) {
 	memset(&zinfo->zv->rebuild_info, 0, sizeof (zvol_rebuild_info_t));
 }
 
-TEST(uZFS, TestRebuildScannerAbruptClose) {
+TEST(RebuildScanner, AbruptClose) {
 	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
 	zvol_rebuild_step_size = (1024ULL * 1024ULL * 100);
 
@@ -1070,7 +1068,7 @@ TEST(uZFS, TestRebuildScannerAbruptClose) {
 	EXPECT_EQ(ZVOL_REBUILDING_FAILED, uzfs_zvol_get_rebuild_status(zinfo->zv));
 }
 
-TEST(uZFS, TestRebuildScannerWrongOpcode) {
+TEST(RebuildScanner, WrongOpcode) {
 	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
 	zvol_rebuild_step_size = (1024ULL * 1024ULL * 100);
 
@@ -1080,7 +1078,7 @@ TEST(uZFS, TestRebuildScannerWrongOpcode) {
 	EXPECT_EQ(ZVOL_REBUILDING_FAILED, uzfs_zvol_get_rebuild_status(zinfo->zv));
 }
 
-TEST(uZFS, TestRebuildScannerErrorOut) {
+TEST(RebuildScanner, ErrorOut) {
 	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
 	zvol_rebuild_step_size = (1024ULL * 1024ULL * 100);
 
@@ -1090,7 +1088,7 @@ TEST(uZFS, TestRebuildScannerErrorOut) {
 	EXPECT_EQ(ZVOL_REBUILDING_FAILED, uzfs_zvol_get_rebuild_status(zinfo->zv));
 }
 
-TEST(uZFS, TestRebuildScannerWrongVolname) {
+TEST(RebuildScanner, WrongVolname) {
 	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
 	zvol_rebuild_step_size = (1024ULL * 1024ULL * 100);
 
@@ -1101,7 +1099,7 @@ TEST(uZFS, TestRebuildScannerWrongVolname) {
 	EXPECT_EQ(ZVOL_REBUILDING_FAILED, uzfs_zvol_get_rebuild_status(zinfo->zv));
 }
 
-TEST(uZFS, TestRebuildScannerHandshakeAgaian) {
+TEST(RebuildScanner, HandshakeAgaian) {
 	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
 	zvol_rebuild_step_size = (1024ULL * 1024ULL * 100);
 
@@ -1111,7 +1109,7 @@ TEST(uZFS, TestRebuildScannerHandshakeAgaian) {
 	EXPECT_EQ(ZVOL_REBUILDING_FAILED, uzfs_zvol_get_rebuild_status(zinfo->zv));
 }
 
-TEST(uZFS, TestRebuildScannerSuccess) {
+TEST(RebuildScanner, RebuildSuccess) {
 	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
 
 	zvol_rebuild_step_size = (1024ULL * 1024ULL * 100);

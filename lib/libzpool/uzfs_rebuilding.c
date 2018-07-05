@@ -209,6 +209,8 @@ uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *low,
 					EXECUTE_DIFF_CALLBACK(last_lun_offset,
 					    diff_count, buf, last_index, arg,
 					    last_md, snap_zv, func, ret);
+					if (ret != 0)
+						break;
 					last_lun_offset = lun_offset;
 					last_md = (blk_metadata_t *)(buf+i);
 					last_index = i;
@@ -224,6 +226,8 @@ uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *low,
 				EXECUTE_DIFF_CALLBACK(last_lun_offset,
 				    diff_count, buf, last_index, arg, last_md,
 				    snap_zv, func, ret);
+				if (ret != 0)
+					break;
 			}
 
 			lun_offset += zv->zv_metavolblocksize;
@@ -231,6 +235,8 @@ uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *low,
 		if (!ret && diff_count) {
 			EXECUTE_DIFF_CALLBACK(last_lun_offset, diff_count, buf,
 			    last_index, arg, last_md, snap_zv, func, ret);
+			if (ret != 0)
+				break;
 		}
 	}
 

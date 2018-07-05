@@ -184,6 +184,8 @@ uzfs_zvol_io_receiver(void *arg)
 
 	while ((rc = uzfs_zvol_socket_read(fd, (char *)&hdr, sizeof (hdr))) ==
 	    0) {
+		if ((zinfo->state == ZVOL_INFO_STATE_OFFLINE))
+			break;
 
 		if (hdr.opcode != ZVOL_OPCODE_WRITE &&
 		    hdr.opcode != ZVOL_OPCODE_READ &&
@@ -211,6 +213,10 @@ uzfs_zvol_io_receiver(void *arg)
 			}
 		}
 
+		if (zinfo->state == ZVOL_INFO_STATE_OFFLINE) {
+			zio_cmd_free(&zio_cmd);
+			goto exit;
+		}
 		/* Take refcount for uzfs_zvol_worker to work on it */
 		uzfs_zinfo_take_refcnt(zinfo, B_FALSE);
 		zio_cmd->zv = zinfo;

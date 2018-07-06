@@ -126,18 +126,7 @@ create_and_bind(const char *port, int bind_needed, boolean_t nonblock)
 void
 uzfs_zinfo_drop_refcnt(zvol_info_t *zinfo, int locked)
 {
-	if (!locked) {
-		(void) mutex_enter(&zvol_list_mutex);
-	}
-
-	zinfo->refcnt--;
-	if (zinfo->refcnt == 0) {
-		(void) uzfs_zinfo_free(zinfo);
-	}
-
-	if (!locked) {
-		(void) mutex_exit(&zvol_list_mutex);
-	}
+	atomic_dec_16(&zinfo->refcnt);
 }
 
 /*
@@ -146,13 +135,7 @@ uzfs_zinfo_drop_refcnt(zvol_info_t *zinfo, int locked)
 void
 uzfs_zinfo_take_refcnt(zvol_info_t *zinfo, int locked)
 {
-	if (!locked) {
-		(void) mutex_enter(&zvol_list_mutex);
-	}
-	zinfo->refcnt++;
-	if (!locked) {
-		(void) mutex_exit(&zvol_list_mutex);
-	}
+	atomic_inc_16(&zinfo->refcnt);
 }
 
 static void
@@ -167,10 +150,8 @@ uzfs_insert_zinfo_list(zvol_info_t *zinfo)
 }
 
 static void
-uzfs_remove_zinfo_list(zvol_info_t *zinfo)
+uzfs_mark_offline_and_free_zinfo(zvol_info_t *zinfo)
 {
-	LOG_INFO("Removing zvol %s", zinfo->name);
-	SLIST_REMOVE(&zvol_list, zinfo, zvol_info_s, zinfo_next);
 	(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
 	zinfo->state = ZVOL_INFO_STATE_OFFLINE;
 	/* Send signal to ack_sender thread about offline */
@@ -180,6 +161,14 @@ uzfs_remove_zinfo_list(zvol_info_t *zinfo)
 	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 	/* Base refcount is droped here */
 	uzfs_zinfo_drop_refcnt(zinfo, B_TRUE);
+
+	/* Wait for refcounts to be drained */
+	while (zinfo->refcnt > 0) {
+		sleep(1);
+	}
+
+	LOG_INFO("Freeing zvol %s", zinfo->name);
+	(void) uzfs_zinfo_free(zinfo);
 }
 
 zvol_info_t *
@@ -254,9 +243,14 @@ uzfs_zinfo_destroy(const char *name, spa_t *spa)
 		SLIST_FOREACH_SAFE(zinfo, &zvol_list, zinfo_next, zt) {
 			if (strncmp(spa_name(spa),
 			    zinfo->name, strlen(spa_name(spa))) == 0) {
+				SLIST_REMOVE(&zvol_list, zinfo, zvol_info_s,
+				    zinfo_next);
+
+				mutex_exit(&zvol_list_mutex);
 				zv = zinfo->zv;
-				uzfs_remove_zinfo_list(zinfo);
+				uzfs_mark_offline_and_free_zinfo(zinfo);
 				uzfs_close_dataset(zv);
+				mutex_enter(&zvol_list_mutex);
 			}
 		}
 	} else {
@@ -265,9 +259,14 @@ uzfs_zinfo_destroy(const char *name, spa_t *spa)
 			    ((strncmp(zinfo->name, name, namelen) == 0) &&
 			    zinfo->name[namelen] == '/' &&
 			    zinfo->name[namelen + 1] == '\0')) {
+				SLIST_REMOVE(&zvol_list, zinfo, zvol_info_s,
+				    zinfo_next);
+
+				mutex_exit(&zvol_list_mutex);
 				zv = zinfo->zv;
-				uzfs_remove_zinfo_list(zinfo);
+				uzfs_mark_offline_and_free_zinfo(zinfo);
 				uzfs_close_dataset(zv);
+				mutex_enter(&zvol_list_mutex);
 				break;
 			}
 		}

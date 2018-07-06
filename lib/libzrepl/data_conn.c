@@ -832,6 +832,9 @@ uzfs_zvol_rebuild_scanner_callback(off_t offset, size_t len,
 	hdr.len = len;
 	hdr.flags = ZVOL_OP_FLAG_REBUILD;
 	hdr.status = ZVOL_OP_STATUS_OK;
+	if (zinfo->state == ZVOL_INFO_STATE_OFFLINE)
+		return (-1);
+
 	LOG_DEBUG("IO number for rebuild %ld", metadata->io_num);
 	zio_cmd = zio_cmd_alloc(&hdr, warg->fd);
 	/* Take refcount for uzfs_zvol_worker to work on it */
@@ -873,10 +876,9 @@ uzfs_zvol_rebuild_scanner(void *arg)
 	}
 read_socket:
 	rc = uzfs_zvol_read_header(fd, &hdr);
-	if (rc != 0) {
-		LOG_DEBUG("Error:%d in reading header\n", errno);
+	if ((rc != 0) || ((zinfo != NULL) &&
+	    (zinfo->state == ZVOL_INFO_STATE_OFFLINE)))
 		goto exit;
-	}
 
 	LOG_DEBUG("op_code=%d io_seq=%ld", hdr.opcode, hdr.io_seq);
 

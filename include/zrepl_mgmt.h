@@ -81,7 +81,7 @@ typedef struct zvol_info_s {
 	zvol_info_state_t	state;
 	char 		name[MAXPATHLEN];
 	zvol_state_t	*zv;
-	int 		refcnt;
+	uint16_t	refcnt;
 	int		is_io_ack_sender_created;
 	uint32_t	timeout;	/* iSCSI timeout val for this zvol */
 	uint64_t	zvol_guid;

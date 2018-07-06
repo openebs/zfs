@@ -245,7 +245,7 @@ uzfs_zinfo_destroy(const char *name, spa_t *spa)
 			    zinfo->name, strlen(spa_name(spa))) == 0) {
 				SLIST_REMOVE(&zvol_list, zinfo, zvol_info_s,
 				    zinfo_next);
-			
+
 				mutex_exit(&zvol_list_mutex);
 				zv = zinfo->zv;
 				uzfs_mark_offline_and_free_zinfo(zinfo);
@@ -261,7 +261,7 @@ uzfs_zinfo_destroy(const char *name, spa_t *spa)
 			    zinfo->name[namelen + 1] == '\0')) {
 				SLIST_REMOVE(&zvol_list, zinfo, zvol_info_s,
 				    zinfo_next);
-			
+
 				mutex_exit(&zvol_list_mutex);
 				zv = zinfo->zv;
 				uzfs_mark_offline_and_free_zinfo(zinfo);

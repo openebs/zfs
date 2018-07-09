@@ -1226,7 +1226,15 @@ TEST(Misc, ZreplCheckpointInterval) {
 
 	write_data_and_verify_resp(datasock_slow.fd(), ioseq, 0, 888);
 	write_data_and_verify_resp(datasock_fast.fd(), ioseq, 0, 888);
-	sleep(2);
+	sleep(30);
+
+	zrepl.kill();
+
+	zrepl.start();
+	pool.import();
+
+	control_fd = target.accept(10);
+	ASSERT_GE(control_fd, 0);
 
 	do_handshake(zvol_name_slow, host_slow, port_slow, &ionum_slow,
 	    control_fd, ZVOL_OP_STATUS_OK);

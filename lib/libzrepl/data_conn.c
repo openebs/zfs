@@ -113,10 +113,10 @@ uzfs_zvol_socket_read(int fd, char *buf, uint64_t nbytes)
 		if (count < 0) {
 			if (errno == EINTR)
 				continue;
-			LOG_ERRNO("Socket read error %d", fd);
+			LOG_ERRNO("Socket read error");
 			return (-1);
 		} else if (count == 0) {
-			LOG_ERRNO("Socket conn closed %d", fd);
+			LOG_INFO("Connection closed by the peer");
 			return (-1);
 		}
 		p += count;
@@ -298,7 +298,7 @@ uzfs_zvol_worker(void *arg)
 	}
 
 	if (rc != 0) {
-		LOG_ERR("OP code %d failed", hdr->opcode);
+		LOG_ERR("OP code %d failed: %d", hdr->opcode, rc);
 		hdr->status = ZVOL_OP_STATUS_FAILED;
 		hdr->len = 0;
 	} else {
@@ -438,10 +438,8 @@ next_step:
 		}
 
 		rc = uzfs_zvol_socket_read(sfd, (char *)&hdr, sizeof (hdr));
-		if (rc != 0) {
-			LOG_ERR("Socket read failed");
+		if (rc != 0)
 			goto exit;
-		}
 
 		if (hdr.status != ZVOL_OP_STATUS_OK) {
 			LOG_ERR("received err in rebuild.. for %s..",
@@ -462,10 +460,8 @@ next_step:
 
 		zio_cmd = zio_cmd_alloc(&hdr, sfd);
 		rc = uzfs_zvol_socket_read(sfd, zio_cmd->buf, hdr.len);
-		if (rc != 0) {
-			LOG_ERR("Socket read writeIO failed");
+		if (rc != 0)
 			goto exit;
-		}
 
 		/*
 		 * Take refcount for uzfs_zvol_worker to work on it.
@@ -653,7 +649,7 @@ uzfs_zvol_io_conn_acceptor(void *arg)
 	snprintf(port, 8, "%d", io_server_port);
 	io_sfd = create_and_bind(port, B_TRUE, B_FALSE);
 	if (io_sfd == -1) {
-		LOG_ERRNO("unable to bind %s", port);
+		LOG_ERRNO("unable to bind to port %s", port);
 		goto exit;
 	}
 
@@ -662,12 +658,12 @@ uzfs_zvol_io_conn_acceptor(void *arg)
 		LOG_ERRNO("listen on IO FD in acceptor failed");
 		goto exit;
 	}
-	LOG_DEBUG("listening %s %d for IO", port, io_sfd);
+	LOG_DEBUG("listening on port %s for IO", port);
 
 	snprintf(port, 8, "%d", rebuild_io_server_port);
 	rebuild_fd = create_and_bind(port, B_TRUE, B_FALSE);
 	if (rebuild_fd == -1) {
-		LOG_ERRNO("unable to bind %s", port);
+		LOG_ERRNO("unable to bind to port %s", port);
 		goto exit;
 	}
 
@@ -676,7 +672,7 @@ uzfs_zvol_io_conn_acceptor(void *arg)
 		LOG_ERRNO("listen on rebuild FD in acceptor failed");
 		goto exit;
 	}
-	LOG_DEBUG("listening %s %d for rebuild", port, rebuild_fd);
+	LOG_DEBUG("listening on port %s for rebuild IO", port);
 
 	efd = epoll_create1(0);
 	if (efd == -1) {
@@ -770,13 +766,13 @@ uzfs_zvol_io_conn_acceptor(void *arg)
 			kmem_free(sbuf, NI_MAXSERV);
 #endif
 			if (events[i].data.fd == io_sfd) {
-				LOG_INFO("Connection req for data IO");
+				LOG_INFO("New data connection");
 				thrd_info = zk_thread_create(NULL, 0,
 				    (thread_func_t)io_receiver,
 				    (void *)new_fd, 0, NULL, TS_RUN, 0,
 				    PTHREAD_CREATE_DETACHED);
 			} else {
-				LOG_INFO("Connection req for rebuild");
+				LOG_INFO("New rebuild connection");
 				thrd_info = zk_thread_create(NULL, 0,
 				    (thread_func_t)rebuild_scanner,
 				    (void *)new_fd, 0, NULL, TS_RUN, 0,
@@ -892,7 +888,7 @@ read_socket:
 			name = kmem_alloc(hdr.len, KM_SLEEP);
 			rc = uzfs_zvol_socket_read(fd, name, hdr.len);
 			if (rc != 0) {
-				LOG_DEBUG("Error:%d reading volname\n", errno);
+				LOG_ERR("Error reading zvol name");
 				kmem_free(name, hdr.len);
 				goto exit;
 			}
@@ -964,12 +960,11 @@ read_socket:
 
 exit:
 	if (zinfo != NULL) {
-		LOG_DEBUG("uzfs_zvol_rebuild_scanner thread for zvol %s "
-		    "exiting", zinfo->name);
+		LOG_INFO("Closing rebuild connection for zvol %s", zinfo->name);
 		remove_pending_cmds_to_ack(fd, zinfo);
 		uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
 	} else {
-		LOG_DEBUG("uzfs_zvol_rebuild_scanner thread exiting");
+		LOG_INFO("Closing rebuild connection");
 	}
 
 	shutdown(fd, SHUT_RDWR);

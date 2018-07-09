@@ -309,7 +309,7 @@ test_alloc_async_task_and_add_to_list(zvol_info_t *zinfo,
 {
 	async_task_t *arg;
 
-	uzfs_zinfo_take_refcnt(zinfo, B_TRUE);
+	uzfs_zinfo_take_refcnt(zinfo);
 	arg = (async_task_t *)kmem_zalloc(sizeof (async_task_t), KM_SLEEP);
 	arg->conn = conn;
 	arg->zinfo = zinfo;
@@ -411,7 +411,7 @@ TEST(uZFS, TestZInfoRefcnt) {
 
 	EXPECT_EQ(2, zinfo->refcnt);
 
-	uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
+	uzfs_zinfo_drop_refcnt(zinfo);
 	EXPECT_EQ(1, zinfo->refcnt);
 
 	GtestUtils::strlcpy(ds1, "vol1 ", MAXNAMELEN);
@@ -451,7 +451,7 @@ TEST(uZFS, TestZInfoRefcnt) {
 	EXPECT_EQ(NULL, !zinfo1);
 	EXPECT_EQ(3, zinfo->refcnt);
 
-	uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
+	uzfs_zinfo_drop_refcnt(zinfo);
 	EXPECT_EQ(2, zinfo->refcnt);
 }
 
@@ -934,7 +934,7 @@ next_step:
 		 * Take refcount for uzfs_zvol_worker to work on it.
 		 * Will dropped by uzfs_zvol_worker once cmd is executed.
 		 */
-		uzfs_zinfo_take_refcnt(zinfo, B_FALSE);
+		uzfs_zinfo_take_refcnt(zinfo);
 		zio_cmd->zv = zinfo;
 		uzfs_zvol_worker(zio_cmd);
 		if (zio_cmd->hdr.status != ZVOL_OP_STATUS_OK) {
@@ -978,7 +978,7 @@ exit:
 		close(sfd);
 	}
 	/* Parent thread have taken refcount, drop it now */
-	uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
+	uzfs_zinfo_drop_refcnt(zinfo);
 
 	rebuild_test_case = 0;
 	zk_thread_exit();
@@ -996,7 +996,7 @@ void execute_rebuild_test_case(const char *s, int test_case,
 	zinfo->zv->zv_status = ZVOL_STATUS_DEGRADED;
 	memset(&zinfo->zv->rebuild_info, 0, sizeof (zvol_rebuild_info_t));
 	zinfo->zv->rebuild_info.rebuild_cnt = 1;
-	uzfs_zinfo_take_refcnt(zinfo, B_FALSE);
+	uzfs_zinfo_take_refcnt(zinfo);
 	uzfs_zvol_set_rebuild_status(zinfo->zv, status);
 
 	if (!is_rebuild_scanner)

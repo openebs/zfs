@@ -81,7 +81,7 @@ typedef struct zvol_info_s {
 	zvol_info_state_t	state;
 	char 		name[MAXPATHLEN];
 	zvol_state_t	*zv;
-	uint16_t	refcnt;
+	uint64_t	refcnt;
 	int		is_io_ack_sender_created;
 	uint32_t	timeout;	/* iSCSI timeout val for this zvol */
 	uint64_t	zvol_guid;
@@ -153,8 +153,6 @@ typedef struct zvol_rebuild_s {
 extern int uzfs_zinfo_init(void *zv, const char *ds_name,
     nvlist_t *create_props);
 extern zvol_info_t *uzfs_zinfo_lookup(const char *name);
-extern void uzfs_zinfo_drop_refcnt(zvol_info_t *zinfo, int locked);
-extern void uzfs_zinfo_take_refcnt(zvol_info_t *zinfo, int locked);
 extern void uzfs_zinfo_replay_zil_all(void);
 extern int uzfs_zinfo_destroy(const char *ds_name, spa_t *spa);
 uint64_t uzfs_zvol_get_last_committed_io_no(zvol_state_t *zv);
@@ -162,6 +160,25 @@ void uzfs_zvol_store_last_committed_io_no(zvol_state_t *zv,
     uint64_t io_seq);
 extern int create_and_bind(const char *port, int bind_needed,
     boolean_t nonblocking);
+
+/*
+ * API to drop refcnt on zinfo. If refcnt
+ * dropped to zero then free zinfo.
+ */
+inline void
+uzfs_zinfo_drop_refcnt(zvol_info_t *zinfo)
+{
+	atomic_dec_64(&zinfo->refcnt);
+}
+
+/*
+ * API to take refcount on zinfo.
+ */
+inline void
+uzfs_zinfo_take_refcnt(zvol_info_t *zinfo)
+{
+	atomic_inc_64(&zinfo->refcnt);
+}
 
 #ifdef	__cplusplus
 }

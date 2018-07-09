@@ -130,7 +130,7 @@ open_zvol(int fd, zvol_info_t **zinfopp)
 		thrd_arg = kmem_alloc(sizeof (thread_args_t), KM_SLEEP);
 		thrd_arg->fd = fd;
 		thrd_arg->zinfo = zinfo;
-		uzfs_zinfo_take_refcnt(zinfo, B_FALSE);
+		uzfs_zinfo_take_refcnt(zinfo);
 		thrd_info = zk_thread_create(NULL, 0,
 		    (thread_func_t)uzfs_zvol_io_ack_sender,
 		    (void *)thrd_arg, 0, NULL, TS_RUN, 0,
@@ -149,7 +149,7 @@ open_reply:
 		LOG_ERR("Failed to send reply for open request");
 	if (hdr.status != ZVOL_OP_STATUS_OK) {
 		if (zinfo != NULL)
-			uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
+			uzfs_zinfo_drop_refcnt(zinfo);
 		return (-1);
 	}
 	return (rc);
@@ -180,6 +180,7 @@ uzfs_zvol_io_receiver(void *arg)
 			return;
 		}
 	}
+
 	LOG_INFO("Data connection associated with zvol %s", zinfo->name);
 
 	while ((rc = uzfs_zvol_socket_read(fd, (char *)&hdr, sizeof (hdr))) ==
@@ -218,7 +219,7 @@ uzfs_zvol_io_receiver(void *arg)
 			goto exit;
 		}
 		/* Take refcount for uzfs_zvol_worker to work on it */
-		uzfs_zinfo_take_refcnt(zinfo, B_FALSE);
+		uzfs_zinfo_take_refcnt(zinfo);
 		zio_cmd->zv = zinfo;
 		taskq_dispatch(zinfo->uzfs_zvol_taskq, uzfs_zvol_worker,
 		    zio_cmd, TQ_SLEEP);
@@ -241,6 +242,8 @@ uzfs_zvol_io_receiver(void *arg)
 		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 		usleep(1000);
 		(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
+		close(fd);
+		uzfs_zinfo_drop_refcnt(zinfo);
 	}
 	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 	uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
@@ -337,6 +340,8 @@ uzfs_zvol_io_ack_sender(void *arg)
 		while (1) {
 			if ((zinfo->state == ZVOL_INFO_STATE_OFFLINE) ||
 			    (zinfo->conn_closed == B_TRUE)) {
+				(void) pthread_mutex_unlock(
+				    &zinfo->zinfo_mutex);
 				goto exit;
 			}
 			if (STAILQ_EMPTY(&zinfo->complete_queue)) {
@@ -384,7 +389,6 @@ uzfs_zvol_io_ack_sender(void *arg)
 			 */
 			if (zio_cmd->conn == fd) {
 				zio_cmd_free(&zio_cmd);
-				(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
 				goto exit;
 			}
 			zio_cmd_free(&zio_cmd);
@@ -400,8 +404,6 @@ uzfs_zvol_io_ack_sender(void *arg)
 					LOG_ERRNO("socket write err");
 					if (zio_cmd->conn == fd) {
 						zio_cmd_free(&zio_cmd);
-						(void) pthread_mutex_lock(
-						    &zinfo->zinfo_mutex);
 						goto exit;
 					}
 				}
@@ -417,10 +419,19 @@ uzfs_zvol_io_ack_sender(void *arg)
 		zio_cmd_free(&zio_cmd);
 	}
 exit:
+<<<<<<< HEAD
 	zinfo->zio_cmd_in_ack = NULL;
 	shutdown(fd, SHUT_RDWR);
 	close(fd);
 	LOG_INFO("Data connection for zvol %s closed", zinfo->name);
+=======
+	LOG_DEBUG("uzfs_zvol_io_ack_sender thread for zvol %s exiting",
+	    zinfo->name);
+
+	(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
+	zinfo->zio_cmd_in_ack = NULL;
+	shutdown(fd, SHUT_RDWR);
+>>>>>>> 1b968cf... [TA1652][DE17] Atomic inc and decrement of zinfo refcount done.
 	while (!STAILQ_EMPTY(&zinfo->complete_queue)) {
 		zio_cmd = STAILQ_FIRST(&zinfo->complete_queue);
 		STAILQ_REMOVE_HEAD(&zinfo->complete_queue, cmd_link);
@@ -428,7 +439,7 @@ exit:
 	}
 	zinfo->is_io_ack_sender_created = B_FALSE;
 	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
-	uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
+	uzfs_zinfo_drop_refcnt(zinfo);
 
 	zk_thread_exit();
 }

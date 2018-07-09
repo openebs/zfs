@@ -119,32 +119,13 @@ create_and_bind(const char *port, int bind_needed, boolean_t nonblock)
 	return (sfd);
 }
 
-/*
- * API to drop refcnt on zinfo. If refcnt
- * dropped to zero then free zinfo.
- */
-void
-uzfs_zinfo_drop_refcnt(zvol_info_t *zinfo, int locked)
-{
-	atomic_dec_16(&zinfo->refcnt);
-}
-
-/*
- * API to take refcount on zinfo.
- */
-void
-uzfs_zinfo_take_refcnt(zvol_info_t *zinfo, int locked)
-{
-	atomic_inc_16(&zinfo->refcnt);
-}
-
 static void
 uzfs_insert_zinfo_list(zvol_info_t *zinfo)
 {
 	LOG_INFO("Instantiating zvol %s", zinfo->name);
 	/* Base refcount is taken here */
 	(void) mutex_enter(&zvol_list_mutex);
-	uzfs_zinfo_take_refcnt(zinfo, B_TRUE);
+	uzfs_zinfo_take_refcnt(zinfo);
 	SLIST_INSERT_HEAD(&zvol_list, zinfo, zinfo_next);
 	(void) mutex_exit(&zvol_list_mutex);
 }
@@ -160,11 +141,13 @@ uzfs_mark_offline_and_free_zinfo(zvol_info_t *zinfo)
 	}
 	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 	/* Base refcount is droped here */
-	uzfs_zinfo_drop_refcnt(zinfo, B_TRUE);
+	uzfs_zinfo_drop_refcnt(zinfo);
 
 	/* Wait for refcounts to be drained */
 	while (zinfo->refcnt > 0) {
-		sleep(1);
+		LOG_INFO("Waiting for refcount to go down to"
+		    " zero on zvol:%s", zinfo->name);
+		sleep(5);
 	}
 
 	LOG_INFO("Freeing zvol %s", zinfo->name);
@@ -205,7 +188,7 @@ uzfs_zinfo_lookup(const char *name)
 	}
 	if (zv != NULL) {
 		/* Take refcount */
-		uzfs_zinfo_take_refcnt(zv, B_TRUE);
+		uzfs_zinfo_take_refcnt(zv);
 	}
 	(void) mutex_exit(&zvol_list_mutex);
 

@@ -419,19 +419,12 @@ uzfs_zvol_io_ack_sender(void *arg)
 		zio_cmd_free(&zio_cmd);
 	}
 exit:
-<<<<<<< HEAD
 	zinfo->zio_cmd_in_ack = NULL;
 	shutdown(fd, SHUT_RDWR);
 	close(fd);
 	LOG_INFO("Data connection for zvol %s closed", zinfo->name);
-=======
-	LOG_DEBUG("uzfs_zvol_io_ack_sender thread for zvol %s exiting",
-	    zinfo->name);
 
 	(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
-	zinfo->zio_cmd_in_ack = NULL;
-	shutdown(fd, SHUT_RDWR);
->>>>>>> 1b968cf... [TA1652][DE17] Atomic inc and decrement of zinfo refcount done.
 	while (!STAILQ_EMPTY(&zinfo->complete_queue)) {
 		zio_cmd = STAILQ_FIRST(&zinfo->complete_queue);
 		STAILQ_REMOVE_HEAD(&zinfo->complete_queue, cmd_link);

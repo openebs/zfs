@@ -1222,24 +1222,25 @@ TEST(Misc, ZreplCheckpointInterval) {
 	do_data_connection(datasock_slow.fd(), host_slow, port_slow, zvol_name_slow,
 	    4096, 1000);
 	do_data_connection(datasock_fast.fd(), host_fast, port_fast, zvol_name_fast,
-	    4096, 1);
+	    4096, 2);
 
 	write_data_and_verify_resp(datasock_slow.fd(), ioseq, 0, 888);
 	write_data_and_verify_resp(datasock_fast.fd(), ioseq, 0, 888);
-	sleep(30);
+	sleep(10);	/* Due to spa sync interval, sleep for 10 sec is required here */
 
 	zrepl.kill();
 
 	zrepl.start();
 	pool.import();
 
-	control_fd = target.accept(10);
+	control_fd = target.accept(-1);
 	ASSERT_GE(control_fd, 0);
 
 	do_handshake(zvol_name_slow, host_slow, port_slow, &ionum_slow,
 	    control_fd, ZVOL_OP_STATUS_OK);
 	do_handshake(zvol_name_fast, host_fast, port_fast, &ionum_fast,
 	    control_fd, ZVOL_OP_STATUS_OK);
+
 	ASSERT_NE(ionum_slow, 888);
 	ASSERT_EQ(ionum_fast, 888);
 

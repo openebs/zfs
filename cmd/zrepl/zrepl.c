@@ -148,6 +148,7 @@ open_reply:
 	if (rc == -1)
 		LOG_ERR("Failed to send reply for open request");
 	if (hdr.status != ZVOL_OP_STATUS_OK) {
+		ASSERT3P(*zinfopp, ==, NULL);
 		if (zinfo != NULL)
 			uzfs_zinfo_drop_refcnt(zinfo);
 		return (-1);
@@ -173,6 +174,9 @@ uzfs_zvol_io_receiver(void *arg)
 	/* First command should be OPEN */
 	while (zinfo == NULL) {
 		if (open_zvol(fd, &zinfo) != 0) {
+			if ((zinfo != NULL) &&
+			    (zinfo->is_io_ack_sender_created))
+				goto exit;
 			shutdown(fd, SHUT_RDWR);
 			(void) close(fd);
 			LOG_INFO("Data connection closed");
@@ -224,7 +228,7 @@ uzfs_zvol_io_receiver(void *arg)
 		taskq_dispatch(zinfo->uzfs_zvol_taskq, uzfs_zvol_worker,
 		    zio_cmd, TQ_SLEEP);
 	}
-
+exit:
 	(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
 	zinfo->conn_closed = B_TRUE;
 	/*
@@ -242,11 +246,12 @@ uzfs_zvol_io_receiver(void *arg)
 		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 		usleep(1000);
 		(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
-		close(fd);
-		uzfs_zinfo_drop_refcnt(zinfo);
 	}
 	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
-	uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
+
+	close(fd);
+	LOG_INFO("Data connection closed");
+	uzfs_zinfo_drop_refcnt(zinfo);
 	zk_thread_exit();
 }
 
@@ -421,7 +426,6 @@ uzfs_zvol_io_ack_sender(void *arg)
 exit:
 	zinfo->zio_cmd_in_ack = NULL;
 	shutdown(fd, SHUT_RDWR);
-	close(fd);
 	LOG_INFO("Data connection for zvol %s closed", zinfo->name);
 
 	(void) pthread_mutex_lock(&zinfo->zinfo_mutex);

@@ -14,9 +14,10 @@
 #include <uzfs_rebuilding.h>
 #include <atomic.h>
 #include <uzfs_zap.h>
+#include <mgmt_conn.h>
+#include <data_conn.h>
 
-#include "mgmt_conn.h"
-#include "data_conn.h"
+#include "zfs_events.h"
 
 #define	ZAP_UPDATE_TIME_INTERVAL 2
 
@@ -171,30 +172,33 @@ uzfs_zvol_io_receiver(void *arg)
 
 	/* First command should be OPEN */
 	while (zinfo == NULL) {
-		if (open_zvol(fd, &zinfo) != 0)
-			goto exit;
+		if (open_zvol(fd, &zinfo) != 0) {
+			shutdown(fd, SHUT_RDWR);
+			(void) close(fd);
+			LOG_INFO("Data connection closed");
+			zk_thread_exit();
+			return;
+		}
 	}
+	LOG_INFO("Data connection associated with zvol %s", zinfo->name);
 
-	while (1) {
-		rc = uzfs_zvol_socket_read(fd, (char *)&hdr,
-		    sizeof (hdr));
-		if (rc != 0)
-			goto exit;
+	while ((rc = uzfs_zvol_socket_read(fd, (char *)&hdr, sizeof (hdr))) ==
+	    0) {
 
 		if (hdr.opcode != ZVOL_OPCODE_WRITE &&
 		    hdr.opcode != ZVOL_OPCODE_READ &&
 		    hdr.opcode != ZVOL_OPCODE_SYNC) {
 			LOG_ERR("Unexpected opcode %d", hdr.opcode);
-			goto exit;
+			break;
 		}
 
 		if (((hdr.opcode == ZVOL_OPCODE_WRITE) ||
 		    (hdr.opcode == ZVOL_OPCODE_READ)) && !hdr.len) {
 			LOG_ERR("Zero Payload size for opcode %d", hdr.opcode);
-			goto exit;
+			break;
 		} else if ((hdr.opcode == ZVOL_OPCODE_SYNC) && hdr.len > 0) {
 			LOG_ERR("Unexpected payload for opcode %d", hdr.opcode);
-			goto exit;
+			break;
 		}
 
 		zio_cmd = zio_cmd_alloc(&hdr, fd);
@@ -203,7 +207,7 @@ uzfs_zvol_io_receiver(void *arg)
 			rc = uzfs_zvol_socket_read(fd, zio_cmd->buf, hdr.len);
 			if (rc != 0) {
 				zio_cmd_free(&zio_cmd);
-				goto exit;
+				break;
 			}
 		}
 
@@ -213,33 +217,27 @@ uzfs_zvol_io_receiver(void *arg)
 		taskq_dispatch(zinfo->uzfs_zvol_taskq, uzfs_zvol_worker,
 		    zio_cmd, TQ_SLEEP);
 	}
-exit:
-	if (zinfo != NULL) {
-		LOG_DEBUG("uzfs_zvol_io_receiver thread for zvol %s exiting",
-		    zinfo->name);
-		(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
-		zinfo->conn_closed = B_TRUE;
-		/*
-		 * Send signal to ack sender so that it can free
-		 * zio_cmd, close fd and exit.
-		 */
-		if (zinfo->io_ack_waiting) {
-			rc = pthread_cond_signal(&zinfo->io_ack_cond);
-		}
-		/*
-		 * wait for ack thread to exit to avoid races with new
-		 * connections for the same zinfo
-		 */
-		while (zinfo->conn_closed && zinfo->is_io_ack_sender_created) {
-			(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
-			usleep(1000);
-			(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
-		}
-		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
-		uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
-	} else {
-		LOG_DEBUG("uzfs_zvol_io_receiver thread exiting");
+
+	(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
+	zinfo->conn_closed = B_TRUE;
+	/*
+	 * Send signal to ack sender so that it can free
+	 * zio_cmd, close fd and exit.
+	 */
+	if (zinfo->io_ack_waiting) {
+		rc = pthread_cond_signal(&zinfo->io_ack_cond);
 	}
+	/*
+	 * wait for ack thread to exit to avoid races with new
+	 * connections for the same zinfo
+	 */
+	while (zinfo->conn_closed && zinfo->is_io_ack_sender_created) {
+		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
+		usleep(1000);
+		(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
+	}
+	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
+	uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
 	zk_thread_exit();
 }
 
@@ -413,12 +411,10 @@ uzfs_zvol_io_ack_sender(void *arg)
 		zio_cmd_free(&zio_cmd);
 	}
 exit:
-	LOG_DEBUG("uzfs_zvol_io_ack_sender thread for zvol %s exiting",
-	    zinfo->name);
-
 	zinfo->zio_cmd_in_ack = NULL;
 	shutdown(fd, SHUT_RDWR);
 	close(fd);
+	LOG_INFO("Data connection for zvol %s closed", zinfo->name);
 	while (!STAILQ_EMPTY(&zinfo->complete_queue)) {
 		zio_cmd = STAILQ_FIRST(&zinfo->complete_queue);
 		STAILQ_REMOVE_HEAD(&zinfo->complete_queue, cmd_link);
@@ -558,9 +554,7 @@ main(int argc, char **argv)
 	}
 
 	zrepl_svc_run();
-	while (1) {
-		sleep(5);
-	}
+	zrepl_monitor_errors();
 
 initialize_error:
 	uzfs_fini();

@@ -21,6 +21,7 @@
 *.swp
 *.gcno
 *.gcda
+*.ur-safe
 .deps
 .libs
 .dirstamp

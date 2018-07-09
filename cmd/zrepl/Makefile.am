@@ -13,7 +13,8 @@ DEFAULT_INCLUDES += \
 sbin_PROGRAMS = zrepl
 
 zrepl_SOURCES = \
-	zrepl.c
+	zrepl.c \
+	zfs_events.c
 
 zrepl_LDADD = \
 	$(top_builddir)/lib/libnvpair/libnvpair.la \

@@ -145,7 +145,7 @@ uzfs_mark_offline_and_free_zinfo(zvol_info_t *zinfo)
 
 	/* Wait for refcounts to be drained */
 	while (zinfo->refcnt > 0) {
-		LOG_INFO("Waiting for refcount to go down to"
+		LOG_DEBUG("Waiting for refcount to go down to"
 		    " zero on zvol:%s", zinfo->name);
 		sleep(5);
 	}

@@ -220,7 +220,7 @@ uzfs_zvol_io_receiver(void *arg)
 
 		if (zinfo->state == ZVOL_INFO_STATE_OFFLINE) {
 			zio_cmd_free(&zio_cmd);
-			goto exit;
+			break;
 		}
 		/* Take refcount for uzfs_zvol_worker to work on it */
 		uzfs_zinfo_take_refcnt(zinfo);
@@ -250,7 +250,6 @@ exit:
 	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 
 	close(fd);
-	LOG_INFO("Data connection closed");
 	uzfs_zinfo_drop_refcnt(zinfo);
 	zk_thread_exit();
 }
@@ -345,6 +344,7 @@ uzfs_zvol_io_ack_sender(void *arg)
 		while (1) {
 			if ((zinfo->state == ZVOL_INFO_STATE_OFFLINE) ||
 			    (zinfo->conn_closed == B_TRUE)) {
+				zinfo->is_io_ack_sender_created = B_FALSE;
 				(void) pthread_mutex_unlock(
 				    &zinfo->zinfo_mutex);
 				goto exit;
@@ -434,7 +434,6 @@ exit:
 		STAILQ_REMOVE_HEAD(&zinfo->complete_queue, cmd_link);
 		zio_cmd_free(&zio_cmd);
 	}
-	zinfo->is_io_ack_sender_created = B_FALSE;
 	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 	uzfs_zinfo_drop_refcnt(zinfo);
 

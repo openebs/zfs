@@ -559,7 +559,7 @@ static void
 free_async_task(async_task_t *async_task)
 {
 	ASSERT(MUTEX_HELD(&async_tasks_mtx));
-	uzfs_zinfo_drop_refcnt(async_task->zinfo, B_FALSE);
+	uzfs_zinfo_drop_refcnt(async_task->zinfo);
 	kmem_free(async_task->payload, async_task->payload_length);
 	kmem_free(async_task, sizeof (*async_task));
 }
@@ -755,7 +755,7 @@ ret_error:
 			goto ret_error;
 		}
 
-		uzfs_zinfo_take_refcnt(zinfo, B_FALSE);
+		uzfs_zinfo_take_refcnt(zinfo);
 
 		thrd_arg = kmem_alloc(sizeof (rebuild_thread_arg_t), KM_SLEEP);
 		thrd_arg->zinfo = zinfo;
@@ -801,7 +801,7 @@ handle_start_rebuild_req(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	    (zinfo->zv == NULL)) {
 		if (zinfo != NULL) {
 			LOG_ERR("rebuilding failed for %s..", zinfo->name);
-			uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
+			uzfs_zinfo_drop_refcnt(zinfo);
 		}
 		else
 			LOG_ERR("rebuilding failed..");
@@ -815,7 +815,7 @@ handle_start_rebuild_req(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	if (uzfs_zvol_get_rebuild_status(zinfo->zv) !=
 	    ZVOL_REBUILDING_INIT) {
 		mutex_exit(&zinfo->zv->rebuild_mtx);
-		uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
+		uzfs_zinfo_drop_refcnt(zinfo);
 		LOG_ERR("rebuilding failed for %s due to improper rebuild "
 		    "status", zinfo->name);
 		rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
@@ -842,7 +842,7 @@ handle_start_rebuild_req(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 		uzfs_update_ionum_interval(zinfo, 0);
 		LOG_INFO("Rebuild of zvol %s completed",
 		    zinfo->name);
-		uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
+		uzfs_zinfo_drop_refcnt(zinfo);
 		rc = reply_nodata(conn, ZVOL_OP_STATUS_OK,
 		    hdrp->opcode, hdrp->io_seq);
 		goto end;
@@ -857,7 +857,7 @@ handle_start_rebuild_req(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	    zinfo, rebuild_op_cnt);
 
 	/* dropping refcount for uzfs_zinfo_lookup */
-	uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
+	uzfs_zinfo_drop_refcnt(zinfo);
 end:
 	return (rc);
 }
@@ -907,7 +907,7 @@ process_message(uzfs_mgmt_conn_t *conn)
 		 * from that case would not be trivial so we pretend a miss.
 		 */
 		if (zinfo->mgmt_conn != conn) {
-			uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
+			uzfs_zinfo_drop_refcnt(zinfo);
 			LOGERRCONN(conn, "Target used invalid connection for "
 			    "zvol %s", zvol_name);
 			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
@@ -936,7 +936,7 @@ process_message(uzfs_mgmt_conn_t *conn)
 		} else {
 			ASSERT(0);
 		}
-		uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
+		uzfs_zinfo_drop_refcnt(zinfo);
 		break;
 
 	case ZVOL_OPCODE_SNAP_CREATE:
@@ -965,7 +965,7 @@ process_message(uzfs_mgmt_conn_t *conn)
 			break;
 		}
 		if (zinfo->mgmt_conn != conn) {
-			uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
+			uzfs_zinfo_drop_refcnt(zinfo);
 			LOGERRCONN(conn, "Target used invalid connection for "
 			    "zvol %s", zvol_name);
 			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
@@ -999,7 +999,7 @@ process_message(uzfs_mgmt_conn_t *conn)
 			break;
 		}
 		if (zinfo->mgmt_conn != conn) {
-			uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
+			uzfs_zinfo_drop_refcnt(zinfo);
 			LOGERRCONN(conn, "Target used invalid connection for "
 			    "zvol %s", zvol_name);
 			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,

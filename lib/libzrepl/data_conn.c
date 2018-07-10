@@ -260,6 +260,15 @@ uzfs_zvol_worker(void *arg)
 	read_metadata = hdr->flags & ZVOL_OP_FLAG_READ_METADATA;
 
 	/*
+	 * Why to delay offline activity ? anyway
+	 * we are not going to ACK these IOs
+	 */
+	if (zinfo->state == ZVOL_INFO_STATE_OFFLINE) {
+		zio_cmd_free(&zio_cmd);
+		goto drop_refcount;
+	}
+
+	/*
 	 * If zvol hasn't passed rebuild phase or if read
 	 * is meant for rebuild or if target has asked for metadata
 	 * then we need the metadata
@@ -326,7 +335,7 @@ uzfs_zvol_worker(void *arg)
 	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 
 drop_refcount:
-	uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
+	uzfs_zinfo_drop_refcnt(zinfo);
 }
 
 void
@@ -467,7 +476,7 @@ next_step:
 		 * Take refcount for uzfs_zvol_worker to work on it.
 		 * Will dropped by uzfs_zvol_worker once cmd is executed.
 		 */
-		uzfs_zinfo_take_refcnt(zinfo, B_FALSE);
+		uzfs_zinfo_take_refcnt(zinfo);
 		zio_cmd->zv = zinfo;
 		uzfs_zvol_worker(zio_cmd);
 		if (zio_cmd->hdr.status != ZVOL_OP_STATUS_OK) {
@@ -511,7 +520,7 @@ exit:
 		close(sfd);
 	}
 	/* Parent thread have taken refcount, drop it now */
-	uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
+	uzfs_zinfo_drop_refcnt(zinfo);
 
 	zk_thread_exit();
 }
@@ -829,10 +838,13 @@ uzfs_zvol_rebuild_scanner_callback(off_t offset, size_t len,
 	hdr.len = len;
 	hdr.flags = ZVOL_OP_FLAG_REBUILD;
 	hdr.status = ZVOL_OP_STATUS_OK;
+	if (zinfo->state == ZVOL_INFO_STATE_OFFLINE)
+		return (-1);
+
 	LOG_DEBUG("IO number for rebuild %ld", metadata->io_num);
 	zio_cmd = zio_cmd_alloc(&hdr, warg->fd);
 	/* Take refcount for uzfs_zvol_worker to work on it */
-	uzfs_zinfo_take_refcnt(zinfo, B_FALSE);
+	uzfs_zinfo_take_refcnt(zinfo);
 	zio_cmd->zv = zinfo;
 
 	/*
@@ -870,10 +882,9 @@ uzfs_zvol_rebuild_scanner(void *arg)
 	}
 read_socket:
 	rc = uzfs_zvol_read_header(fd, &hdr);
-	if (rc != 0) {
-		LOG_DEBUG("Error:%d in reading header\n", errno);
+	if ((rc != 0) || ((zinfo != NULL) &&
+	    (zinfo->state == ZVOL_INFO_STATE_OFFLINE)))
 		goto exit;
-	}
 
 	LOG_DEBUG("op_code=%d io_seq=%ld", hdr.opcode, hdr.io_seq);
 
@@ -942,7 +953,7 @@ read_socket:
 			hdr.opcode = ZVOL_OPCODE_REBUILD_STEP_DONE;
 			zio_cmd = zio_cmd_alloc(&hdr, fd);
 			/* Take refcount for uzfs_zvol_worker to work on it */
-			uzfs_zinfo_take_refcnt(zinfo, B_FALSE);
+			uzfs_zinfo_take_refcnt(zinfo);
 			zio_cmd->zv = zinfo;
 			uzfs_zvol_worker(zio_cmd);
 			zio_cmd = NULL;
@@ -962,7 +973,7 @@ exit:
 	if (zinfo != NULL) {
 		LOG_INFO("Closing rebuild connection for zvol %s", zinfo->name);
 		remove_pending_cmds_to_ack(fd, zinfo);
-		uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
+		uzfs_zinfo_drop_refcnt(zinfo);
 	} else {
 		LOG_INFO("Closing rebuild connection");
 	}

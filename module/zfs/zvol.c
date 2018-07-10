@@ -515,7 +515,7 @@ out:
 	}
 
 #if !defined(_KERNEL)
-	uzfs_zinfo_drop_refcnt(zinfo, B_FALSE);
+	uzfs_zinfo_drop_refcnt(zinfo);
 #else
 	if (zv != NULL)
 		mutex_exit(&zv->zv_state_lock);

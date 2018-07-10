@@ -884,6 +884,20 @@ next_step:
 	hdr.len = zvol_rebuild_step_size;
 
 	if (rebuild_test_case == 6) {
+		hdr.offset = -1;
+		rc = uzfs_zvol_socket_write(sfd, (char *)&hdr, sizeof (hdr));
+		rc = -1;
+		goto exit;
+	} else if (rebuild_test_case == 7) {
+		/*
+		 * Set offline state on vol3
+		 */
+		zinfo2->state = ZVOL_INFO_STATE_OFFLINE;
+		rc = uzfs_zvol_socket_write(sfd, (char *)&hdr, sizeof (hdr));
+		if (rc != 0) {
+			goto exit;
+		}
+	} else if (rebuild_test_case == 8) {
 		hdr.opcode = ZVOL_OPCODE_REBUILD_COMPLETE;
 		rc = uzfs_zvol_socket_write(sfd, (char *)&hdr, sizeof (hdr));
 		if (rc != 0) {
@@ -1111,13 +1125,33 @@ TEST(RebuildScanner, HandshakeAgaian) {
 	EXPECT_EQ(ZVOL_REBUILDING_FAILED, uzfs_zvol_get_rebuild_status(zinfo->zv));
 }
 
+TEST(RebuildScanner, VolumeTooLargeToHandle) {
+	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
+	zvol_rebuild_step_size = (1024ULL * 1024ULL * 1024ULL * 100);
+
+	/* Rebuild thread sending handshake again on same volume */
+	execute_rebuild_test_case("Volume offset and len too large", 6,
+	    ZVOL_REBUILDING_IN_PROGRESS, B_FALSE, B_TRUE);
+	EXPECT_EQ(ZVOL_REBUILDING_FAILED, uzfs_zvol_get_rebuild_status(zinfo->zv));
+}
+
+TEST(RebuildScanner, VolumeOffline) {
+	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
+	zvol_rebuild_step_size = (1024ULL * 1024ULL * 1);
+
+	/* Rebuild thread sending handshake again on same volume */
+	execute_rebuild_test_case("Volume offline", 7,
+	    ZVOL_REBUILDING_IN_PROGRESS, B_FALSE, B_TRUE);
+	EXPECT_EQ(ZVOL_REBUILDING_FAILED, uzfs_zvol_get_rebuild_status(zinfo->zv));
+}
+
 TEST(RebuildScanner, RebuildSuccess) {
 	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
 
 	zvol_rebuild_step_size = (1024ULL * 1024ULL * 100);
 
 	/* Rebuild thread sendinc complete opcode */
-	execute_rebuild_test_case("complete rebuild", 6,
+	execute_rebuild_test_case("complete rebuild", 8,
 	    ZVOL_REBUILDING_IN_PROGRESS, B_TRUE, B_TRUE);
 	EXPECT_EQ(ZVOL_STATUS_HEALTHY, uzfs_zvol_get_status(zinfo->zv));
 

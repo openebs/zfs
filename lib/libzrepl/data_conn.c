@@ -538,6 +538,7 @@ uzfs_zvol_timer_thread(void)
 	mutex_enter(&timer_mtx);
 	while (1) {
 		min_interval = 600;  // we check intervals at least every 10mins
+
 		mutex_enter(&zvol_list_mutex);
 		now = time(NULL);
 		SLIST_FOREACH(zinfo, &zvol_list, zinfo_next) {

@@ -528,22 +528,80 @@ rw_init(krwlock_t *rwlp, char *name, int type, void *arg)
 {
 	ASSERT3S(type, ==, RW_DEFAULT);
 	ASSERT3P(arg, ==, NULL);
-	VERIFY3S(pthread_rwlock_init(&rwlp->rw_lock, NULL), ==, 0);
 	rwlp->rw_owner = RW_INIT;
 	rwlp->rw_wr_owner = RW_INIT;
-	rwlp->rw_readers = 0;
 	rwlp->rw_magic = RW_MAGIC;
+#if !defined(_KERNEL)
+	pthread_mutex_init(&rwlp->cv_lock, NULL);
+	pthread_cond_init(&rwlp->read_cv, NULL);
+	pthread_cond_init(&rwlp->write_cv, NULL);
+	rwlp->read_cnt = 0;
+	rwlp->read_wait_cnt = 0;
+	rwlp->write_cnt = 0;
+	rwlp->write_wait_cnt = 0;
+	rwlp->read_wait_time = 0;
+	rwlp->write_wait_time = 0;
+#else
+	rwlp->rw_readers = 0;
+	VERIFY3S(pthread_rwlock_init(&rwlp->rw_lock, NULL), ==, 0);
+#endif
 }
 
 void
 rw_destroy(krwlock_t *rwlp)
 {
 	ASSERT3U(rwlp->rw_magic, ==, RW_MAGIC);
+	rwlp->rw_magic = 0;
+#if !defined(_KERNEL)
+	pthread_mutex_destroy(&rwlp->cv_lock);
+	pthread_cond_destroy(&rwlp->read_cv);
+	pthread_cond_destroy(&rwlp->write_cv);
+#else
 	ASSERT(rwlp->rw_readers == 0 && rwlp->rw_wr_owner == RW_INIT);
 	VERIFY3S(pthread_rwlock_destroy(&rwlp->rw_lock), ==, 0);
-	rwlp->rw_magic = 0;
+#endif
 }
 
+#if !defined(_KERNEL)
+void
+rw_enter(krwlock_t *rwlp, krw_t rw)
+{
+
+	clock_t start, end;
+
+	(void) pthread_mutex_lock(&rwlp->cv_lock);
+	while (1) {
+		if (rw == RW_READER) {
+			if (!rwlp->write_cnt && !rwlp->write_wait_cnt) {
+				atomic_inc_uint(&rwlp->read_cnt);
+				goto exit;
+			}
+			//atomic_inc_uint(&rwlp->read_wait_cnt);
+			start = clock();
+			pthread_cond_wait(&rwlp->read_cv, &rwlp->cv_lock);
+			end = clock();
+			//atomic_dec_uint(&rwlp->read_wait_cnt);
+			rwlp->read_wait_time = ((double) (end - start)) /
+			    CLOCKS_PER_SEC;
+		} else {
+			if (!rwlp->read_cnt && !rwlp->write_cnt) {
+				atomic_inc_uint(&rwlp->write_cnt);
+				goto exit;
+			}
+			atomic_inc_uint(&rwlp->write_wait_cnt);
+			start = clock();
+			pthread_cond_wait(&rwlp->write_cv, &rwlp->cv_lock);
+			end = clock();
+			atomic_dec_uint(&rwlp->write_wait_cnt);
+			rwlp->write_wait_time = ((double) (end - start)) /
+			    CLOCKS_PER_SEC;
+		}
+	}
+exit:
+	(void) pthread_mutex_unlock(&rwlp->cv_lock);
+	return;
+}
+#else
 void
 rw_enter(krwlock_t *rwlp, krw_t rw)
 {
@@ -566,7 +624,35 @@ rw_enter(krwlock_t *rwlp, krw_t rw)
 
 	rwlp->rw_owner = curthread;
 }
+#endif
 
+#if !defined(_KERNEL)
+void
+rw_exit(krwlock_t *rwlp)
+{
+	(void) pthread_mutex_lock(&rwlp->cv_lock);
+
+	/* Either reader is non-zero or writer non-zero not both */
+	ASSERT((rwlp->read_cnt && !rwlp->write_cnt) ||
+	    (!rwlp->read_cnt && rwlp->write_cnt));
+
+	if (rwlp->read_cnt) {
+		atomic_dec_uint(&rwlp->read_cnt);
+		if (!rwlp->read_cnt && rwlp->write_wait_cnt) {
+			pthread_cond_signal(&rwlp->write_cv);
+		}
+	} else {
+		atomic_dec_uint(&rwlp->write_cnt);
+		ASSERT(!rwlp->write_cnt && !rwlp->read_cnt);
+		if (rwlp->write_wait_cnt)
+			pthread_cond_signal(&rwlp->write_cv);
+		else /*if (rwlp->read_wait_cnt)*/
+			pthread_cond_broadcast(&rwlp->read_cv);
+	}
+
+	(void) pthread_mutex_unlock(&rwlp->cv_lock);
+}
+#else
 void
 rw_exit(krwlock_t *rwlp)
 {
@@ -581,7 +667,31 @@ rw_exit(krwlock_t *rwlp)
 	rwlp->rw_owner = RW_INIT;
 	VERIFY3S(pthread_rwlock_unlock(&rwlp->rw_lock), ==, 0);
 }
+#endif
 
+#if !defined(_KERNEL)
+int
+rw_tryenter(krwlock_t *rwlp, krw_t rw)
+{
+	(void) pthread_mutex_lock(&rwlp->cv_lock);
+
+	/* Check if read can be allowed */
+	if (rw == RW_READER) {
+		if (!rwlp->write_cnt && !rwlp->write_wait_cnt) {
+			atomic_inc_uint(&rwlp->read_cnt);
+			(void) pthread_mutex_unlock(&rwlp->cv_lock);
+			return (1);
+		}
+	} else if (!rwlp->read_cnt && !rwlp->write_cnt) {
+		atomic_inc_uint(&rwlp->write_cnt);
+		(void) pthread_mutex_unlock(&rwlp->cv_lock);
+		return (1);
+	}
+		
+	pthread_mutex_unlock(&rwlp->cv_lock);
+	return (0);
+}
+#else
 int
 rw_tryenter(krwlock_t *rwlp, krw_t rw)
 {
@@ -612,6 +722,7 @@ rw_tryenter(krwlock_t *rwlp, krw_t rw)
 
 	return (0);
 }
+#endif
 
 int
 rw_tryupgrade(krwlock_t *rwlp)

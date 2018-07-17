@@ -58,6 +58,7 @@ uzfs_test_info_t uzfs_tests[] = {
 	    " metadata for given data block" },
 	{ unit_test_fn, "zvol random read/write verification with metadata" },
 	{ zrepl_rebuild_test, "ZFS rebuild test" },
+	{ read_write_lock_performance_testz, "RW_LOCK performance test" },
 };
 
 uint64_t metaverify = 0;

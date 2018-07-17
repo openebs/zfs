@@ -376,7 +376,7 @@ reader_thread(void *arg)
 		bzero(buf, warg->io_block_size);
 	}
 
-	printf("Total iops requested:%d, total write acks%d,"
+	printf("Total iops requested:%ld, total write acks%d,"
 	    " total read acks: %d total sync acks:%d\n",
 	    warg->max_iops, write_ack_cnt, read_ack_cnt, sync_ack_cnt);
 	free(hdr);
@@ -1252,4 +1252,108 @@ exit:
 		umem_free(mgmt_ack_ds2, sizeof (mgmt_ack_t) * 2);
 	if (mgmt_ack_ds3 != NULL)
 		umem_free(mgmt_ack_ds3, sizeof (mgmt_ack_t) * 3);
+}
+
+static void
+rwlock_writer_thread(void *arg)
+{
+	int j, i = 0;
+	kmutex_t *mtx;
+	kcondvar_t *cv;
+	int *threads_done;
+	worker_args_t *warg = (worker_args_t *)arg;
+
+	mtx = warg->mtx;
+	cv = warg->cv;
+	threads_done = warg->threads_done;
+	
+	printf("Writing .....\n");
+	while (i < warg->max_iops) {
+		rw_enter(warg->rw_lock, RW_WRITER);
+		for (j = 0; j <= 10; j++);
+		rw_exit(warg->rw_lock);
+		i++;
+	}
+	mutex_enter(mtx);
+	*threads_done = *threads_done + 1;
+	cv_signal(cv);
+	mutex_exit(mtx);
+	zk_thread_exit();
+}
+
+static void
+rwlock_reader_thread(void *arg)
+{
+	int j, i = 0;
+	kmutex_t *mtx;
+	kcondvar_t *cv;
+	int *threads_done;
+	worker_args_t *warg = (worker_args_t *)arg;
+
+	mtx = warg->mtx;
+	cv = warg->cv;
+	threads_done = warg->threads_done;
+
+	printf("Reading .....\n");
+	while (i < warg->max_iops) {
+		rw_enter(warg->rw_lock, RW_READER);
+		for (j = 0; j <= 10; j++);
+		rw_exit(warg->rw_lock);
+		i++;
+	}
+
+	mutex_enter(mtx);
+	*threads_done = *threads_done + 1;
+	cv_signal(cv);
+	mutex_exit(mtx);
+	zk_thread_exit();
+}
+
+void
+read_write_lock_performance_testz(void *xarg)
+{
+	int i = 0;
+	kmutex_t mtx;
+	kcondvar_t cv;
+	int threads_done = 0;
+	int num_threads = 0;
+	kthread_t *reader;
+	kthread_t *writer;
+	worker_args_t args;
+	krwlock_t rw_lock;
+
+	mutex_init(&mtx, NULL, MUTEX_DEFAULT, NULL);
+	cv_init(&cv, NULL, CV_DEFAULT, NULL);
+	rw_init(&rw_lock, NULL, RW_DEFAULT, NULL);
+
+	args.threads_done = &threads_done;
+	args.mtx = &mtx;
+	args.cv = &cv;
+	args.max_iops = 1000000;
+	args.rw_lock = &rw_lock;
+	while (i < 4) {
+		writer = zk_thread_create(NULL, 0,
+		    (thread_func_t)rwlock_writer_thread, &args, 0, NULL,
+		    TS_RUN, 0, PTHREAD_CREATE_DETACHED);
+		num_threads++;
+		i++;
+	}
+
+	i = 0;
+	while(i < 6) {
+		reader = zk_thread_create(NULL, 0, (thread_func_t)rwlock_reader_thread,
+		    &args, 0, NULL, TS_RUN, 0, PTHREAD_CREATE_DETACHED);
+		num_threads++;
+		i++;
+	}
+
+	mutex_enter(&mtx);
+	while (threads_done != num_threads)
+		cv_wait(&cv, &mtx);
+	mutex_exit(&mtx);
+	cv_destroy(&cv);
+	mutex_destroy(&mtx);
+	printf("Write wait time :%lf Read wait time: %lf\n",
+	    rw_lock.write_wait_time, rw_lock.read_wait_time);
+	rw_destroy(&rw_lock);
 }

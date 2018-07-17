@@ -53,6 +53,7 @@ extern void open_pool(spa_t **);
 extern void open_ds(spa_t *, char *, zvol_state_t **);
 
 typedef struct worker_args {
+	krwlock_t *rw_lock;
 	void *zv;
 	kmutex_t *mtx;
 	kcondvar_t *cv;
@@ -61,7 +62,7 @@ typedef struct worker_args {
 	uint64_t io_block_size;
 	uint64_t active_size;
 	int sfd[2];
-	int max_iops;
+	uint64_t max_iops;
 	int rebuild_test;
 } worker_args_t;
 
@@ -75,4 +76,5 @@ void unit_test_fn(void *arg);
 void zrepl_utest(void *arg);
 void uzfs_rebuild_test(void *arg);
 void zrepl_rebuild_test(void *arg);
+void read_write_lock_performance_testz(void *arg);
 #endif

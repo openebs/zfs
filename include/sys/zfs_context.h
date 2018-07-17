@@ -304,8 +304,20 @@ typedef struct krwlock {
 	void			*rw_owner;
 	void			*rw_wr_owner;
 	uint64_t		rw_magic;
+#if !defined(_KERNEL)
+	pthread_mutex_t		cv_lock;
+	pthread_cond_t		read_cv;
+	pthread_cond_t		write_cv;
+	uint_t			read_cnt;
+	uint_t			write_cnt;
+	uint_t			write_wait_cnt;
+	uint_t			read_wait_cnt;
+	double			read_wait_time;
+	double			write_wait_time;
+#else
 	pthread_rwlock_t	rw_lock;
 	uint_t			rw_readers;
+#endif
 } krwlock_t;
 
 typedef int krw_t;

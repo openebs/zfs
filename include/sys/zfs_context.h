@@ -327,9 +327,15 @@ typedef int krw_t;
 #define	RW_DEFAULT	RW_READER
 #define	RW_NOLOCKDEP	RW_READER
 
+#if !defined(_KERNEL)
+#define	RW_READ_HELD(x)		((x)->read_cnt > 0)
+#define	RW_WRITE_HELD(x)	((x)->write_cnt > 0)
+#define	RW_LOCK_HELD(x)		(RW_READ_HELD(x) || RW_WRITE_HELD(x))
+#else
 #define	RW_READ_HELD(x)		((x)->rw_readers > 0)
 #define	RW_WRITE_HELD(x)	((x)->rw_wr_owner == curthread)
 #define	RW_LOCK_HELD(x)		(RW_READ_HELD(x) || RW_WRITE_HELD(x))
+#endif
 
 #undef RW_LOCK_HELD
 #define	RW_LOCK_HELD(x)		(RW_READ_HELD(x) || RW_WRITE_HELD(x))

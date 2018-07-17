@@ -1266,11 +1266,12 @@ rwlock_writer_thread(void *arg)
 	mtx = warg->mtx;
 	cv = warg->cv;
 	threads_done = warg->threads_done;
-	
+
 	printf("Writing .....\n");
 	while (i < warg->max_iops) {
 		rw_enter(warg->rw_lock, RW_WRITER);
-		for (j = 0; j <= 10; j++);
+		for (j = 0; j <= 10; j++) {
+		}
 		rw_exit(warg->rw_lock);
 		i++;
 	}
@@ -1297,7 +1298,8 @@ rwlock_reader_thread(void *arg)
 	printf("Reading .....\n");
 	while (i < warg->max_iops) {
 		rw_enter(warg->rw_lock, RW_READER);
-		for (j = 0; j <= 10; j++);
+		for (j = 0; j <= 10; j++) {
+		}
 		rw_exit(warg->rw_lock);
 		i++;
 	}
@@ -1331,7 +1333,7 @@ read_write_lock_performance_testz(void *xarg)
 	args.cv = &cv;
 	args.max_iops = 1000000;
 	args.rw_lock = &rw_lock;
-	while (i < 4) {
+	while (i < 1) {
 		writer = zk_thread_create(NULL, 0,
 		    (thread_func_t)rwlock_writer_thread, &args, 0, NULL,
 		    TS_RUN, 0, PTHREAD_CREATE_DETACHED);
@@ -1340,8 +1342,9 @@ read_write_lock_performance_testz(void *xarg)
 	}
 
 	i = 0;
-	while(i < 6) {
-		reader = zk_thread_create(NULL, 0, (thread_func_t)rwlock_reader_thread,
+	while (i < 3) {
+		reader = zk_thread_create(NULL, 0,
+		    (thread_func_t)rwlock_reader_thread,
 		    &args, 0, NULL, TS_RUN, 0, PTHREAD_CREATE_DETACHED);
 		num_threads++;
 		i++;

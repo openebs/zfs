@@ -576,12 +576,12 @@ rw_enter(krwlock_t *rwlp, krw_t rw)
 				atomic_inc_uint(&rwlp->read_cnt);
 				goto exit;
 			}
-			//atomic_inc_uint(&rwlp->read_wait_cnt);
+			// atomic_inc_uint(&rwlp->read_wait_cnt);
 			start = clock();
 			pthread_cond_wait(&rwlp->read_cv, &rwlp->cv_lock);
 			end = clock();
-			//atomic_dec_uint(&rwlp->read_wait_cnt);
-			rwlp->read_wait_time = ((double) (end - start)) /
+			// atomic_dec_uint(&rwlp->read_wait_cnt);
+			rwlp->read_wait_time = ((double)(end - start)) /
 			    CLOCKS_PER_SEC;
 		} else {
 			if (!rwlp->read_cnt && !rwlp->write_cnt) {
@@ -593,13 +593,12 @@ rw_enter(krwlock_t *rwlp, krw_t rw)
 			pthread_cond_wait(&rwlp->write_cv, &rwlp->cv_lock);
 			end = clock();
 			atomic_dec_uint(&rwlp->write_wait_cnt);
-			rwlp->write_wait_time = ((double) (end - start)) /
+			rwlp->write_wait_time = ((double)(end - start)) /
 			    CLOCKS_PER_SEC;
 		}
 	}
 exit:
 	(void) pthread_mutex_unlock(&rwlp->cv_lock);
-	return;
 }
 #else
 void
@@ -646,7 +645,7 @@ rw_exit(krwlock_t *rwlp)
 		ASSERT(!rwlp->write_cnt && !rwlp->read_cnt);
 		if (rwlp->write_wait_cnt)
 			pthread_cond_signal(&rwlp->write_cv);
-		else /*if (rwlp->read_wait_cnt)*/
+		else /* if (rwlp->read_wait_cnt) */
 			pthread_cond_broadcast(&rwlp->read_cv);
 	}
 
@@ -687,7 +686,7 @@ rw_tryenter(krwlock_t *rwlp, krw_t rw)
 		(void) pthread_mutex_unlock(&rwlp->cv_lock);
 		return (1);
 	}
-		
+
 	pthread_mutex_unlock(&rwlp->cv_lock);
 	return (0);
 }

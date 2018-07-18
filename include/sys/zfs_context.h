@@ -308,7 +308,9 @@ typedef struct krwlock {
 	pthread_mutex_t		cv_lock;
 	pthread_cond_t		read_cv;
 	pthread_cond_t		write_cv;
-	uint_t			read_cnt;
+#endif
+	uint_t			rw_readers;
+#if !defined(_KERNEL)
 	uint_t			write_cnt;
 	uint_t			write_wait_cnt;
 	uint_t			read_wait_cnt;
@@ -316,7 +318,6 @@ typedef struct krwlock {
 	double			write_wait_time;
 #else
 	pthread_rwlock_t	rw_lock;
-	uint_t			rw_readers;
 #endif
 } krwlock_t;
 
@@ -327,15 +328,9 @@ typedef int krw_t;
 #define	RW_DEFAULT	RW_READER
 #define	RW_NOLOCKDEP	RW_READER
 
-#if !defined(_KERNEL)
-#define	RW_READ_HELD(x)		((x)->read_cnt > 0)
-#define	RW_WRITE_HELD(x)	((x)->write_cnt > 0)
-#define	RW_LOCK_HELD(x)		(RW_READ_HELD(x) || RW_WRITE_HELD(x))
-#else
 #define	RW_READ_HELD(x)		((x)->rw_readers > 0)
 #define	RW_WRITE_HELD(x)	((x)->rw_wr_owner == curthread)
 #define	RW_LOCK_HELD(x)		(RW_READ_HELD(x) || RW_WRITE_HELD(x))
-#endif
 
 #undef RW_LOCK_HELD
 #define	RW_LOCK_HELD(x)		(RW_READ_HELD(x) || RW_WRITE_HELD(x))

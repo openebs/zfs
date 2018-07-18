@@ -535,7 +535,7 @@ rw_init(krwlock_t *rwlp, char *name, int type, void *arg)
 	pthread_mutex_init(&rwlp->cv_lock, NULL);
 	pthread_cond_init(&rwlp->read_cv, NULL);
 	pthread_cond_init(&rwlp->write_cv, NULL);
-	rwlp->read_cnt = 0;
+	rwlp->rw_readers = 0;
 	rwlp->read_wait_cnt = 0;
 	rwlp->write_cnt = 0;
 	rwlp->write_wait_cnt = 0;
@@ -568,12 +568,15 @@ rw_enter(krwlock_t *rwlp, krw_t rw)
 {
 
 	clock_t start, end;
+	ASSERT3U(rwlp->rw_magic, ==, RW_MAGIC);
+	ASSERT3P(rwlp->rw_owner, !=, curthread);
+	ASSERT3P(rwlp->rw_wr_owner, !=, curthread);
 
 	(void) pthread_mutex_lock(&rwlp->cv_lock);
 	while (1) {
 		if (rw == RW_READER) {
 			if (!rwlp->write_cnt && !rwlp->write_wait_cnt) {
-				atomic_inc_uint(&rwlp->read_cnt);
+				atomic_inc_uint(&rwlp->rw_readers);
 				goto exit;
 			}
 			// atomic_inc_uint(&rwlp->read_wait_cnt);
@@ -584,8 +587,9 @@ rw_enter(krwlock_t *rwlp, krw_t rw)
 			rwlp->read_wait_time = ((double)(end - start)) /
 			    CLOCKS_PER_SEC;
 		} else {
-			if (!rwlp->read_cnt && !rwlp->write_cnt) {
+			if (!rwlp->rw_readers && !rwlp->write_cnt) {
 				atomic_inc_uint(&rwlp->write_cnt);
+				rwlp->rw_wr_owner = curthread;
 				goto exit;
 			}
 			atomic_inc_uint(&rwlp->write_wait_cnt);
@@ -598,6 +602,7 @@ rw_enter(krwlock_t *rwlp, krw_t rw)
 		}
 	}
 exit:
+	rwlp->rw_owner = curthread;
 	(void) pthread_mutex_unlock(&rwlp->cv_lock);
 }
 #else
@@ -629,26 +634,31 @@ rw_enter(krwlock_t *rwlp, krw_t rw)
 void
 rw_exit(krwlock_t *rwlp)
 {
+	ASSERT3U(rwlp->rw_magic, ==, RW_MAGIC);
+	ASSERT(RW_LOCK_HELD(rwlp));
+
 	(void) pthread_mutex_lock(&rwlp->cv_lock);
 
 	/* Either reader is non-zero or writer non-zero not both */
-	ASSERT((rwlp->read_cnt && !rwlp->write_cnt) ||
-	    (!rwlp->read_cnt && rwlp->write_cnt));
+	ASSERT((rwlp->rw_readers && !rwlp->write_cnt) ||
+	    (!rwlp->rw_readers && rwlp->write_cnt));
 
-	if (rwlp->read_cnt) {
-		atomic_dec_uint(&rwlp->read_cnt);
-		if (!rwlp->read_cnt && rwlp->write_wait_cnt) {
+	if (rwlp->rw_readers) {
+		atomic_dec_uint(&rwlp->rw_readers);
+		if (!rwlp->rw_readers && rwlp->write_wait_cnt) {
 			pthread_cond_signal(&rwlp->write_cv);
 		}
 	} else {
 		atomic_dec_uint(&rwlp->write_cnt);
-		ASSERT(!rwlp->write_cnt && !rwlp->read_cnt);
+		ASSERT(!rwlp->write_cnt && !rwlp->rw_readers);
+		rwlp->rw_wr_owner = RW_INIT;
 		if (rwlp->write_wait_cnt)
 			pthread_cond_signal(&rwlp->write_cv);
 		else /* if (rwlp->read_wait_cnt) */
 			pthread_cond_broadcast(&rwlp->read_cv);
 	}
 
+	rwlp->rw_owner = RW_INIT;
 	(void) pthread_mutex_unlock(&rwlp->cv_lock);
 }
 #else
@@ -672,23 +682,30 @@ rw_exit(krwlock_t *rwlp)
 int
 rw_tryenter(krwlock_t *rwlp, krw_t rw)
 {
+	int rv = 0;
+	ASSERT3U(rwlp->rw_magic, ==, RW_MAGIC);
+
 	(void) pthread_mutex_lock(&rwlp->cv_lock);
 
 	/* Check if read can be allowed */
 	if (rw == RW_READER) {
-		if (!rwlp->write_cnt && !rwlp->write_wait_cnt) {
-			atomic_inc_uint(&rwlp->read_cnt);
-			(void) pthread_mutex_unlock(&rwlp->cv_lock);
-			return (1);
+		if (!rwlp->write_cnt && !rwlp->write_wait_cnt)
+				rv = 1;
+	} else if (!rwlp->rw_readers && !rwlp->write_cnt)
+			rv = 1;
+	if (rv == 1) {
+		ASSERT3P(rwlp->rw_wr_owner, ==, RW_INIT);
+		if (rw == RW_READER)
+			atomic_inc_uint(&rwlp->rw_readers);
+		else {
+			ASSERT3U(rwlp->rw_readers, ==, 0);
+			atomic_inc_uint(&rwlp->write_cnt);
+			rwlp->rw_wr_owner = curthread;
 		}
-	} else if (!rwlp->read_cnt && !rwlp->write_cnt) {
-		atomic_inc_uint(&rwlp->write_cnt);
-		(void) pthread_mutex_unlock(&rwlp->cv_lock);
-		return (1);
+		rwlp->rw_owner = curthread;
 	}
-
 	pthread_mutex_unlock(&rwlp->cv_lock);
-	return (0);
+	return (rv);
 }
 #else
 int

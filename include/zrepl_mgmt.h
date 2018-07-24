@@ -160,6 +160,7 @@ void uzfs_zvol_store_last_committed_io_no(zvol_state_t *zv,
     uint64_t io_seq);
 extern int create_and_bind(const char *port, int bind_needed,
     boolean_t nonblocking);
+int uzfs_zvol_name_compare(zvol_info_t *zv, const char *name);
 
 /*
  * API to drop refcnt on zinfo. If refcnt

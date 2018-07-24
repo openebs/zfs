@@ -1157,3 +1157,19 @@ TEST(RebuildScanner, RebuildSuccess) {
 
 	memset(&zinfo->zv->rebuild_info, 0, sizeof (zvol_rebuild_info_t));
 }
+
+/* Volume name stored in zinfo is "pool1/vol1" */
+TEST(VolumeNameCompare, VolumeNameCompareTest) {
+
+	/* Pass NULL string for compare */
+	EXPECT_EQ(-1, uzfs_zvol_name_compare(zinfo, ""));
+
+	/* Pass wrong volname but smaller string size */
+	EXPECT_EQ(-1, uzfs_zvol_name_compare(zinfo, "vol"));
+
+	/* Pass wrong volname but larger string size */
+	EXPECT_EQ(-1, uzfs_zvol_name_compare(zinfo, "vol12345678910"));
+
+	/* Pass correct volname */
+	EXPECT_EQ(0, uzfs_zvol_name_compare(zinfo, "vol1"));
+}

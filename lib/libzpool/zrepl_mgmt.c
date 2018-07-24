@@ -154,37 +154,52 @@ uzfs_mark_offline_and_free_zinfo(zvol_info_t *zinfo)
 	(void) uzfs_zinfo_free(zinfo);
 }
 
+int
+uzfs_zvol_name_compare(zvol_info_t *zv, const char *name)
+{
+
+	char *p;
+	int pathlen, namelen;
+
+	if (name == NULL)
+		return (-1);
+
+	namelen = strlen(name);
+	pathlen = strlen(zv->name);
+
+	if (namelen > pathlen)
+		return (-1);
+	/*
+	 * iSCSI controller send volume name without any prefix
+	 * while zinfo store volume name with prefix of pool_name.
+	 * So we need to extract volume name from zinfo->name
+	 * and compare it with pass name.
+	 */
+	p = zv->name + (pathlen - namelen);
+
+	/*
+	 * Name can be in any of these formats
+	 * "vol1" or "zpool/vol1"
+	 */
+	if ((strcmp(zv->name, name) == 0) ||
+	    ((strcmp(p, name) == 0) && (*(--p) == '/'))) {
+		return (0);
+	}
+	return (-1);
+}
+
 zvol_info_t *
 uzfs_zinfo_lookup(const char *name)
 {
-	int pathlen;
-	char *p;
 	zvol_info_t *zv = NULL;
-	int namelen = ((name) ? strlen(name) : 0);
 
 	if (name == NULL)
 		return (NULL);
 
 	(void) mutex_enter(&zvol_list_mutex);
 	SLIST_FOREACH(zv, &zvol_list, zinfo_next) {
-		/*
-		 * TODO: Come up with better approach.
-		 * Since iSCSI tgt can send volname in desired format,
-		 * we have added this hack where we do calculate length
-		 * of name passed as arg, look for those many bytes in
-		 * zv->name from tail/end.
-		 */
-		pathlen = strlen(zv->name);
-		p = zv->name + (pathlen - namelen);
-
-		/*
-		 * Name can be in any of these formats
-		 * "vol1" or "zpool/vol1"
-		 */
-		if ((strcmp(zv->name, name) == 0) ||
-		    ((strcmp(p, name) == 0) && (*(--p) == '/'))) {
+		if (uzfs_zvol_name_compare(zv, name) == 0)
 			break;
-		}
 	}
 	if (zv != NULL) {
 		/* Take refcount */

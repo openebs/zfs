@@ -716,8 +716,7 @@ uzfs_zvol_rebuild_dw_replica_start(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	for (; rebuild_op_cnt > 0; rebuild_op_cnt--, mack++) {
 		LOG_INFO("zvol %s at %s:%u helping in rebuild",
 		    mack->volname, mack->ip, mack->port);
-		if (strncmp(zinfo->name, mack->dw_volname, MAXNAMELEN)
-		    != 0) {
+		if (uzfs_zvol_name_compare(zinfo, mack->dw_volname) != 0) {
 			LOG_ERR("zvol %s not matching with zinfo %s",
 			    mack->dw_volname, zinfo->name);
 ret_error:

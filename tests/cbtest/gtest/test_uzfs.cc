@@ -50,6 +50,7 @@ zvol_state_t *zv2;
 zvol_info_t *zinfo;
 zvol_info_t *zinfo2;
 int rebuild_test_case = 0;
+int mgmt_test_case = 0;
 
 extern void (*zinfo_create_hook)(zvol_info_t *, nvlist_t *);
 extern void (*zinfo_destroy_hook)(zvol_info_t *);
@@ -1172,4 +1173,473 @@ TEST(VolumeNameCompare, VolumeNameCompareTest) {
 
 	/* Pass correct volname */
 	EXPECT_EQ(0, uzfs_zvol_name_compare(zinfo, "vol1"));
+}
+
+zvol_op_status_t status;
+void mock_tgt_thread(void *arg)
+{
+	int			rc = 0;
+	int			mgmt_fd, tgt_fd;
+	char 			*p;
+	char			*ack;
+	zvol_state_t		*zv;
+	socklen_t		in_len;
+	zvol_io_hdr_t		hdr;
+	mgmt_ack_t		mgmt_ack;
+	struct sockaddr		in_addr;
+	zvol_op_resize_data_t	resize;
+	char 			buf[512];
+	bool			executed = false;
+
+	p = buf;
+	ack = NULL;
+	zv = NULL;
+	mgmt_fd = tgt_fd = -1;
+
+	tgt_fd = create_and_bind("6060", B_TRUE, B_FALSE);
+	if (tgt_fd == -1) {
+		LOG_ERRNO("Binding failed");
+		goto exit;
+	}
+
+	rc = listen(tgt_fd, 10);
+	if (rc == -1) {
+		LOG_ERRNO("Listen failed");
+		goto exit;
+	}
+
+	in_len = sizeof (in_addr);
+	mgmt_fd = accept(tgt_fd, &in_addr, &in_len);
+	if (mgmt_fd == -1) {
+		LOG_ERRNO("Unable to accept connection");
+		goto exit;
+	}
+	
+	/*
+	 * Exit after accepting connection
+	 */
+	if (mgmt_test_case == 1)
+		goto exit;
+
+
+	bzero(&hdr, sizeof (hdr));
+	hdr.version = REPLICA_VERSION;
+	hdr.opcode = ZVOL_OPCODE_HANDSHAKE;
+	hdr.len = strlen(zinfo->name) + 1;
+	strcpy(buf, zinfo->name);
+
+	/* Send wrong protocol version */
+	if (mgmt_test_case == 2)
+		hdr.version = 3;
+
+	/* Header len is greater than MAX_NAME_LEN */
+	if (mgmt_test_case == 4)
+		hdr.len = 512;
+
+	/* Header len is zero */
+	if (mgmt_test_case == 5)
+		hdr.len = 0;
+
+	/* Wrong volume name */	
+	if (mgmt_test_case == 6)
+		strcpy(buf, "XXXXXXXX");
+
+	/*
+	 * Send snap create command and
+	 * Header len greater than MAX_NAME_LEN
+	 */
+	if (mgmt_test_case == 11) {
+		hdr.opcode = ZVOL_OPCODE_SNAP_CREATE;
+		hdr.len = 512;
+	}
+	
+	/*
+	 * Send snap create command and
+	 * Header len equal to zero
+	 */
+	if (mgmt_test_case == 12) {
+		hdr.opcode = ZVOL_OPCODE_SNAP_CREATE;
+		hdr.len = 0;
+	}
+
+	/*
+	 * Send snap create command and
+	 * Wrong volname
+	 */
+	if (mgmt_test_case == 13) {
+		hdr.opcode = ZVOL_OPCODE_SNAP_CREATE;
+		strcpy(buf, zinfo->name);
+		strcpy((buf + hdr.len -2), "@snap");
+		hdr.len = strlen(buf) + 1;
+	}
+
+
+	/* Snap create success case */	
+	if (mgmt_test_case == 14) {
+		hdr.opcode = ZVOL_OPCODE_SNAP_CREATE;
+		strcpy(buf, zinfo->name);
+		strcpy((buf + hdr.len -1), "@snap");
+		hdr.len = strlen(buf) + 1;
+	}
+	
+	/* Snap destroy success case */	
+	if (mgmt_test_case == 15) {
+		hdr.opcode = ZVOL_OPCODE_SNAP_DESTROY;
+		strcpy(buf, zinfo->name);
+		strcpy((buf + hdr.len -1), "@snap");
+		hdr.len = strlen(buf) + 1;
+	}
+	
+	/* Resize wrong payload size */	
+	if (mgmt_test_case == 16) {
+		hdr.opcode = ZVOL_OPCODE_RESIZE;
+		hdr.len = sizeof (zvol_op_resize_data_t) + 10;
+	}
+	
+	/* Resize wrong volume name */	
+	if (mgmt_test_case == 17) {
+		hdr.opcode = ZVOL_OPCODE_RESIZE;
+		hdr.len = sizeof (zvol_op_resize_data_t);
+		strcpy(resize.volname, "vol1234556");
+		resize.size = 1000000;
+		p = (char *)&resize;
+	}
+	
+	/* Resize success */	
+	if (mgmt_test_case == 18) {
+		hdr.opcode = ZVOL_OPCODE_RESIZE;
+		hdr.len = sizeof (zvol_op_resize_data_t);
+		strcpy(resize.volname, zinfo->name);
+		resize.size = 999936;
+		p = (char *)&resize;
+	}
+	
+	/* Rebuild payload size is 0 */	
+	if (mgmt_test_case == 19) {
+		hdr.opcode = ZVOL_OPCODE_START_REBUILD;
+		hdr.len = 0;
+	}
+	
+	/* Rebuild payload mismatch */	
+	if (mgmt_test_case == 20) {
+		hdr.opcode = ZVOL_OPCODE_START_REBUILD;
+		hdr.len = sizeof (mgmt_ack_t) + 1;
+	}
+
+	/* Rebuild wrong volume name */	
+	if (mgmt_test_case == 21) {
+		hdr.opcode = ZVOL_OPCODE_START_REBUILD;
+		hdr.len = sizeof (mgmt_ack_t);
+		strcpy(mgmt_ack.dw_volname, "XXXXXXX");
+		p = (char *)&mgmt_ack;
+	}
+
+	/* Rebuild Null zv */	
+	if (mgmt_test_case == 22) {
+		hdr.opcode = ZVOL_OPCODE_START_REBUILD;
+		hdr.len = sizeof (mgmt_ack_t);
+		strcpy(mgmt_ack.dw_volname, zinfo->name);
+		p = (char *)&mgmt_ack;
+		zv = zinfo->zv;
+		zinfo->zv = NULL;
+	}
+
+	/*Volume is wrong rebuild state */
+	if (mgmt_test_case == 23) {
+		hdr.opcode = ZVOL_OPCODE_START_REBUILD;
+		hdr.len = sizeof (mgmt_ack_t);
+		strcpy(mgmt_ack.dw_volname, zinfo->name);
+		p = (char *)&mgmt_ack;
+		uzfs_zvol_set_rebuild_status(zinfo->zv,
+		    ZVOL_REBUILDING_IN_PROGRESS);
+	}
+
+	/* Single Replica */
+	if (mgmt_test_case == 24) {
+		hdr.opcode = ZVOL_OPCODE_START_REBUILD;
+		hdr.len = sizeof (mgmt_ack_t);
+		bzero(&mgmt_ack, sizeof (mgmt_ack));
+		strcpy(mgmt_ack.dw_volname, zinfo->name);
+		p = (char *)&mgmt_ack;
+	}
+
+send_hdr:
+	rc = write(mgmt_fd, (void *)&hdr, sizeof (zvol_io_hdr_t));
+	if (rc == -1) {
+		LOG_ERRNO("Write error during hdr write");
+		goto exit;
+	}
+
+	/*
+	 * Disconnect after send header
+	 */
+	if (mgmt_test_case == 3)
+		goto exit;
+
+	rc = write(mgmt_fd, p, hdr.len);
+	if (rc == -1) {
+		LOG_ERRNO("Write error during volname write");
+		goto exit;
+	}
+
+	rc = read(mgmt_fd, (void *)&hdr, sizeof (zvol_io_hdr_t));
+	if (rc == -1) {
+		LOG_ERRNO("Read error during hdr read");
+		goto exit;
+	}
+
+	status = hdr.status;
+	/* Reset zv in to zinfo */
+	if (mgmt_test_case == 22)
+		zinfo->zv = zv;
+
+	if (mgmt_test_case == 23)
+		uzfs_zvol_set_rebuild_status(zinfo->zv,
+		    ZVOL_REBUILDING_INIT);
+
+	if (hdr.status == ZVOL_OP_STATUS_FAILED) {
+		LOG_ERRNO("Status is not ok");
+		goto exit;
+	}
+
+	ack = (char *) malloc(hdr.len);
+	rc = read(mgmt_fd, (void *)ack, hdr.len);
+	if (rc == -1) {
+		LOG_ERRNO("Read error during ack read");
+		goto exit;
+	}
+	free(ack);
+
+	bzero(&hdr, sizeof (hdr));
+	hdr.version = REPLICA_VERSION;
+	hdr.len = strlen(zinfo->name) + 1;
+
+	if (!executed && mgmt_test_case == 8) {
+		hdr.opcode = ZVOL_OPCODE_PREPARE_FOR_REBUILD;
+		executed = true;
+		goto send_hdr;
+	}
+
+	if (!executed && mgmt_test_case == 9) {
+		hdr.opcode = ZVOL_OPCODE_REPLICA_STATUS;
+		executed = true;
+		goto send_hdr;
+	}
+		
+	if (!executed && mgmt_test_case == 10) {
+		hdr.opcode = ZVOL_OPCODE_STATS;
+		executed = true;
+		goto send_hdr;
+	}
+exit:
+	if (tgt_fd != -1)
+		close(tgt_fd);
+
+	if (mgmt_fd != -1)
+		close(mgmt_fd);
+
+	mgmt_test_case = 0;
+	zk_thread_exit();
+}
+
+void mgmt_thread_test_case(int test_case)
+{
+	kthread_t	*mock_tgt_thrd;
+	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+
+	mgmt_test_case = test_case;
+	uzfs_zinfo_take_refcnt(zinfo);
+
+	mock_tgt_thrd = zk_thread_create(NULL, 0, mock_tgt_thread,
+	    NULL, 0, NULL, TS_RUN, 0, 0);
+
+	/* wait for mock_tgt_thread to exit */
+	while (1) {
+		if (mgmt_test_case != 0)
+			sleep(1);
+		else
+			break;
+	}
+}
+
+kthread_t	*mgmt_thread;
+TEST(MgmtThreadTest, MgmtThreadCreation) {
+	EXPECT_EQ(2, uzfs_mgmt_conn_list_count(&uzfs_mgmt_conns));
+	EXPECT_EQ(2, zinfo->refcnt);
+
+	mgmt_thread = zk_thread_create(NULL, 0, uzfs_zvol_mgmt_thread,
+	    NULL, 0, NULL, TS_RUN, 0, 0);
+	sleep(1);
+	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+	conn->conn_bufsiz = 0;
+	zinfo_destroy_cb(zinfo2);
+	EXPECT_EQ(0, !mgmt_thread);
+}
+
+/* Disconnect mgmt connection just after connect */
+TEST(MgmtThreadTest, ConnBreakFromTGTAfterConnect) {
+	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+	mgmt_thread_test_case(1);
+	EXPECT_EQ(conn->conn_state, CS_READ_VERSION);
+}
+
+/* Send wrong protocol version */
+TEST(MgmtThreadTest, WrongProtocolVersionFromTGT) {
+	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+	mgmt_thread_test_case(2);
+	EXPECT_EQ(conn->conn_state, CS_CLOSE);
+}
+
+/* Disconnect after sending header */
+TEST(MgmtThreadTest, DisconnAfterHdrSendFromTGT) {
+	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+	mgmt_thread_test_case(3);
+	EXPECT_EQ(conn->conn_state, CS_READ_PAYLOAD);
+}
+
+/* Volume name is too large to handle */
+TEST(MgmtThreadTest, VolumeNameTooLargeToHandle) {
+	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+	mgmt_thread_test_case(4);
+	EXPECT_EQ(status, ZVOL_OP_STATUS_FAILED);
+}
+
+/* Volume name is too small to handle */
+TEST(MgmtThreadTest, VolumeNameTooSmallToHandle) {
+	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+	mgmt_thread_test_case(5);
+	EXPECT_EQ(status, ZVOL_OP_STATUS_FAILED);
+}
+
+/* Send wrong volume name */
+TEST(MgmtThreadTest, WrongVolumeName) {
+	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+	mgmt_thread_test_case(6);
+	EXPECT_EQ(status, ZVOL_OP_STATUS_FAILED);
+}
+
+/* Handshake success case */
+TEST(MgmtThreadTest, HandShakeSuccess) {
+	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+	mgmt_thread_test_case(7);
+	EXPECT_EQ(status, ZVOL_OP_STATUS_OK);
+}
+
+/* Prepare for rebuild success case */
+TEST(MgmtThreadTest, PrePareForRebuildSuccess) {
+	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+	mgmt_thread_test_case(8);
+	EXPECT_EQ(status, ZVOL_OP_STATUS_OK);
+}
+
+/* Replica status success case */
+TEST(MgmtThreadTest, ReplicaStatusSuccess) {
+	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+	mgmt_thread_test_case(9);
+	EXPECT_EQ(status, ZVOL_OP_STATUS_OK);
+}
+
+/* Replica state success case */
+TEST(MgmtThreadTest, ReplicaStatsSuccess) {
+	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+	mgmt_thread_test_case(10);
+	EXPECT_EQ(status, ZVOL_OP_STATUS_OK);
+}
+
+/* Snapshot create failure, payload is too large to handle */
+TEST(MgmtThreadTest, SnapCreateFailurePayloadTooLargeToHandle) {
+	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+	mgmt_thread_test_case(11);
+	EXPECT_EQ(status, ZVOL_OP_STATUS_FAILED);
+}
+
+/* Snapshot create failure, payload is too small to handle */
+TEST(MgmtThreadTest, SnapCreateFailurePayloadTooSmallToHandle) {
+	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+	mgmt_thread_test_case(12);
+	EXPECT_EQ(status, ZVOL_OP_STATUS_FAILED);
+}
+
+/* Snapshot create failure, Wrong volume name */
+TEST(MgmtThreadTest, SnapCreateFailureWrongVolName) {
+	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+	mgmt_thread_test_case(13);
+	EXPECT_EQ(status, ZVOL_OP_STATUS_FAILED);
+}
+
+/* Snapshot create success */
+TEST(MgmtThreadTest, SnapCreateSuccess) {
+	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+	mgmt_thread_test_case(14);
+	EXPECT_EQ(status, ZVOL_OP_STATUS_OK);
+}
+
+/* Snapshot destroy success */
+TEST(MgmtThreadTest, SnapDestroySuccess) {
+	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+	mgmt_thread_test_case(15);
+	EXPECT_EQ(status, ZVOL_OP_STATUS_OK);
+}
+
+/* Volume resize failure, payload mismatch */
+TEST(MgmtThreadTest, ResizeFailurePayloadMismatch) {
+	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+	mgmt_thread_test_case(16);
+	EXPECT_EQ(status, ZVOL_OP_STATUS_FAILED);
+}
+
+/* Volume resize failure, wrong volume name */
+TEST(MgmtThreadTest, ResizeFailureWrongVolName) {
+	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+	mgmt_thread_test_case(17);
+	EXPECT_EQ(status, ZVOL_OP_STATUS_FAILED);
+}
+
+/* Volume resize success */
+TEST(MgmtThreadTest, ResizeSuccess) {
+	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+	mgmt_thread_test_case(18);
+	EXPECT_EQ(status, ZVOL_OP_STATUS_OK);
+}
+
+/* Rebuild failure, payload size too small to handle */
+TEST(MgmtThreadTest, RebuildFailurePayloadSizeZero) {
+	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+	mgmt_thread_test_case(19);
+	EXPECT_EQ(status, ZVOL_OP_STATUS_FAILED);
+}
+
+/* Rebuild failure, payload size mismatch */
+TEST(MgmtThreadTest, RebuildFailurePayloadSizeMismatch) {
+	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+	mgmt_thread_test_case(20);
+	EXPECT_EQ(status, ZVOL_OP_STATUS_FAILED);
+}
+
+/* Rebuild failure, wrong volume name */
+TEST(MgmtThreadTest, RebuildFailureWrongVolumeName) {
+	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+	mgmt_thread_test_case(21);
+	EXPECT_EQ(status, ZVOL_OP_STATUS_FAILED);
+}
+
+/* Rebuild failure, Null zv in zinfo */
+TEST(MgmtThreadTest, RebuildFailureNullZV) {
+	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+	mgmt_thread_test_case(22);
+	EXPECT_EQ(status, ZVOL_OP_STATUS_FAILED);
+}
+
+/* Rebuild failure, volume is not in REBUILD_INIT state */
+TEST(MgmtThreadTest, RebuildFailureWrongRebuildState) {
+	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+	mgmt_thread_test_case(23);
+	EXPECT_EQ(status, ZVOL_OP_STATUS_FAILED);
+}
+
+/* Rebuild success, Single replica success */
+TEST(MgmtThreadTest, RebuildFailureSingleReplica) {
+	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+	mgmt_thread_test_case(24);
+	EXPECT_EQ(status, ZVOL_OP_STATUS_OK);
 }

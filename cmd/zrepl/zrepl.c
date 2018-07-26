@@ -566,6 +566,9 @@ main(int argc, char **argv)
 		goto initialize_error;
 	}
 
+	SLIST_INIT(&uzfs_mgmt_conns);
+	mutex_init(&conn_list_mtx, NULL, MUTEX_DEFAULT, NULL);
+	mutex_init(&async_tasks_mtx, NULL, MUTEX_DEFAULT, NULL);
 	zrepl_svc_run();
 	zrepl_monitor_errors();
 

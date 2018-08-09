@@ -22,7 +22,12 @@
 #ifndef	_UZFS_REBUILDING_H
 #define	_UZFS_REBUILDING_H
 
-#define	IO_DIFF_SNAPNAME	".io_snap"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define	IO_DIFF_SNAPNAME		".io_snap"
+#define	REBUILD_SNAPSHOT_SNAPNAME	"rebuild_snap"
+#define	REBUILD_SNAPSHOT_CLONENAME	"rebuild_clone"
 
 /*
  * API to compare metadata
@@ -49,4 +54,13 @@ int uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *base_metadata,
  */
 int uzfs_get_nonoverlapping_ondisk_blks(zvol_state_t *zv, uint64_t offset,
     uint64_t len, blk_metadata_t *incoming_md, void **list);
+int
+uzfs_zvol_create_snaprebuild_clone(zvol_state_t *zv,
+    zvol_state_t **snap_zv);
+int
+uzfs_zvol_destroy_snaprebuild_clone(zvol_state_t *zv,
+    zvol_state_t *snap_zv);
+#ifdef __cplusplus
+}
+#endif
 #endif

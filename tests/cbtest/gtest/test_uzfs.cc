@@ -39,6 +39,8 @@
 #include <uzfs_mgmt.h>
 #include <sys/epoll.h>
 
+#include <uzfs_rebuilding.h>
+
 #include "gtest_utils.h"
 
 char *ds_name;
@@ -1156,4 +1158,54 @@ TEST(RebuildScanner, RebuildSuccess) {
 	EXPECT_EQ(ZVOL_STATUS_HEALTHY, uzfs_zvol_get_status(zinfo->zv));
 
 	memset(&zinfo->zv->rebuild_info, 0, sizeof (zvol_rebuild_info_t));
+}
+
+/* Volume name stored in zinfo is "pool1/vol1" */
+TEST(VolumeNameCompare, VolumeNameCompareTest) {
+
+	/* Pass NULL string for compare */
+	EXPECT_EQ(-1, uzfs_zvol_name_compare(zinfo, ""));
+
+	/* Pass wrong volname but smaller string size */
+	EXPECT_EQ(-1, uzfs_zvol_name_compare(zinfo, "vol"));
+
+	/* Pass wrong volname but larger string size */
+	EXPECT_EQ(-1, uzfs_zvol_name_compare(zinfo, "vol12345678910"));
+
+	/* Pass correct volname */
+	EXPECT_EQ(0, uzfs_zvol_name_compare(zinfo, "vol1"));
+}
+
+/* Create clone for snap rebuild */
+TEST(SnapRebuild, CloneCreate) {
+
+	zvol_state_t *snap_zv = NULL;
+	
+	/* Create snapshot and clone it */
+	EXPECT_EQ(0, uzfs_zvol_create_snaprebuild_clone(
+	    zinfo->zv, &snap_zv));
+	
+	EXPECT_EQ(0, uzfs_zvol_destroy_snaprebuild_clone(zinfo->zv,
+	    snap_zv));
+
+}
+
+/* Retry creating same clone, it should error out with EEXIST */
+TEST(SnapRebuild, CloneReCreateFailure) {
+
+	zvol_state_t *snap_zv = NULL;
+
+	/* Create snapshot and clone it */
+	EXPECT_EQ(0, uzfs_zvol_create_snaprebuild_clone(
+	    zinfo->zv, &snap_zv));
+
+	/* Release dataset and close it */
+	uzfs_close_dataset(snap_zv);
+
+	/* Try to create clone, this time it should error out */
+	EXPECT_EQ(EEXIST, uzfs_zvol_create_snaprebuild_clone(
+	    zinfo->zv, &snap_zv));
+
+	EXPECT_EQ(0, uzfs_zvol_destroy_snaprebuild_clone(zinfo->zv,
+	    snap_zv));
 }

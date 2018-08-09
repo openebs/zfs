@@ -316,3 +316,68 @@ exit:
 	*list = chunk_list;
 	return (count);
 }
+
+int
+uzfs_zvol_destroy_snaprebuild_clone(zvol_state_t *zv,
+    zvol_state_t *snap_zv)
+{
+	int ret = 0;
+	char *clonename;
+
+	clonename = kmem_asprintf("%s/%s_%s", spa_name(zv->zv_spa),
+	    strchr(zv->zv_name, '/') + 1,
+	    REBUILD_SNAPSHOT_CLONENAME);
+
+	/* Close dataset */
+	uzfs_close_dataset(snap_zv);
+
+	/* Destroy clone */
+	ret = dsl_destroy_head(clonename);
+
+	/* Destroy snapshot */
+	destroy_snapshot_zv(zv, REBUILD_SNAPSHOT_SNAPNAME);
+	strfree(clonename);
+
+	return (ret);
+}
+
+/*
+ * Create snapshot and create clone from that snapshot
+ */
+int
+uzfs_zvol_create_snaprebuild_clone(zvol_state_t *zv,
+    zvol_state_t **snap_zv)
+{
+	int ret = 0;
+	char *snapname = NULL;
+	char *clonename = NULL;
+
+	ret = get_snapshot_zv(zv, REBUILD_SNAPSHOT_SNAPNAME, snap_zv);
+	if (ret != 0) {
+		LOG_ERR("Failed to get info about %s@%s",
+		    zv->zv_name, REBUILD_SNAPSHOT_SNAPNAME);
+		strfree(snapname);
+		return (ret);
+	}
+
+	snapname = kmem_asprintf("%s@%s", zv->zv_name,
+	    REBUILD_SNAPSHOT_SNAPNAME);
+
+	clonename = kmem_asprintf("%s/%s_%s", spa_name(zv->zv_spa),
+	    strchr(zv->zv_name, '/') + 1,
+	    REBUILD_SNAPSHOT_CLONENAME);
+
+	ret = dmu_objset_clone(clonename, snapname);
+	if (ret == EEXIST) {
+		LOG_INFO("Volume:%s already has clone for snap rebuild",
+		    zv->zv_name);
+	} else if (ret != 0) {
+		uzfs_close_dataset(*snap_zv);
+		destroy_snapshot_zv(zv, REBUILD_SNAPSHOT_SNAPNAME);
+		*snap_zv = NULL;
+	}
+
+	strfree(snapname);
+	strfree(clonename);
+	return (ret);
+}

@@ -39,6 +39,8 @@
 #include <uzfs_mgmt.h>
 #include <sys/epoll.h>
 
+#include <uzfs_rebuilding.h>
+
 #include "gtest_utils.h"
 
 char *ds_name;
@@ -1642,4 +1644,37 @@ TEST(MgmtThreadTest, RebuildFailureSingleReplica) {
 	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
 	mgmt_thread_test_case(24);
 	EXPECT_EQ(status, ZVOL_OP_STATUS_OK);
+=======
+/* Create clone for snap rebuild */
+TEST(SnapRebuild, CloneCreate) {
+
+	zvol_state_t *snap_zv = NULL;
+	
+	/* Create snapshot and clone it */
+	EXPECT_EQ(0, uzfs_zvol_create_snaprebuild_clone(
+	    zinfo->zv, &snap_zv));
+	
+	EXPECT_EQ(0, uzfs_zvol_destroy_snaprebuild_clone(zinfo->zv,
+	    snap_zv));
+
+}
+
+/* Retry creating same clone, it should error out with EEXIST */
+TEST(SnapRebuild, CloneReCreateFailure) {
+
+	zvol_state_t *snap_zv = NULL;
+
+	/* Create snapshot and clone it */
+	EXPECT_EQ(0, uzfs_zvol_create_snaprebuild_clone(
+	    zinfo->zv, &snap_zv));
+
+	/* Release dataset and close it */
+	uzfs_close_dataset(snap_zv);
+
+	/* Try to create clone, this time it should error out */
+	EXPECT_EQ(EEXIST, uzfs_zvol_create_snaprebuild_clone(
+	    zinfo->zv, &snap_zv));
+
+	EXPECT_EQ(0, uzfs_zvol_destroy_snaprebuild_clone(zinfo->zv,
+	    snap_zv));
 }

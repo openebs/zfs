@@ -1644,7 +1644,8 @@ TEST(MgmtThreadTest, RebuildFailureSingleReplica) {
 	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
 	mgmt_thread_test_case(24);
 	EXPECT_EQ(status, ZVOL_OP_STATUS_OK);
-=======
+}
+
 /* Create clone for snap rebuild */
 TEST(SnapRebuild, CloneCreate) {
 

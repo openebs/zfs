@@ -141,6 +141,7 @@ typedef struct zvol_io_cmd_s {
 	zvol_io_hdr_t 	hdr;
 	void		*zv;
 	void		*buf;
+	uint64_t	buf_len;
 	metadata_desc_t	*metadata_desc;
 	int		conn;
 } zvol_io_cmd_t;

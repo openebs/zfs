@@ -62,6 +62,7 @@ zio_cmd_alloc(zvol_io_hdr_t *hdr, int fd)
 	    (hdr->opcode == ZVOL_OPCODE_WRITE) ||
 	    (hdr->opcode == ZVOL_OPCODE_OPEN)) {
 		zio_cmd->buf = kmem_zalloc(sizeof (char) * hdr->len, KM_SLEEP);
+		zio_cmd->buf_len = hdr->len;
 	}
 
 	zio_cmd->conn = fd;
@@ -81,7 +82,7 @@ zio_cmd_free(zvol_io_cmd_t **cmd)
 		case ZVOL_OPCODE_WRITE:
 		case ZVOL_OPCODE_OPEN:
 			if (zio_cmd->buf != NULL) {
-				kmem_free(zio_cmd->buf, zio_cmd->hdr.len);
+				kmem_free(zio_cmd->buf, zio_cmd->buf_len);
 			}
 			break;
 
@@ -260,11 +261,13 @@ uzfs_zvol_worker(void *arg)
 	read_metadata = hdr->flags & ZVOL_OP_FLAG_READ_METADATA;
 
 	/*
-	 * Why to delay offline activity ? anyway
-	 * we are not going to ACK these IOs
+	 * For rebuild case, do not free zio_cmd
 	 */
 	if (zinfo->state == ZVOL_INFO_STATE_OFFLINE) {
-		zio_cmd_free(&zio_cmd);
+		hdr->status = ZVOL_OP_STATUS_FAILED;
+		hdr->len = 0;
+		if (!(rebuild_cmd_req && (hdr->opcode == ZVOL_OPCODE_WRITE)))
+			zio_cmd_free(&zio_cmd);
 		goto drop_refcount;
 	}
 

@@ -250,6 +250,8 @@ exit:
 	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 
 	close(fd);
+	uzfs_zvol_set_status(zinfo->zv, ZVOL_STATUS_DEGRADED);
+	uzfs_zvol_set_rebuild_status(zinfo->zv, ZVOL_REBUILDING_INIT);
 	uzfs_zinfo_drop_refcnt(zinfo);
 	zk_thread_exit();
 }

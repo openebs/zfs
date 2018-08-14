@@ -533,12 +533,12 @@ main(int argc, char **argv)
 		}
 	}
 
-	if (getenv("CONFIG_LOAD_DISABLE") != NULL) {
-		LOG_INFO("disabled auto import (reading of zpool.cache)");
-		zfs_autoimport_disable = 1;
-	} else {
+	if (getenv("CONFIG_LOAD_ENABLE") != NULL) {
 		LOG_INFO("auto importing pools by reading zpool.cache files");
 		zfs_autoimport_disable = 0;
+	} else {
+		LOG_INFO("disabled auto import (reading of zpool.cache)");
+		zfs_autoimport_disable = 1;
 	}
 
 	zinfo_create_hook = &zinfo_create_cb;
@@ -549,6 +549,8 @@ main(int argc, char **argv)
 
 	io_receiver = uzfs_zvol_io_receiver;
 	rebuild_scanner = uzfs_zvol_rebuild_scanner;
+
+	SLIST_INIT(&uzfs_mgmt_conns);
 
 	rc = uzfs_init();
 	if (rc != 0) {

@@ -36,9 +36,12 @@
 #include <sys/dsl_destroy.h>
 #include <sys/dsl_dir.h>
 #include <sys/dmu_objset.h>
+#include <sys/dsl_prop.h>
 #include <string.h>
 #include <zrepl_prot.h>
 #include <uzfs_mgmt.h>
+#include <json-c/json_object.h>
+#include <libnvpair.h>
 
 #include <mgmt_conn.h>
 #include "data_conn.h"
@@ -556,6 +559,145 @@ uzfs_zvol_stats(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp, zvol_info_t *zinfo)
 }
 
 static void
+uzfs_append_snapshot_properties(nvlist_t *nv, struct json_object *robj,
+    char *prop_name)
+{
+	nvpair_t	*elem = NULL;
+	nvlist_t	*nvlist_value;
+	uint64_t value = 0;
+	char *str_value;
+
+	if (nv == NULL) {
+		return;
+	}
+
+	while ((elem = nvlist_next_nvpair(nv, elem)) != NULL) {
+		switch (nvpair_type(elem)) {
+		case DATA_TYPE_UINT64:
+			nvpair_value_uint64(elem, &value);
+			if (!prop_name) {
+				if (strcmp(nvpair_name(elem), "source"))
+					LOG_ERR("property name not set.. "
+					    "elem:%s val:%lu",
+					    nvpair_name(elem), value);
+			} else
+				json_object_object_add(robj, prop_name,
+				    json_object_new_int64(value));
+			break;
+
+		case DATA_TYPE_STRING:
+			nvpair_value_string(elem, &str_value);
+			if (!prop_name) {
+				if (strcmp(nvpair_name(elem), "source"))
+					LOG_ERR("property name not set.. "
+					    "elem:%s val:%lu",
+					    nvpair_name(elem), value);
+			} else
+				json_object_object_add(robj, prop_name,
+				    json_object_new_string(str_value));
+			break;
+
+		case DATA_TYPE_NVLIST:
+			(void) nvpair_value_nvlist(elem, &nvlist_value);
+			uzfs_append_snapshot_properties(nvlist_value, robj,
+			    nvpair_name(elem));
+			break;
+
+		default:
+			LOG_ERR("nvpair type : %d\n", nvpair_type(elem));
+		}
+		prop_name = NULL;
+	}
+}
+
+static int
+uzfs_zvol_fetch_snapshot_list(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
+    zvol_info_t *zinfo)
+{
+	zvol_io_hdr_t   hdr;
+	char *snapname;
+	boolean_t case_conflict;
+	uint64_t id, pos = 0;
+	int error = 0;
+	zvol_state_t *zv = (zvol_state_t *)zinfo->zv;
+	objset_t *os = zv->zv_objset;
+	struct zvol_snapshot_list *snap_list;
+	dsl_dataset_t *ds;
+	dsl_pool_t *dp = os->os_dsl_dataset->ds_dir->dd_pool;
+	objset_t *snap_os;
+	nvlist_t *nv;
+	struct json_object *jobj, *jarray, *jprop;
+	const char *json_string;
+	uint64_t total_len;
+
+	snapname = kmem_alloc(ZFS_MAX_DATASET_NAME_LEN, KM_SLEEP);
+	jarray = json_object_new_array();
+
+	while (error == 0) {
+		dsl_pool_config_enter(dmu_objset_pool(os), FTAG);
+		error = dmu_snapshot_list_next(os,
+		    ZFS_MAX_DATASET_NAME_LEN, snapname, &id, &pos,
+		    &case_conflict);
+		if (error) {
+			dsl_pool_config_exit(dmu_objset_pool(os), FTAG);
+			goto out;
+		}
+
+		jobj = json_object_new_object();
+		json_object_object_add(jobj, "name",
+		    json_object_new_string(snapname));
+
+		error = dsl_dataset_hold_obj(dp, id, FTAG, &ds);
+		if (error == 0) {
+			error = dmu_objset_from_ds(ds, &snap_os);
+			if (error == 0 &&
+			    !dsl_prop_get_all(snap_os, &nv)) {
+				dmu_objset_stats(snap_os, nv);
+				error = zvol_get_stats(snap_os, nv);
+				if (error)
+					LOG_ERR("Failed to get zvol "
+					    "stats err(%d)", error);
+			}
+
+			jprop = json_object_new_object();
+			uzfs_append_snapshot_properties(nv, jprop, NULL);
+			json_object_object_add(jobj, "properties", jprop);
+
+			dsl_dataset_rele(ds, FTAG);
+		}
+		json_object_array_add(jarray, jobj);
+
+		dsl_pool_config_exit(dmu_objset_pool(os), FTAG);
+	}
+
+out:
+	jobj = json_object_new_object();
+	json_object_object_add(jobj, "snapshot", jarray);
+
+	kmem_free(snapname, ZFS_MAX_DATASET_NAME_LEN);
+
+	json_string = json_object_to_json_string_ext(jobj,
+	    JSON_C_TO_STRING_PLAIN);
+	total_len = strlen(json_string);
+	snap_list = malloc(total_len + sizeof (*snap_list));
+	memset(snap_list, 0, total_len + sizeof (*snap_list));
+	snap_list->zvol_guid = zinfo->zvol_guid;
+	strncpy(snap_list->data, json_string, total_len);
+	json_object_put(jobj);
+
+
+	bzero(&hdr, sizeof (hdr));
+	hdr.version = REPLICA_VERSION;
+	hdr.opcode = hdrp->opcode;
+	hdr.io_seq = hdrp->io_seq;
+	hdr.len = total_len + sizeof (*snap_list);
+	hdr.status = ZVOL_OP_STATUS_OK;
+
+	return (reply_data(conn, &hdr, snap_list,
+	    total_len + sizeof (*snap_list)));
+}
+
+static void
 free_async_task(async_task_t *async_task)
 {
 	ASSERT(MUTEX_HELD(&async_tasks_mtx));
@@ -1017,6 +1159,32 @@ process_message(uzfs_mgmt_conn_t *conn)
 		    payload_size);
 		break;
 
+	case ZVOL_OPCODE_SNAP_LIST:
+		if (payload_size == 0 || payload_size > MAX_NAME_LEN) {
+			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
+			    hdrp->opcode, hdrp->io_seq);
+			break;
+		}
+		strlcpy(zvol_name, payload, payload_size);
+		zvol_name[payload_size] = '\0';
+		if ((zinfo = uzfs_zinfo_lookup(zvol_name)) == NULL) {
+			LOGERRCONN(conn, "Unknown zvol: %s", zvol_name);
+			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
+			    hdrp->opcode, hdrp->io_seq);
+			break;
+		}
+		if (zinfo->mgmt_conn != conn) {
+			uzfs_zinfo_drop_refcnt(zinfo);
+			LOGERRCONN(conn, "Target used invalid connection for "
+			    "zvol %s", zvol_name);
+			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
+			    hdrp->opcode, hdrp->io_seq);
+			break;
+		}
+		LOGCONN(conn, "Snaplist command for %s", zinfo->name);
+		rc = uzfs_zvol_fetch_snapshot_list(conn, hdrp, zinfo);
+		break;
+
 	default:
 		LOGERRCONN(conn, "Message with unknown OP code %d",
 		    hdrp->opcode);
@@ -1129,7 +1297,6 @@ uzfs_zvol_mgmt_thread(void *arg)
 	boolean_t		do_scan;
 	async_task_t		*async_task;
 
-	SLIST_INIT(&uzfs_mgmt_conns);
 	mutex_init(&conn_list_mtx, NULL, MUTEX_DEFAULT, NULL);
 	mutex_init(&async_tasks_mtx, NULL, MUTEX_DEFAULT, NULL);
 

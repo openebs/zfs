@@ -71,6 +71,7 @@ enum zvol_op_code {
 	ZVOL_OPCODE_REBUILD_COMPLETE,
 	ZVOL_OPCODE_SNAP_CREATE,
 	ZVOL_OPCODE_SNAP_DESTROY,
+	ZVOL_OPCODE_SNAP_LIST,
 	ZVOL_OPCODE_RESIZE,
 	ZVOL_OPCODE_STATS,
 } __attribute__((packed));
@@ -195,6 +196,12 @@ struct zvol_io_rw_hdr {
 	uint64_t	io_num;
 	uint64_t	len;
 } __attribute__((packed));
+
+struct zvol_snapshot_list {
+	uint64_t zvol_guid;
+	uint64_t data_len;
+	char data[0];
+};
 
 #ifdef	__cplusplus
 }

@@ -30,6 +30,25 @@ static void uzfs_zvol_io_ack_sender(void *arg);
 kthread_t	*conn_accpt_thread;
 kthread_t	*uzfs_timer_thread;
 kthread_t	*mgmt_conn_thread;
+
+/*
+ * (Re)Initializes zv's state variables.
+ * This fn need to be called to use zv across network disconnections.
+ * Lock protection and life of zv need to be managed by caller
+ */
+static void
+reinitialize_zv_state(zvol_state_t *zv)
+{
+	if (zv == NULL)
+		return;
+	zv->zv_metavolblocksize = 0;
+
+	uzfs_zvol_set_status(zv, ZVOL_STATUS_DEGRADED);
+	bzero(&zv->rebuild_info, sizeof (zvol_rebuild_info_t));
+
+	uzfs_zvol_set_rebuild_status(zv, ZVOL_REBUILDING_INIT);
+}
+
 /*
  * Process open request on data connection, the first message.
  *
@@ -45,9 +64,10 @@ open_zvol(int fd, zvol_info_t **zinfopp)
 	zvol_io_hdr_t	hdr;
 	zvol_op_open_data_t open_data;
 	zvol_info_t	*zinfo = NULL;
-	zvol_state_t	*zv;
+	zvol_state_t	*zv = NULL;
 	kthread_t	*thrd_info;
 	thread_args_t 	*thrd_arg;
+	int		rele_dataset_on_error = 0;
 
 	/*
 	 * If we don't know the version yet, be more careful when
@@ -78,14 +98,24 @@ open_zvol(int fd, zvol_info_t **zinfopp)
 		hdr.status = ZVOL_OP_STATUS_FAILED;
 		goto open_reply;
 	}
-	zv = zinfo->zv;
-	ASSERT3P(zv, !=, NULL);
-	if (zv->zv_metavolblocksize != 0 &&
-	    zv->zv_metavolblocksize != open_data.tgt_block_size) {
-		LOG_ERR("Conflicting block size");
+	if (zinfo->state != ZVOL_INFO_STATE_ONLINE) {
+		LOG_ERR("zvol %s is not online", open_data.volname);
 		hdr.status = ZVOL_OP_STATUS_FAILED;
 		goto open_reply;
 	}
+	zv = zinfo->zv;
+
+	if (zv->zv_metavolblocksize != 0) {
+		LOG_ERR("there might be already a data connection for %s",
+		    open_data.volname);
+		hdr.status = ZVOL_OP_STATUS_FAILED;
+		goto open_reply;
+	}
+
+	ASSERT3P(zv, !=, NULL);
+	ASSERT3P(zv->zv_status, ==, ZVOL_STATUS_DEGRADED);
+	ASSERT3P(zv->rebuild_info.zv_rebuild_status, ==, ZVOL_REBUILDING_INIT);
+
 	// validate block size (only one bit is set in the number)
 	if (open_data.tgt_block_size == 0 ||
 	    (open_data.tgt_block_size & (open_data.tgt_block_size - 1)) != 0) {
@@ -100,16 +130,21 @@ open_zvol(int fd, zvol_info_t **zinfopp)
 	 * in case that the target creates data connection directly without
 	 * getting the endpoint through mgmt connection first.
 	 */
-	if (zv->zv_objset == NULL && uzfs_hold_dataset(zv) != 0) {
-		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
-		LOG_ERR("Failed to hold zvol during open");
-		hdr.status = ZVOL_OP_STATUS_FAILED;
-		goto open_reply;
+	rele_dataset_on_error = 0;
+	if (zv->zv_objset == NULL) {
+		if (uzfs_hold_dataset(zv) != 0) {
+			(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
+			LOG_ERR("Failed to hold zvol during open");
+			hdr.status = ZVOL_OP_STATUS_FAILED;
+			goto open_reply;
+		}
+		rele_dataset_on_error = 1;
 	}
 	if (uzfs_update_metadata_granularity(zv,
 	    open_data.tgt_block_size) != 0) {
 		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
-		uzfs_rele_dataset(zv);
+		if (rele_dataset_on_error == 1)
+			uzfs_rele_dataset(zv);
 		LOG_ERR("Failed to set granularity of metadata");
 		hdr.status = ZVOL_OP_STATUS_FAILED;
 		goto open_reply;
@@ -149,6 +184,7 @@ open_reply:
 		LOG_ERR("Failed to send reply for open request");
 	if (hdr.status != ZVOL_OP_STATUS_OK) {
 		ASSERT3P(*zinfopp, ==, NULL);
+		reinitialize_zv_state(zv);
 		if (zinfo != NULL)
 			uzfs_zinfo_drop_refcnt(zinfo);
 		return (-1);
@@ -178,14 +214,12 @@ uzfs_zvol_io_receiver(void *arg)
 			    (zinfo->is_io_ack_sender_created))
 				goto exit;
 			shutdown(fd, SHUT_RDWR);
-			(void) close(fd);
-			LOG_INFO("Data connection closed");
-			zk_thread_exit();
-			return;
+			goto thread_exit;
 		}
 	}
 
-	LOG_INFO("Data connection associated with zvol %s", zinfo->name);
+	LOG_INFO("Data connection associated with zvol %s fd: %d",
+	    zinfo->name, fd);
 
 	while ((rc = uzfs_zvol_socket_read(fd, (char *)&hdr, sizeof (hdr))) ==
 	    0) {
@@ -249,8 +283,13 @@ exit:
 	}
 	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 
-	close(fd);
+	zinfo->io_ack_waiting = 0;
+
+	reinitialize_zv_state(zinfo->zv);
 	uzfs_zinfo_drop_refcnt(zinfo);
+thread_exit:
+	close(fd);
+	LOG_INFO("Data connection closed on fd: %d", fd);
 	zk_thread_exit();
 }
 
@@ -344,7 +383,6 @@ uzfs_zvol_io_ack_sender(void *arg)
 		while (1) {
 			if ((zinfo->state == ZVOL_INFO_STATE_OFFLINE) ||
 			    (zinfo->conn_closed == B_TRUE)) {
-				zinfo->is_io_ack_sender_created = B_FALSE;
 				(void) pthread_mutex_unlock(
 				    &zinfo->zinfo_mutex);
 				goto exit;
@@ -426,7 +464,8 @@ uzfs_zvol_io_ack_sender(void *arg)
 exit:
 	zinfo->zio_cmd_in_ack = NULL;
 	shutdown(fd, SHUT_RDWR);
-	LOG_INFO("Data connection for zvol %s closed", zinfo->name);
+	LOG_INFO("Data connection for zvol %s closed on fd: %d",
+	    zinfo->name, fd);
 
 	(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
 	while (!STAILQ_EMPTY(&zinfo->complete_queue)) {
@@ -434,6 +473,8 @@ exit:
 		STAILQ_REMOVE_HEAD(&zinfo->complete_queue, cmd_link);
 		zio_cmd_free(&zio_cmd);
 	}
+	zinfo->conn_closed = B_FALSE;
+	zinfo->is_io_ack_sender_created = B_FALSE;
 	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 	uzfs_zinfo_drop_refcnt(zinfo);
 

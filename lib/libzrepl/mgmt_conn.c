@@ -66,12 +66,15 @@
  */
 
 /* log wrappers which prefix log message by iscsi target address */
-#define	DBGCONN(c, fmt, ...)	LOG_DEBUG("[tgt %s:%u]: " fmt, \
-				(c)->conn_host, (c)->conn_port, ##__VA_ARGS__)
-#define	LOGCONN(c, fmt, ...)	LOG_INFO("[tgt %s:%u]: " fmt, \
-				(c)->conn_host, (c)->conn_port, ##__VA_ARGS__)
-#define	LOGERRCONN(c, fmt, ...)	LOG_ERR("[tgt %s:%u]: " fmt, \
-				(c)->conn_host, (c)->conn_port, ##__VA_ARGS__)
+#define	DBGCONN(c, fmt, ...)	LOG_DEBUG("[tgt %s:%u:%d]: " fmt, \
+				(c)->conn_host, (c)->conn_port, \
+				c->conn_fd, ##__VA_ARGS__)
+#define	LOGCONN(c, fmt, ...)	LOG_INFO("[tgt %s:%u:%d]: " fmt, \
+				(c)->conn_host, (c)->conn_port, \
+				c->conn_fd, ##__VA_ARGS__)
+#define	LOGERRCONN(c, fmt, ...)	LOG_ERR("[tgt %s:%u:%d]: " fmt, \
+				(c)->conn_host, (c)->conn_port, \
+				c->conn_fd, ##__VA_ARGS__)
 
 /* Max # of events from epoll processed at once */
 #define	MAX_EVENTS	10
@@ -186,6 +189,7 @@ connect_to_tgt(uzfs_mgmt_conn_t *conn)
 		    conn->conn_port);
 		return (-1);
 	}
+
 	return (sfd);
 }
 
@@ -1048,6 +1052,10 @@ move_to_next_state(uzfs_mgmt_conn_t *conn)
 	switch (conn->conn_state) {
 	case CS_CONNECT:
 		LOGCONN(conn, "Connected");
+		rc = set_socket_keepalive(conn->conn_fd);
+		if (rc != 0)
+			LOGERRCONN(conn, "Failed to set keepalive");
+		rc = 0;
 		/* Fall-through */
 	case CS_INIT:
 		DBGCONN(conn, "Reading version..");
@@ -1128,6 +1136,7 @@ uzfs_zvol_mgmt_thread(void *arg)
 	int			nfds, i, rc;
 	boolean_t		do_scan;
 	async_task_t		*async_task;
+	struct timespec diff_time, now, last_time;
 
 	SLIST_INIT(&uzfs_mgmt_conns);
 	mutex_init(&conn_list_mtx, NULL, MUTEX_DEFAULT, NULL);
@@ -1151,6 +1160,7 @@ uzfs_zvol_mgmt_thread(void *arg)
 	}
 
 	prctl(PR_SET_NAME, "mgmt_conn", 0, 0, 0);
+	clock_gettime(CLOCK_MONOTONIC, &last_time);
 
 	/*
 	 * The only reason to break from this loop is a failure to update FDs
@@ -1255,10 +1265,17 @@ uzfs_zvol_mgmt_thread(void *arg)
 		 * Scan the list either if signalled or timed out waiting
 		 * for event
 		 */
+		if (nfds != 0 && !do_scan) {
+			timesdiff(CLOCK_MONOTONIC, last_time, now, diff_time);
+			if (diff_time.tv_sec >= (RECONNECT_DELAY / 2))
+				do_scan = 1;
+		}
+
 		if (nfds == 0 || do_scan) {
 			if (scan_conn_list() != 0) {
 				goto exit;
 			}
+			clock_gettime(CLOCK_MONOTONIC, &last_time);
 		}
 	}
 

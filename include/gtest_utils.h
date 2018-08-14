@@ -122,7 +122,7 @@ public:
 			m_fd = -1;
 		}
 	}
-	int fd();
+	int &fd();
 	SocketFd& operator=(int other);
 	void graceful_close();
 	bool opened();

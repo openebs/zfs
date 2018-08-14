@@ -8,6 +8,9 @@
 #include <uzfs_mgmt.h>
 #include <uzfs_zap.h>
 #include <uzfs_io.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 
 #define	ZVOL_THREAD_STACKSIZE (2 * 1024 * 1024)
 
@@ -64,6 +67,53 @@ zrepl_log(enum zrepl_log_level lvl, const char *fmt, ...)
 }
 
 int
+set_socket_keepalive(int sfd)
+{
+	int val = 1;
+	int ret = 0;
+	int max_idle_time = 5;
+	int max_try = 5;
+	int probe_interval = 5;
+
+	if (sfd < 3) {
+		LOG_ERR("can't set keepalive on fd(%d)\n", sfd);
+		goto out;
+	}
+
+	if (setsockopt(sfd, SOL_SOCKET, SO_KEEPALIVE, &val, sizeof (val)) < 0) {
+		LOG_ERR("Failed to set SO_KEEPALIVE for fd(%d) err(%d)\n",
+		    sfd, errno);
+		ret = errno;
+		goto out;
+	}
+
+	if (setsockopt(sfd, SOL_TCP, TCP_KEEPCNT, &max_try, sizeof (max_try))) {
+		LOG_ERR("Failed to set TCP_KEEPCNT for fd(%d) err(%d)\n",
+		    sfd, errno);
+		ret = errno;
+		goto out;
+	}
+
+	if (setsockopt(sfd, SOL_TCP, TCP_KEEPIDLE, &max_idle_time,
+	    sizeof (max_idle_time))) {
+		LOG_ERR("Failed to set TCP_KEEPIDLE for fd(%d) err(%d)\n",
+		    sfd, errno);
+		ret = errno;
+		goto out;
+	}
+
+	if (setsockopt(sfd, SOL_TCP, TCP_KEEPINTVL, &probe_interval,
+	    sizeof (probe_interval))) {
+		LOG_ERR("Failed to set TCP_KEEPINTVL for fd(%d) err(%d)\n",
+		    sfd, errno);
+		ret = errno;
+	}
+
+out:
+	return (ret);
+}
+
+int
 create_and_bind(const char *port, int bind_needed, boolean_t nonblock)
 {
 	int rc = 0;
@@ -108,6 +158,7 @@ create_and_bind(const char *port, int bind_needed, boolean_t nonblock)
 		}
 
 		close(sfd);
+		sfd = -1;
 	}
 
 	if (result != NULL)
@@ -291,6 +342,7 @@ uzfs_zinfo_init(void *zv, const char *ds_name, nvlist_t *create_props)
 
 	strlcpy(zinfo->name, ds_name, MAXNAMELEN);
 	zinfo->zv = zv;
+	zinfo->state = ZVOL_INFO_STATE_ONLINE;
 	/* iSCSI target will overwrite this value during handshake */
 	zinfo->update_ionum_interval = 6000;
 	/* Update zvol list */

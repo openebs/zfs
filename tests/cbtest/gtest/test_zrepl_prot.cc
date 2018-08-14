@@ -111,45 +111,55 @@ static void do_handshake(std::string zvol_name, std::string &host,
  * NOTE: Return value must be void otherwise we could not use asserts
  * (pecularity of gtest framework).
  */
-static void do_data_connection(int data_fd, std::string host, uint16_t port,
+static void do_data_connection(int &data_fd, std::string host, uint16_t port,
     std::string zvol_name, int bs=4096, int timeout=120,
     int res=ZVOL_OP_STATUS_OK) {
 	struct sockaddr_in addr;
 	zvol_io_hdr_t hdr_in, hdr_out = {0};
 	zvol_op_open_data_t open_data;
 	int rc;
+	char val;
+	int fd;
 
 	memset(&addr, 0, sizeof (addr));
 	addr.sin_family = AF_INET;
 	addr.sin_port = htons(port);
 	rc = inet_pton(AF_INET, host.c_str(), &addr.sin_addr);
 	ASSERT_TRUE(rc > 0);
-	rc = connect(data_fd, (struct sockaddr *)&addr, sizeof (addr));
+retry:
+	fd = socket(AF_INET, SOCK_STREAM, 0);
+	rc = connect(fd, (struct sockaddr *)&addr, sizeof (addr));
 	if (rc != 0) {
 		perror("connect");
 		ASSERT_EQ(errno, 0);
 	}
-
 	hdr_out.version = REPLICA_VERSION;
 	hdr_out.opcode = ZVOL_OPCODE_OPEN;
 	hdr_out.status = ZVOL_OP_STATUS_OK;
 	hdr_out.len = sizeof (open_data);
 
-	rc = write(data_fd, &hdr_out, sizeof (hdr_out));
+	rc = write(fd, &hdr_out, sizeof (hdr_out));
 	ASSERT_EQ(rc, sizeof (hdr_out));
 
 	open_data.tgt_block_size = bs;
 	open_data.timeout = timeout;
 	GtestUtils::strlcpy(open_data.volname, zvol_name.c_str(),
 	    sizeof (open_data.volname));
-	rc = write(data_fd, &open_data, hdr_out.len);
+	rc = write(fd, &open_data, hdr_out.len);
 
-	rc = read(data_fd, &hdr_in, sizeof (hdr_in));
+	rc = read(fd, &hdr_in, sizeof (hdr_in));
 	ASSERT_EQ(rc, sizeof (hdr_in));
 	ASSERT_EQ(hdr_in.version, REPLICA_VERSION);
 	ASSERT_EQ(hdr_in.opcode, ZVOL_OPCODE_OPEN);
 	ASSERT_EQ(hdr_in.len, 0);
-	ASSERT_EQ(hdr_in.status, res);
+	if (hdr_in.status != res) {
+		sleep(2);
+		shutdown(fd, SHUT_WR);
+		rc = read(fd, &val, sizeof (val));
+		close(fd);
+		goto retry;
+	}
+	data_fd = fd;
 }
 
 /*
@@ -691,8 +701,8 @@ protected:
 
 		m_zrepl->start();
 		m_pool1->create();
-		m_pool1->createZvol("vol1", "-o io.openebs:targetip=127.0.0.1:6060");
-		m_zvol_name1 = m_pool1->getZvolName("vol1");
+		m_pool1->createZvol("ivol1", "-o io.openebs:targetip=127.0.0.1:6060");
+		m_zvol_name1 = m_pool1->getZvolName("ivol1");
 
 		rc = target1.listen();
 		ASSERT_GE(rc, 0);
@@ -713,7 +723,7 @@ protected:
 
 		m_pool2->create();
 		m_pool2->createZvol("vol1", "-o io.openebs:targetip=127.0.0.1:12345");
-		m_zvol_name2 = m_pool1->getZvolName("vol1");
+		m_zvol_name2 = m_pool1->getZvolName("ivol1");
 
 		rc = target2.listen(12345);
 		ASSERT_GE(rc, 0);
@@ -729,7 +739,7 @@ protected:
 	}
 
 	static void TearDownTestCase() {
-		m_pool1->destroyZvol("vol1");
+		m_pool1->destroyZvol("ivol1");
 		m_pool2->destroyZvol("vol1");
 		delete m_pool1;
 		delete m_pool2;
@@ -1025,19 +1035,6 @@ TEST_F(ZreplDataTest, ReadMetaDataFlag) {
 	/* write a data block with known ionum */
 	write_data_and_verify_resp(m_datasock1.fd(), m_ioseq1, 0, 654);
 
-	/* read the block without ZVOL_OP_FLAG_READ_METADATA flag */
-	read_data_start(m_datasock1.fd(), m_ioseq1, 0, sizeof (buf), &hdr_in, 0);
-	ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
-	ASSERT_EQ(hdr_in.len, sizeof (read_hdr) + sizeof (buf));
-	rc = read(m_datasock1.fd(), &read_hdr, sizeof (read_hdr));
-	ASSERT_ERRNO("read", rc >= 0);
-	ASSERT_EQ(rc, sizeof (read_hdr));
-	ASSERT_EQ(read_hdr.io_num, 0);
-	ASSERT_EQ(read_hdr.len, sizeof (buf));
-	rc = read(m_datasock1.fd(), buf, sizeof (buf));
-	ASSERT_ERRNO("read", rc >= 0);
-	ASSERT_EQ(rc, sizeof (buf));
-
 	/* read the block with ZVOL_OP_FLAG_READ_METADATA flag */
 	read_data_start(m_datasock1.fd(), m_ioseq1, 0, sizeof (buf), &hdr_in, ZVOL_OP_FLAG_READ_METADATA);
 	ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
@@ -1198,6 +1195,13 @@ TEST(Misc, ZreplCheckpointInterval) {
 	uint16_t port_slow, port_fast;
 	uint64_t ionum_slow, ionum_fast;
 
+	zvol_io_hdr_t hdr_in;
+	struct zvol_io_rw_hdr read_hdr;
+	struct zvol_io_rw_hdr write_hdr;
+	struct zrepl_status_ack status;
+	struct mgmt_ack mgmt_ack;
+	char buf[4096];
+
 	zrepl.start();
 	pool.create();
 	pool.createZvol("slow", "-o io.openebs:targetip=127.0.0.1:6060");
@@ -1216,16 +1220,31 @@ TEST(Misc, ZreplCheckpointInterval) {
 	    control_fd, ZVOL_OP_STATUS_OK);
 	ASSERT_NE(ionum_slow, 888);
 	ASSERT_NE(ionum_fast, 888);
-	transition_zvol_to_online(ioseq, control_fd, zvol_name_slow);
-	transition_zvol_to_online(ioseq, control_fd, zvol_name_fast);
 
 	do_data_connection(datasock_slow.fd(), host_slow, port_slow, zvol_name_slow,
 	    4096, 1000);
 	do_data_connection(datasock_fast.fd(), host_fast, port_fast, zvol_name_fast,
 	    4096, 2);
 
+	transition_zvol_to_online(ioseq, control_fd, zvol_name_slow);
+	transition_zvol_to_online(ioseq, control_fd, zvol_name_fast);
+
 	write_data_and_verify_resp(datasock_slow.fd(), ioseq, 0, 888);
 	write_data_and_verify_resp(datasock_fast.fd(), ioseq, 0, 888);
+
+	/* read the block without ZVOL_OP_FLAG_READ_METADATA flag in healthy state */
+	read_data_start(datasock_slow.fd(), ioseq, 0, sizeof (buf), &hdr_in, 0);
+	ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
+	ASSERT_EQ(hdr_in.len, sizeof (read_hdr) + sizeof (buf));
+	rc = read(datasock_slow.fd(), &read_hdr, sizeof (read_hdr));
+	ASSERT_ERRNO("read", rc >= 0);
+	ASSERT_EQ(rc, sizeof (read_hdr));
+	ASSERT_EQ(read_hdr.io_num, 0);
+	ASSERT_EQ(read_hdr.len, sizeof (buf));
+	rc = read(datasock_slow.fd(), buf, sizeof (buf));
+	ASSERT_ERRNO("read", rc >= 0);
+	ASSERT_EQ(rc, sizeof (buf));
+
 	sleep(10);	/* Due to spa sync interval, sleep for 10 sec is required here */
 
 	zrepl.kill();

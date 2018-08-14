@@ -193,7 +193,7 @@ GtestUtils::strlcpy(char *dst, const char *src, size_t len)
         return (slen);
 }
 
-int
+int &
 GtestUtils::SocketFd::fd()
 {
 	return m_fd;

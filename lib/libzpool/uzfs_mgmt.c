@@ -306,7 +306,7 @@ get_controller_ip(objset_t *os, char *buf, int len)
 
 /* owns objset with name 'ds_name' in pool 'spa' */
 static int
-uzfs_own_dataset(const char *ds_name, zvol_state_t **z)
+uzfs_dataset_zv_create(const char *ds_name, zvol_state_t **z)
 {
 	zvol_state_t *zv = NULL;
 	int error = -1;
@@ -392,6 +392,7 @@ free_ret:
 
 	/* On boot, mark zvol status health */
 	uzfs_zvol_set_status(zv, ZVOL_STATUS_DEGRADED);
+	uzfs_zvol_set_rebuild_status(zv, ZVOL_REBUILDING_INIT);
 
 	if (spa_writeable(dmu_objset_spa(os))) {
 //		if (zil_replay_disable)
@@ -420,7 +421,7 @@ uzfs_open_dataset(spa_t *spa, const char *ds_name, zvol_state_t **z)
 		return (error);
 	(void) snprintf(name, sizeof (name), "%s/%s", spa_name(spa), ds_name);
 
-	error = uzfs_own_dataset(name, z);
+	error = uzfs_dataset_zv_create(name, z);
 	return (error);
 }
 
@@ -474,7 +475,7 @@ uzfs_zvol_create_cb(const char *ds_name, void *arg)
 		return (0);
 	}
 
-	error = uzfs_own_dataset(ds_name, &zv);
+	error = uzfs_dataset_zv_create(ds_name, &zv);
 	if (error) {
 		/* happens normally for all non-zvol-type datasets */
 		return (error);
@@ -541,6 +542,9 @@ uzfs_rele_dataset(zvol_state_t *zv)
 		dnode_rele(zv->zv_dn, zv);
 	if (zv->zv_objset != NULL)
 		dmu_objset_disown(zv->zv_objset, zv);
+	zv->zv_zilog = NULL;
+	zv->zv_dn = NULL;
+	zv->zv_objset = NULL;
 }
 
 /* disowns, closes dataset */

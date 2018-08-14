@@ -62,6 +62,7 @@ zio_cmd_alloc(zvol_io_hdr_t *hdr, int fd)
 	    (hdr->opcode == ZVOL_OPCODE_WRITE) ||
 	    (hdr->opcode == ZVOL_OPCODE_OPEN)) {
 		zio_cmd->buf = kmem_zalloc(sizeof (char) * hdr->len, KM_SLEEP);
+		zio_cmd->buf_len = hdr->len;
 	}
 
 	zio_cmd->conn = fd;
@@ -81,7 +82,7 @@ zio_cmd_free(zvol_io_cmd_t **cmd)
 		case ZVOL_OPCODE_WRITE:
 		case ZVOL_OPCODE_OPEN:
 			if (zio_cmd->buf != NULL) {
-				kmem_free(zio_cmd->buf, zio_cmd->hdr.len);
+				kmem_free(zio_cmd->buf, zio_cmd->buf_len);
 			}
 			break;
 
@@ -260,11 +261,13 @@ uzfs_zvol_worker(void *arg)
 	read_metadata = hdr->flags & ZVOL_OP_FLAG_READ_METADATA;
 
 	/*
-	 * Why to delay offline activity ? anyway
-	 * we are not going to ACK these IOs
+	 * For rebuild case, do not free zio_cmd
 	 */
 	if (zinfo->state == ZVOL_INFO_STATE_OFFLINE) {
-		zio_cmd_free(&zio_cmd);
+		hdr->status = ZVOL_OP_STATUS_FAILED;
+		hdr->len = 0;
+		if (!(rebuild_cmd_req && (hdr->opcode == ZVOL_OPCODE_WRITE)))
+			zio_cmd_free(&zio_cmd);
 		goto drop_refcount;
 	}
 
@@ -374,6 +377,11 @@ uzfs_zvol_rebuild_dw_replica(void *arg)
 		perror("connect");
 		goto exit;
 	}
+
+	rc = set_socket_keepalive(sfd);
+	if (rc != 0)
+		LOG_ERR("keepalive errored on connected rebuild fd %d", sfd);
+	rc = 0;
 
 	/* Set state in-progess state now */
 	checkpointed_ionum = uzfs_zvol_get_last_committed_io_no(zinfo->zv);
@@ -615,6 +623,7 @@ remove_pending_cmds_to_ack(int fd, zvol_info_t *zinfo)
 	while ((zinfo->zio_cmd_in_ack != NULL) &&
 	    (((zvol_io_cmd_t *)(zinfo->zio_cmd_in_ack))->conn == fd)) {
 		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
+		LOG_INFO("Waiting for IO to send off on vol %s", zinfo->name);
 		sleep(1);
 		(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
 	}
@@ -774,6 +783,13 @@ uzfs_zvol_io_conn_acceptor(void *arg)
 			kmem_free(hbuf, NI_MAXHOST);
 			kmem_free(sbuf, NI_MAXSERV);
 #endif
+
+			rc = set_socket_keepalive(new_fd);
+			if (rc != 0)
+				LOG_ERR("Failed to set keepalive on "
+				    "accepted fd %d", new_fd);
+			rc = 0;
+
 			if (events[i].data.fd == io_sfd) {
 				LOG_INFO("New data connection");
 				thrd_info = zk_thread_create(NULL, 0,

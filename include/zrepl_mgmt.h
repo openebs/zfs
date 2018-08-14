@@ -99,14 +99,10 @@ typedef struct zvol_info_s {
 	pthread_mutex_t	zinfo_mutex;
 	pthread_cond_t	io_ack_cond;
 
-	pthread_t 	io_receiver_thread;
-	pthread_t 	io_ack_sender_thread;
-
 	/* All cmds after execution will go here for ack */
 	STAILQ_HEAD(, zvol_io_cmd_s)	complete_queue;
 
 	uint8_t		io_ack_waiting;
-	uint8_t		error_count;
 
 	/* Will be used to singal ack-sender to exit */
 	uint8_t		conn_closed;
@@ -141,6 +137,7 @@ typedef struct zvol_io_cmd_s {
 	zvol_io_hdr_t 	hdr;
 	void		*zv;
 	void		*buf;
+	uint64_t	buf_len;
 	metadata_desc_t	*metadata_desc;
 	int		conn;
 } zvol_io_cmd_t;
@@ -158,6 +155,7 @@ extern int uzfs_zinfo_destroy(const char *ds_name, spa_t *spa);
 uint64_t uzfs_zvol_get_last_committed_io_no(zvol_state_t *zv);
 void uzfs_zvol_store_last_committed_io_no(zvol_state_t *zv,
     uint64_t io_seq);
+extern int set_socket_keepalive(int sfd);
 extern int create_and_bind(const char *port, int bind_needed,
     boolean_t nonblocking);
 int uzfs_zvol_name_compare(zvol_info_t *zv, const char *name);

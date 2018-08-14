@@ -356,7 +356,6 @@ uzfs_zvol_create_snaprebuild_clone(zvol_state_t *zv,
 	if (ret != 0) {
 		LOG_ERR("Failed to get info about %s@%s",
 		    zv->zv_name, REBUILD_SNAPSHOT_SNAPNAME);
-		strfree(snapname);
 		return (ret);
 	}
 

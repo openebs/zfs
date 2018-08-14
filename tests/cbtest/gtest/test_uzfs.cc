@@ -1209,3 +1209,26 @@ TEST(SnapRebuild, CloneReCreateFailure) {
 	EXPECT_EQ(0, uzfs_zvol_destroy_snaprebuild_clone(zinfo->zv,
 	    snap_zv));
 }
+
+uint64_t snapshot_io = 1000;
+char *snap = (char *)"hello_snap";
+/* Snap create */
+TEST(SnapCreate, SnapCreate) {
+
+	/* Create snapshot */
+	EXPECT_EQ(0, uzfs_zvol_create_snapshot_update_zap(zinfo,
+	    snap, snapshot_io));
+}
+
+/* Retrieve Snap dataset and IO number */
+TEST(SnapCreate, SnapRetrieve) {
+
+	uint64_t io = 0;
+	zvol_state_t *snap_zv = NULL;
+
+	/* Create snapshot */
+	EXPECT_EQ(0, uzfs_zvol_get_snap_dataset_with_io(zinfo,
+	    snap, &io, &snap_zv));
+	
+	EXPECT_EQ(snapshot_io -1, io);
+}

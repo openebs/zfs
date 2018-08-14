@@ -609,6 +609,11 @@ uzfs_zvol_create_snapshot_update_zap(zvol_info_t *zinfo,
 
 	mutex_enter(&zvol_list_mutex);
 
+	if (uzfs_zvol_get_status(zinfo->zv) != ZVOL_STATUS_HEALTHY) {
+		mutex_exit(&zvol_list_mutex);
+		return (ret = -1);
+	}
+
 	uzfs_zvol_store_last_committed_io_no(zinfo->zv,
 	    snapshot_io -1);
 	zinfo->checkpointed_ionum = zinfo->running_ionum =

@@ -1212,8 +1212,31 @@ TEST(SnapRebuild, CloneReCreateFailure) {
 
 uint64_t snapshot_io = 1000;
 char *snap = (char *)"hello_snap";
-/* Snap create */
-TEST(SnapCreate, SnapCreate) {
+
+/* Snap create failure */
+TEST(SnapCreate, SnapCreateFailure) {
+
+	/*
+	 * By default volume state is marked downgraded
+	 * so updation of ZAP attribute would fail
+	 */
+	uzfs_zvol_set_rebuild_status(zinfo->zv, ZVOL_REBUILDING_INIT);
+	uzfs_zvol_set_status(zinfo->zv, ZVOL_STATUS_DEGRADED);
+
+	/* Create snapshot */
+	EXPECT_EQ(-1, uzfs_zvol_create_snapshot_update_zap(zinfo,
+	    snap, snapshot_io));
+}
+
+/* Snap create success */
+TEST(SnapCreate, SnapCreateSuccess) {
+
+	/*
+	 * Set volume state to healthy so that we can
+	 * upsate ZAP attribute and take snapshot
+	 */
+	uzfs_zvol_set_rebuild_status(zinfo->zv, ZVOL_REBUILDING_DONE);
+	uzfs_zvol_set_status(zinfo->zv, ZVOL_STATUS_HEALTHY);
 
 	/* Create snapshot */
 	EXPECT_EQ(0, uzfs_zvol_create_snapshot_update_zap(zinfo,

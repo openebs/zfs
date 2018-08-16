@@ -1210,8 +1210,8 @@ TEST(SnapRebuild, CloneReCreateFailure) {
 	    snap_zv));
 }
 
-uint64_t snapshot_io = 1000;
-char *snap = (char *)"hello_snap";
+uint64_t snapshot_io_num = 1000;
+char *snapname = (char *)"hello_snap";
 
 /* Snap create failure */
 TEST(SnapCreate, SnapCreateFailure) {
@@ -1223,9 +1223,10 @@ TEST(SnapCreate, SnapCreateFailure) {
 	uzfs_zvol_set_rebuild_status(zinfo->zv, ZVOL_REBUILDING_INIT);
 	uzfs_zvol_set_status(zinfo->zv, ZVOL_STATUS_DEGRADED);
 
+	zinfo->running_ionum = snapshot_io_num -1;
 	/* Create snapshot */
 	EXPECT_EQ(-1, uzfs_zvol_create_snapshot_update_zap(zinfo,
-	    snap, snapshot_io));
+	    snapname, snapshot_io_num));
 }
 
 /* Snap create success */
@@ -1238,9 +1239,10 @@ TEST(SnapCreate, SnapCreateSuccess) {
 	uzfs_zvol_set_rebuild_status(zinfo->zv, ZVOL_REBUILDING_DONE);
 	uzfs_zvol_set_status(zinfo->zv, ZVOL_STATUS_HEALTHY);
 
+	zinfo->running_ionum = snapshot_io_num -1;
 	/* Create snapshot */
 	EXPECT_EQ(0, uzfs_zvol_create_snapshot_update_zap(zinfo,
-	    snap, snapshot_io));
+	    snapname, snapshot_io_num));
 }
 
 /* Retrieve Snap dataset and IO number */
@@ -1251,7 +1253,7 @@ TEST(SnapCreate, SnapRetrieve) {
 
 	/* Create snapshot */
 	EXPECT_EQ(0, uzfs_zvol_get_snap_dataset_with_io(zinfo,
-	    snap, &io, &snap_zv));
+	    snapname, &io, &snap_zv));
 	
-	EXPECT_EQ(snapshot_io -1, io);
+	EXPECT_EQ(snapshot_io_num -1, io);
 }

@@ -1199,10 +1199,6 @@ uzfs_zvol_mgmt_thread(void *arg)
 	async_task_t		*async_task;
 	struct timespec diff_time, now, last_time;
 
-	SLIST_INIT(&uzfs_mgmt_conns);
-	mutex_init(&conn_list_mtx, NULL, MUTEX_DEFAULT, NULL);
-	mutex_init(&async_tasks_mtx, NULL, MUTEX_DEFAULT, NULL);
-
 	mgmt_eventfd = eventfd(0, EFD_NONBLOCK);
 	if (mgmt_eventfd < 0) {
 		perror("eventfd");

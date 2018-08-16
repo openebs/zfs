@@ -68,6 +68,18 @@ extern kmutex_t zvol_list_mutex;
 extern struct zvol_list zvol_list;
 struct zvol_io_cmd_s;
 
+#if DEBUG
+typedef struct inject_delay_s {
+	int helping_replica_rebuild_step;
+} inject_delay_t;
+
+typedef struct inject_error_s {
+	inject_delay_t delay;
+} inject_error_t;
+
+extern inject_error_t inject_error;
+#endif
+
 typedef enum zvol_info_state_e {
 	ZVOL_INFO_STATE_ONLINE,
 	ZVOL_INFO_STATE_OFFLINE,
@@ -102,6 +114,9 @@ typedef struct zvol_info_s {
 	/* All cmds after execution will go here for ack */
 	STAILQ_HEAD(, zvol_io_cmd_s)	complete_queue;
 
+	/* fds related to this zinfo on which threads are waiting */
+	STAILQ_HEAD(, zinfo_fd_s)	fd_list;
+
 	uint8_t		io_ack_waiting;
 
 	/* Will be used to singal ack-sender to exit */
@@ -109,7 +124,10 @@ typedef struct zvol_info_s {
 	/* Pointer to mgmt connection for this zinfo */
 	void		*mgmt_conn;
 
-	/* Perfromance counter */
+	/* ongoing command that is being worked on to ack to its sender */
+	void		*zio_cmd_in_ack;
+
+	/* Performance counter */
 
 	/* Debug counters */
 	uint64_t 	read_req_received_cnt;
@@ -118,9 +136,6 @@ typedef struct zvol_info_s {
 	uint64_t 	read_req_ack_cnt;
 	uint64_t	write_req_ack_cnt;
 	uint64_t	sync_req_ack_cnt;
-
-	/* ongoing command that is being worked on to ack to its sender */
-	void		*zio_cmd_in_ack;
 } zvol_info_t;
 
 typedef struct thread_args_s {
@@ -131,6 +146,11 @@ typedef struct thread_args_s {
 
 extern void (*zinfo_create_hook)(zvol_info_t *, nvlist_t *);
 extern void (*zinfo_destroy_hook)(zvol_info_t *);
+
+typedef struct zinfo_fd_s {
+	STAILQ_ENTRY(zinfo_fd_s) fd_link;
+	int fd;
+} zinfo_fd_t;
 
 typedef struct zvol_io_cmd_s {
 	STAILQ_ENTRY(zvol_io_cmd_s) cmd_link;
@@ -159,6 +179,7 @@ extern int set_socket_keepalive(int sfd);
 extern int create_and_bind(const char *port, int bind_needed,
     boolean_t nonblocking);
 int uzfs_zvol_name_compare(zvol_info_t *zv, const char *name);
+void shutdown_fds_related_to_zinfo(zvol_info_t *zinfo);
 
 /*
  * API to drop refcnt on zinfo. If refcnt

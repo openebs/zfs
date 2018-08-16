@@ -181,9 +181,31 @@ uzfs_insert_zinfo_list(zvol_info_t *zinfo)
 	(void) mutex_exit(&zvol_list_mutex);
 }
 
+void
+shutdown_fds_related_to_zinfo(zvol_info_t *zinfo)
+{
+	zinfo_fd_t *zinfo_fd = NULL;
+
+	(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
+	while (1) {
+		STAILQ_FOREACH(zinfo_fd, &zinfo->fd_list, fd_link) {
+			LOG_INFO("shutting down %d on %s", zinfo_fd->fd,
+			    zinfo->name);
+			shutdown(zinfo_fd->fd, SHUT_RDWR);
+		}
+		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
+		sleep(1);
+		(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
+		if (STAILQ_EMPTY(&zinfo->fd_list))
+			break;
+	}
+	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
+}
+
 static void
 uzfs_mark_offline_and_free_zinfo(zvol_info_t *zinfo)
 {
+	shutdown_fds_related_to_zinfo(zinfo);
 	(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
 	zinfo->state = ZVOL_INFO_STATE_OFFLINE;
 	/* Send signal to ack_sender thread about offline */
@@ -338,6 +360,7 @@ uzfs_zinfo_init(void *zv, const char *ds_name, nvlist_t *create_props)
 	    TASKQ_PREPOPULATE | TASKQ_DYNAMIC);
 
 	STAILQ_INIT(&zinfo->complete_queue);
+	STAILQ_INIT(&zinfo->fd_list);
 	uzfs_zinfo_init_mutex(zinfo);
 
 	strlcpy(zinfo->name, ds_name, MAXNAMELEN);

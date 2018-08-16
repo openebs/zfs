@@ -397,7 +397,7 @@ void
 uzfs_zvol_set_rebuild_status(zvol_state_t *zv, zvol_rebuild_status_t status)
 {
 	LOG_INFO("zvol %s rebuild status change: %s -> %s", zv->zv_name,
-	    rebuild_status_to_str(zv->zv_status),
+	    rebuild_status_to_str(zv->rebuild_info.zv_rebuild_status),
 	    rebuild_status_to_str(status));
 	zv->rebuild_info.zv_rebuild_status = status;
 }

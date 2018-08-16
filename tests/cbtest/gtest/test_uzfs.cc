@@ -1214,6 +1214,22 @@ uint64_t snapshot_io_num = 1000;
 char *snapname = (char *)"hello_snap";
 
 /* Snap create failure */
+TEST(SnapCreate, SnapCreateFailureHigherIO) {
+
+	/*
+	 * By default volume state is marked downgraded
+	 * so updation of ZAP attribute would fail
+	 */
+	uzfs_zvol_set_rebuild_status(zinfo->zv, ZVOL_REBUILDING_INIT);
+	uzfs_zvol_set_status(zinfo->zv, ZVOL_STATUS_DEGRADED);
+
+	zinfo->running_ionum = snapshot_io_num + 1;
+	/* Create snapshot */
+	EXPECT_EQ(-1, uzfs_zvol_create_snapshot_update_zap(zinfo,
+	    snapname, snapshot_io_num));
+}
+
+/* Snap create failure */
 TEST(SnapCreate, SnapCreateFailure) {
 
 	/*

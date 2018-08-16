@@ -610,7 +610,9 @@ uzfs_zvol_create_snapshot_update_zap(zvol_info_t *zinfo,
 	if (uzfs_zvol_get_status(zinfo->zv) != ZVOL_STATUS_HEALTHY) {
 		return (ret = -1);
 	}
-	assert(zinfo->running_ionum >= snapshot_io_num -1);
+
+	if (zinfo->running_ionum > snapshot_io_num -1)
+		return (ret = -1);
 
 	mutex_enter(&zvol_list_mutex);
 
@@ -649,6 +651,7 @@ uzfs_zvol_get_snap_dataset_with_io(zvol_info_t *zinfo,
 	if (ret != 0) {
 		LOG_ERR("Failed to hold snapshot: %d", ret);
 		uzfs_close_dataset(*snap_zv);
+		*snap_zv = NULL;
 		return (ret);
 	}
 

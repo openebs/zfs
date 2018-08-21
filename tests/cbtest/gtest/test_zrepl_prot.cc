@@ -72,7 +72,7 @@ static int ready_for_read(int fd, int timeout) {
  * res is the expected status of handshake
  */
 static void do_handshake(std::string zvol_name, std::string &host,
-    uint16_t &port, uint64_t *ionum, int control_fd, int res) {
+    uint16_t &port, uint64_t *ionum, uint64_t *degraded_ionum, int control_fd, int res) {
 	zvol_io_hdr_t hdr_in, hdr_out = {0};
 	int rc;
 	mgmt_ack_t mgmt_ack;
@@ -103,6 +103,8 @@ static void do_handshake(std::string zvol_name, std::string &host,
 	port = mgmt_ack.port;
 	if (ionum != NULL)
 		*ionum = hdr_in.checkpointed_io_seq;
+	if (degraded_ionum != NULL)
+		*degraded_ionum = hdr_in.checkpointed_degraded_io_seq;
 }
 
 /*
@@ -709,7 +711,7 @@ protected:
 		m_control_fd1 = target1.accept(-1);
 		ASSERT_GE(m_control_fd1, 0);
 
-		do_handshake(m_zvol_name1, m_host1, m_port1, NULL, m_control_fd1,
+		do_handshake(m_zvol_name1, m_host1, m_port1, NULL, NULL, m_control_fd1,
 		    ZVOL_OP_STATUS_OK);
 		m_zrepl->kill();
 
@@ -718,7 +720,7 @@ protected:
 		m_control_fd1 = target1.accept(-1);
 		ASSERT_GE(m_control_fd1, 0);
 
-		do_handshake(m_zvol_name1, m_host1, m_port1, NULL, m_control_fd1,
+		do_handshake(m_zvol_name1, m_host1, m_port1, NULL, NULL, m_control_fd1,
 		    ZVOL_OP_STATUS_OK);
 
 		m_pool2->create();
@@ -730,11 +732,11 @@ protected:
 		m_control_fd2 = target2.accept(-1);
 		ASSERT_GE(m_control_fd2, 0);
 
-		do_handshake(m_zvol_name2, m_host2, m_port2, NULL, m_control_fd2,
+		do_handshake(m_zvol_name2, m_host2, m_port2, NULL, NULL, m_control_fd2,
 		    ZVOL_OP_STATUS_FAILED);
 
 		m_zvol_name2 = m_pool2->getZvolName("vol1");
-		do_handshake(m_zvol_name2, m_host2, m_port2, NULL, m_control_fd2,
+		do_handshake(m_zvol_name2, m_host2, m_port2, NULL, NULL, m_control_fd2,
 		    ZVOL_OP_STATUS_OK);
 	}
 
@@ -1194,6 +1196,7 @@ TEST(Misc, ZreplCheckpointInterval) {
 	std::string host_slow, host_fast;
 	uint16_t port_slow, port_fast;
 	uint64_t ionum_slow, ionum_fast;
+	uint64_t degraded_ionum_slow, degraded_ionum_fast;
 
 	zvol_io_hdr_t hdr_in;
 	struct zvol_io_rw_hdr read_hdr;
@@ -1214,9 +1217,9 @@ TEST(Misc, ZreplCheckpointInterval) {
 	control_fd = target.accept(-1);
 	ASSERT_GE(control_fd, 0);
 
-	do_handshake(zvol_name_slow, host_slow, port_slow, &ionum_slow,
+	do_handshake(zvol_name_slow, host_slow, port_slow, &ionum_slow, &degraded_ionum_slow,
 	    control_fd, ZVOL_OP_STATUS_OK);
-	do_handshake(zvol_name_fast, host_fast, port_fast, &ionum_fast,
+	do_handshake(zvol_name_fast, host_fast, port_fast, &ionum_fast, &degraded_ionum_fast,
 	    control_fd, ZVOL_OP_STATUS_OK);
 	ASSERT_NE(ionum_slow, 888);
 	ASSERT_NE(ionum_fast, 888);
@@ -1225,6 +1228,12 @@ TEST(Misc, ZreplCheckpointInterval) {
 	    4096, 1000);
 	do_data_connection(datasock_fast.fd(), host_fast, port_fast, zvol_name_fast,
 	    4096, 2);
+
+	write_data_and_verify_resp(datasock_slow.fd(), ioseq, 0, 555);
+	write_data_and_verify_resp(datasock_fast.fd(), ioseq, 0, 555);
+
+	/* we are updating io_seq for degraded mode in every 5 seconds */
+	sleep(7);	// sleep more than 5 seconds
 
 	transition_zvol_to_online(ioseq, control_fd, zvol_name_slow);
 	transition_zvol_to_online(ioseq, control_fd, zvol_name_fast);
@@ -1255,13 +1264,15 @@ TEST(Misc, ZreplCheckpointInterval) {
 	control_fd = target.accept(-1);
 	ASSERT_GE(control_fd, 0);
 
-	do_handshake(zvol_name_slow, host_slow, port_slow, &ionum_slow,
+	do_handshake(zvol_name_slow, host_slow, port_slow, &ionum_slow, &degraded_ionum_slow,
 	    control_fd, ZVOL_OP_STATUS_OK);
-	do_handshake(zvol_name_fast, host_fast, port_fast, &ionum_fast,
+	do_handshake(zvol_name_fast, host_fast, port_fast, &ionum_fast, &degraded_ionum_fast,
 	    control_fd, ZVOL_OP_STATUS_OK);
 
 	ASSERT_NE(ionum_slow, 888);
 	ASSERT_EQ(ionum_fast, 888);
+	ASSERT_EQ(degraded_ionum_slow, 555);
+	ASSERT_EQ(degraded_ionum_fast, 555);
 
 	do_data_connection(datasock_slow.fd(), host_slow, port_slow, zvol_name_slow,
 	    4096, 1000);
@@ -1309,7 +1320,7 @@ protected:
 		m_control_fd = target.accept(-1);
 		ASSERT_GE(m_control_fd, 0);
 
-		do_handshake(m_zvol_name, m_host, m_port, NULL, m_control_fd,
+		do_handshake(m_zvol_name, m_host, m_port, NULL, NULL, m_control_fd,
 		    ZVOL_OP_STATUS_OK);
 	}
 
@@ -1400,7 +1411,7 @@ TEST(DiskReplaceTest, SpareReplacement) {
 	ASSERT_GE(rc, 0);
 	control_fd = target.accept(-1);
 	ASSERT_GE(control_fd, 0);
-	do_handshake(pool.getZvolName("vol"), host, port, NULL, control_fd,
+	do_handshake(pool.getZvolName("vol"), host, port, NULL, NULL, control_fd,
 	    ZVOL_OP_STATUS_OK);
 	do_data_connection(datasock.fd(), host, port, pool.getZvolName("vol"));
 	write_data_and_verify_resp(datasock.fd(), ioseq, 0, 10);
@@ -1551,7 +1562,7 @@ TEST(ZvolResizeTest, ResizeZvol) {
 	ASSERT_GE(rc, 0);
 	control_fd = target.accept(-1);
 	ASSERT_GE(control_fd, 0);
-	do_handshake(zvolname, host, port, NULL, control_fd,
+	do_handshake(zvolname, host, port, NULL, NULL, control_fd,
 	    ZVOL_OP_STATUS_OK);
 
 	hdr_out.version = REPLICA_VERSION;
@@ -1616,7 +1627,7 @@ TEST(ZvolCloneTest, CloneZvol) {
 	ASSERT_GE(rc, 0);
 	control_fd = target.accept(-1);
 	ASSERT_GE(control_fd, 0);
-	do_handshake(zvolname, host, port, NULL, control_fd,
+	do_handshake(zvolname, host, port, NULL, NULL, control_fd,
 	    ZVOL_OP_STATUS_OK);
 
 	// promote the clone
@@ -1681,7 +1692,7 @@ TEST(ZvolStatsTest, StatsZvol) {
 	ASSERT_GE(rc, 0);
 	control_fd = target.accept(-1);
 	ASSERT_GE(control_fd, 0);
-	do_handshake(zvolname, host, port, NULL, control_fd,
+	do_handshake(zvolname, host, port, NULL, NULL, control_fd,
 	    ZVOL_OP_STATUS_OK);
 
 	// get "used" before

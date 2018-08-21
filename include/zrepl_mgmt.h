@@ -183,6 +183,9 @@ extern int uzfs_zinfo_destroy(const char *ds_name, spa_t *spa);
 uint64_t uzfs_zvol_get_last_committed_io_no(zvol_state_t *zv);
 void uzfs_zvol_store_last_committed_io_no(zvol_state_t *zv,
     uint64_t io_seq);
+uint64_t uzfs_zvol_get_last_committed_io_no_degraded(zvol_state_t *zv);
+void uzfs_zvol_store_last_committed_io_no_degraded(zvol_state_t *zv,
+    uint64_t io_seq);
 extern int set_socket_keepalive(int sfd);
 extern int create_and_bind(const char *port, int bind_needed,
     boolean_t nonblocking);
@@ -207,6 +210,11 @@ uzfs_zinfo_take_refcnt(zvol_info_t *zinfo)
 {
 	atomic_inc_64(&zinfo->refcnt);
 }
+
+#define SLIST_FOREACH_SAFE(var, head, field, tvar)			\
+	for ((var) = SLIST_FIRST((head));				\
+	    (var) && ((tvar) = SLIST_NEXT((var), field), 1);		\
+	    (var) = (tvar))
 
 #ifdef	__cplusplus
 }

@@ -502,6 +502,8 @@ uzfs_zvol_mgmt_do_handshake(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	hdr.len = sizeof (mgmt_ack);
 	hdr.status = ZVOL_OP_STATUS_OK;
 	hdr.checkpointed_io_seq = uzfs_zvol_get_last_committed_io_no(zv);
+	hdr.checkpointed_degraded_io_seq =
+	    uzfs_zvol_get_last_committed_io_no_degraded(zv);
 
 	return (reply_data(conn, &hdr, &mgmt_ack, sizeof (mgmt_ack)));
 }

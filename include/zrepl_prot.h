@@ -107,6 +107,7 @@ struct zvol_io_hdr {
 	 */
 	uint64_t	len;
 	uint64_t	checkpointed_io_seq;
+	uint64_t	checkpointed_degraded_io_seq;
 } __attribute__((packed));
 
 typedef struct zvol_io_hdr zvol_io_hdr_t;

@@ -441,7 +441,8 @@ uzfs_zvol_rebuild_dw_replica(void *arg)
 	rc = 0;
 
 	/* Set state in-progess state now */
-	checkpointed_ionum = uzfs_zvol_get_last_committed_io_no(zinfo->zv);
+	checkpointed_ionum = uzfs_zvol_get_last_committed_io_no(zinfo->zv,
+	    HEALTHY_IO_SEQNUM);
 	zvol_state = zinfo->zv;
 	bzero(&hdr, sizeof (hdr));
 	hdr.status = ZVOL_OP_STATUS_OK;
@@ -639,36 +640,41 @@ uzfs_zvol_timer_thread(void)
 					    zinfo->name);
 					uzfs_zvol_store_last_committed_io_no(
 					    zinfo->zv,
-					    zinfo->checkpointed_ionum);
+					    zinfo->checkpointed_ionum,
+					    HEALTHY_IO_SEQNUM);
 					zinfo->checkpointed_ionum =
 					    zinfo->running_ionum;
 					zinfo->checkpointed_time = now;
 					next_check = now +
 					    zinfo->update_ionum_interval;
-					if (min_interval > next_check - now)
-						min_interval = next_check - now;
 				}
 			} else if (uzfs_zvol_get_status(zinfo->zv) ==
 			    ZVOL_STATUS_DEGRADED && zinfo->zv->zv_objset) {
-				next_check = zinfo->checkpointed_time + 5;
+				next_check = zinfo->degraded_checkpointed_time
+				    + DEGRADED_IO_UPDATE_INTERVAL;
 				if (next_check <= now &&
-				    zinfo->checkpointed_ionum !=
+				    zinfo->degraded_checkpointed_ionum !=
 				    zinfo->running_ionum) {
-					zinfo->checkpointed_ionum =
+					zinfo->degraded_checkpointed_ionum =
 					    zinfo->running_ionum;
 					LOG_DEBUG("Checkpointing ionum "
 					    "%lu on %s for degraded mode",
-					    zinfo->checkpointed_ionum,
+					    zinfo->degraded_checkpointed_ionum,
 					    zinfo->name);
-					uzfs_zvol_store_last_committed_io_no_degraded(
+					uzfs_zvol_store_last_committed_io_no(
 					    zinfo->zv,
-					    zinfo->checkpointed_ionum);
-					zinfo->checkpointed_time = now;
-					next_check = now + 5;
-					if (min_interval > next_check - now)
-						min_interval = next_check - now;
+					    zinfo->degraded_checkpointed_ionum,
+					    DEGRADED_IO_SEQNUM);
+					zinfo->degraded_checkpointed_time =
+					    now;
+					next_check = now +
+					    DEGRADED_IO_UPDATE_INTERVAL;
 				}
 			}
+
+			if (next_check > now &&
+			    (min_interval > next_check - now))
+				min_interval = next_check - now;
 		}
 
 		(void) cv_timedwait(&timer_cv, &timer_mtx, ddi_get_lbolt() +

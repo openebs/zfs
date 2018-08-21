@@ -857,7 +857,7 @@ uzfs_mock_zvol_rebuild_dw_replica(void *arg)
 
 send_hdr_again:
 	/* Set state in-progess state now */
-	checkpointed_ionum = uzfs_zvol_get_last_committed_io_no(zinfo->zv);
+	checkpointed_ionum = uzfs_zvol_get_last_committed_io_no(zinfo->zv, (char *)HEALTHY_IO_SEQNUM);
 	zvol_state = zinfo->zv;
 	bzero(&hdr, sizeof (hdr));
 	hdr.status = ZVOL_OP_STATUS_OK;

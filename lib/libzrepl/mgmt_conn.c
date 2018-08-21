@@ -501,9 +501,10 @@ uzfs_zvol_mgmt_do_handshake(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	hdr.io_seq = hdrp->io_seq;
 	hdr.len = sizeof (mgmt_ack);
 	hdr.status = ZVOL_OP_STATUS_OK;
-	hdr.checkpointed_io_seq = uzfs_zvol_get_last_committed_io_no(zv);
+	hdr.checkpointed_io_seq = uzfs_zvol_get_last_committed_io_no(zv,
+	    HEALTHY_IO_SEQNUM);
 	hdr.checkpointed_degraded_io_seq =
-	    uzfs_zvol_get_last_committed_io_no_degraded(zv);
+	    uzfs_zvol_get_last_committed_io_no(zv, DEGRADED_IO_SEQNUM);
 
 	return (reply_data(conn, &hdr, &mgmt_ack, sizeof (mgmt_ack)));
 }
@@ -619,7 +620,7 @@ uzfs_zvol_create_snapshot_update_zap(zvol_info_t *zinfo,
 	mutex_enter(&zvol_list_mutex);
 
 	uzfs_zvol_store_last_committed_io_no(zinfo->zv,
-	    snapshot_io_num -1);
+	    snapshot_io_num -1, HEALTHY_IO_SEQNUM);
 	zinfo->checkpointed_ionum = snapshot_io_num -1;
 	zinfo->checkpointed_time = time(NULL);
 
@@ -657,7 +658,8 @@ uzfs_zvol_get_snap_dataset_with_io(zvol_info_t *zinfo,
 		return (ret);
 	}
 
-	(*snapshot_io_num) = uzfs_zvol_get_last_committed_io_no(*snap_zv);
+	(*snapshot_io_num) = uzfs_zvol_get_last_committed_io_no(*snap_zv,
+	    HEALTHY_IO_SEQNUM);
 	return (ret);
 }
 

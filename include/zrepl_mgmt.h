@@ -107,7 +107,13 @@ typedef struct zvol_info_s {
 	uint64_t	zvol_guid;
 	uint64_t	running_ionum;
 	uint64_t	checkpointed_ionum;
+	uint64_t	degraded_checkpointed_ionum;
 	time_t		checkpointed_time;	/* time of the last chkpoint */
+	/*
+	 * time of the last stored checkedpointed io sequence number
+	 * when ZVOL was in degraded state
+	 */
+	time_t		degraded_checkpointed_time;
 	uint32_t	update_ionum_interval;	/* how often to update io seq */
 	taskq_t		*uzfs_zvol_taskq;	/* Taskq for minor management */
 
@@ -180,12 +186,9 @@ extern int uzfs_zinfo_init(void *zv, const char *ds_name,
 extern zvol_info_t *uzfs_zinfo_lookup(const char *name);
 extern void uzfs_zinfo_replay_zil_all(void);
 extern int uzfs_zinfo_destroy(const char *ds_name, spa_t *spa);
-uint64_t uzfs_zvol_get_last_committed_io_no(zvol_state_t *zv);
+uint64_t uzfs_zvol_get_last_committed_io_no(zvol_state_t *zv, char *key);
 void uzfs_zvol_store_last_committed_io_no(zvol_state_t *zv,
-    uint64_t io_seq);
-uint64_t uzfs_zvol_get_last_committed_io_no_degraded(zvol_state_t *zv);
-void uzfs_zvol_store_last_committed_io_no_degraded(zvol_state_t *zv,
-    uint64_t io_seq);
+    uint64_t io_seq, char *key);
 extern int set_socket_keepalive(int sfd);
 extern int create_and_bind(const char *port, int bind_needed,
     boolean_t nonblocking);
@@ -211,7 +214,18 @@ uzfs_zinfo_take_refcnt(zvol_info_t *zinfo)
 	atomic_inc_64(&zinfo->refcnt);
 }
 
-#define SLIST_FOREACH_SAFE(var, head, field, tvar)			\
+/*
+ * ZAP key for io sequence number
+ */
+#define	HEALTHY_IO_SEQNUM	"io_seq"
+#define	DEGRADED_IO_SEQNUM	"degraded_io_seq"
+
+/*
+ * update interval for io_sequence number in degraded mode
+ */
+#define	DEGRADED_IO_UPDATE_INTERVAL	5
+
+#define	SLIST_FOREACH_SAFE(var, head, field, tvar)			\
 	for ((var) = SLIST_FIRST((head));				\
 	    (var) && ((tvar) = SLIST_NEXT((var), field), 1);		\
 	    (var) = (tvar))

@@ -599,13 +599,13 @@ uzfs_zvol_timer_thread(void)
 	zvol_info_t *zinfo;
 	time_t min_interval;
 	time_t now, next_check;
-	struct singly_node_list n_zvol_list, n_free_list;
+	struct singly_node_list zvol_node_list, free_node_list;
 	singly_node_list_t *n_zinfo, *t_zinfo;
 
 	init_zrepl();
 	prctl(PR_SET_NAME, "zvol_timer", 0, 0, 0);
-	SLIST_INIT(&n_zvol_list);
-	SLIST_INIT(&n_free_list);
+	SLIST_INIT(&zvol_node_list);
+	SLIST_INIT(&free_node_list);
 
 	mutex_enter(&timer_mtx);
 	while (1) {
@@ -613,21 +613,21 @@ uzfs_zvol_timer_thread(void)
 
 		mutex_enter(&zvol_list_mutex);
 		SLIST_FOREACH(zinfo, &zvol_list, zinfo_next) {
-			if (!SLIST_EMPTY(&n_free_list)) {
-				n_zinfo = SLIST_FIRST(&n_free_list);
-				SLIST_REMOVE_HEAD(&n_free_list, node_next);
+			if (!SLIST_EMPTY(&free_node_list)) {
+				n_zinfo = SLIST_FIRST(&free_node_list);
+				SLIST_REMOVE_HEAD(&free_node_list, node_next);
 			} else {
 				n_zinfo = kmem_alloc(sizeof (*n_zinfo),
 				    KM_SLEEP);
 			}
 			uzfs_zinfo_take_refcnt(zinfo);
 			n_zinfo->node = (void *) zinfo;
-			SLIST_INSERT_HEAD(&n_zvol_list, n_zinfo, node_next);
+			SLIST_INSERT_HEAD(&zvol_node_list, n_zinfo, node_next);
 		}
 		mutex_exit(&zvol_list_mutex);
 
 		next_check = now = time(NULL);
-		SLIST_FOREACH(n_zinfo, &n_zvol_list, node_next) {
+		SLIST_FOREACH(n_zinfo, &zvol_node_list, node_next) {
 			zinfo = (zvol_info_t *)n_zinfo->node;
 			if (uzfs_zvol_get_status(zinfo->zv) ==
 			    ZVOL_STATUS_HEALTHY && zinfo->zv->zv_objset) {
@@ -680,12 +680,13 @@ uzfs_zvol_timer_thread(void)
 		(void) cv_timedwait(&timer_cv, &timer_mtx, ddi_get_lbolt() +
 		    SEC_TO_TICK(min_interval));
 
-		SLIST_FOREACH_SAFE(n_zinfo, &n_zvol_list, node_next, t_zinfo) {
-			SLIST_REMOVE(&n_zvol_list, n_zinfo, singly_node_list_s,
-			    node_next);
+		SLIST_FOREACH_SAFE(n_zinfo, &zvol_node_list,
+		    node_next, t_zinfo) {
+			SLIST_REMOVE(&zvol_node_list, n_zinfo,
+			    singly_node_list_s, node_next);
 			zinfo = (zvol_info_t *)n_zinfo->node;
 			uzfs_zinfo_drop_refcnt(zinfo);
-			SLIST_INSERT_HEAD(&n_free_list, n_zinfo, node_next);
+			SLIST_INSERT_HEAD(&free_node_list, n_zinfo, node_next);
 		}
 	}
 
@@ -693,8 +694,8 @@ uzfs_zvol_timer_thread(void)
 	mutex_destroy(&timer_mtx);
 	cv_destroy(&timer_cv);
 
-	SLIST_FOREACH_SAFE(n_zinfo, &n_free_list, node_next, t_zinfo) {
-		SLIST_REMOVE(&n_free_list, n_zinfo, singly_node_list_s,
+	SLIST_FOREACH_SAFE(n_zinfo, &free_node_list, node_next, t_zinfo) {
+		SLIST_REMOVE(&free_node_list, n_zinfo, singly_node_list_s,
 		    node_next);
 		kmem_free(n_zinfo, sizeof (*n_zinfo));
 	}

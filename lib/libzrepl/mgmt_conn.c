@@ -501,10 +501,17 @@ uzfs_zvol_mgmt_do_handshake(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	hdr.io_seq = hdrp->io_seq;
 	hdr.len = sizeof (mgmt_ack);
 	hdr.status = ZVOL_OP_STATUS_OK;
-	hdr.checkpointed_io_seq = uzfs_zvol_get_last_committed_io_no(zv,
+
+	zinfo->checkpointed_ionum = uzfs_zvol_get_last_committed_io_no(zv,
 	    HEALTHY_IO_SEQNUM);
-	hdr.checkpointed_degraded_io_seq =
+	zinfo->degraded_checkpointed_ionum =
 	    uzfs_zvol_get_last_committed_io_no(zv, DEGRADED_IO_SEQNUM);
+	zinfo->running_ionum = zinfo->degraded_checkpointed_ionum;
+	LOG_INFO("IO sequence number:%lu Degraded IO sequence number:%lu\n",
+	    zinfo->checkpointed_ionum, zinfo->degraded_checkpointed_ionum);
+
+	hdr.checkpointed_io_seq = zinfo->checkpointed_ionum;
+	hdr.checkpointed_degraded_io_seq = zinfo->degraded_checkpointed_ionum;
 
 	return (reply_data(conn, &hdr, &mgmt_ack, sizeof (mgmt_ack)));
 }

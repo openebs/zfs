@@ -225,11 +225,6 @@ uzfs_zinfo_take_refcnt(zvol_info_t *zinfo)
  */
 #define	DEGRADED_IO_UPDATE_INTERVAL	5
 
-#define	SLIST_FOREACH_SAFE(var, head, field, tvar)			\
-	for ((var) = SLIST_FIRST((head));				\
-	    (var) && ((tvar) = SLIST_NEXT((var), field), 1);		\
-	    (var) = (tvar))
-
 #ifdef	__cplusplus
 }
 #endif

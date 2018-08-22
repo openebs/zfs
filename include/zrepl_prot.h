@@ -197,6 +197,11 @@ struct zvol_io_rw_hdr {
 	uint64_t	len;
 } __attribute__((packed));
 
+#define	SLIST_FOREACH_SAFE(var, head, field, tvar)			\
+	for ((var) = SLIST_FIRST((head));				\
+	    (var) && ((tvar) = SLIST_NEXT((var), field), 1);		\
+	    (var) = (tvar))
+
 #ifdef	__cplusplus
 }
 #endif

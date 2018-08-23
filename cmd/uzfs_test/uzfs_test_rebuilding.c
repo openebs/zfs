@@ -453,11 +453,11 @@ replica_writer_thread(void *arg)
 		 * update ZAP entries for io_number frequently.
 		 */
 		if (!(io_num % 30)) {
-			uzfs_zvol_store_last_committed_io_no(zvol1, io_num,
-			    HEALTHY_IO_SEQNUM);
+			uzfs_zvol_store_last_committed_io_no(zvol1,
+			    HEALTHY_IO_SEQNUM, io_num);
 			if (replica_active)
 				uzfs_zvol_store_last_committed_io_no(zvol2,
-				    io_num, HEALTHY_IO_SEQNUM);
+				    HEALTHY_IO_SEQNUM, io_num);
 		}
 
 		if (replica_active) {

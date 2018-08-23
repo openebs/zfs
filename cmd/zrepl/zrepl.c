@@ -125,10 +125,10 @@ main(int argc, char **argv)
 	}
 
 	if (getenv("CONFIG_LOAD_ENABLE") != NULL) {
-		LOG_INFO("disabled auto import (reading of zpool.cache)");
+		LOG_INFO("auto importing pools by reading zpool.cache files");
 		zfs_autoimport_disable = 0;
 	} else {
-		LOG_INFO("auto importing pools by reading zpool.cache files");
+		LOG_INFO("disabled auto import (reading of zpool.cache)");
 		zfs_autoimport_disable = 1;
 	}
 

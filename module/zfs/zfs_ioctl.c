@@ -7118,15 +7118,20 @@ uzfs_handle_ioctl(const char *pool, zfs_cmd_t *zc, uzfs_info_t *ucmd_info)
 	err = ENOTSUP;
 	switch (uzfs_cmd->ioc_num) {
 	case ZFS_IOC_OBJSET_STATS:
-		return (zfs_ioc_objset_stats(zc));
+		err = zfs_ioc_objset_stats(zc);
+		break;
 	case ZFS_IOC_POOL_CREATE:
-		return (zfs_ioc_pool_create(zc));
+		err = zfs_ioc_pool_create(zc);
+		break;
 	case ZFS_IOC_POOL_IMPORT:
-		return (zfs_ioc_pool_import(zc));
+		err = zfs_ioc_pool_import(zc);
+		break;
 	case ZFS_IOC_POOL_STATS:
-		return (zfs_ioc_pool_stats(zc));
+		err = zfs_ioc_pool_stats(zc);
+		break;
 	case ZFS_IOC_POOL_TRYIMPORT:
-		return (zfs_ioc_pool_tryimport(zc));
+		err = zfs_ioc_pool_tryimport(zc);
+		break;
 	case ZFS_IOC_CREATE: {
 		nvlist_t *outnvl = fnvlist_alloc();
 
@@ -7145,12 +7150,14 @@ uzfs_handle_ioctl(const char *pool, zfs_cmd_t *zc, uzfs_info_t *ucmd_info)
 
 		nvlist_free(outnvl);
 
-		return (err);
+		break;
 	}
 	case ZFS_IOC_POOL_CONFIGS:
-		return (zfs_ioc_pool_configs(zc));
+		err = zfs_ioc_pool_configs(zc);
+		break;
 	case ZFS_IOC_DATASET_LIST_NEXT:
-		return (zfs_ioc_dataset_list_next(zc));
+		err = zfs_ioc_dataset_list_next(zc);
+		break;
 	case ZFS_IOC_GET_BOOKMARKS: {
 		nvlist_t *outnvl = fnvlist_alloc();
 		err = zfs_ioc_get_bookmarks(zc->zc_name, innvl, outnvl);
@@ -7168,14 +7175,17 @@ uzfs_handle_ioctl(const char *pool, zfs_cmd_t *zc, uzfs_info_t *ucmd_info)
 
 		nvlist_free(outnvl);
 
-		return (err);
+		break;
 	}
 	case ZFS_IOC_POOL_GET_PROPS:
-		return (zfs_ioc_pool_get_props(zc));
+		err = zfs_ioc_pool_get_props(zc);
+		break;
 	case ZFS_IOC_POOL_EXPORT:
-		return (zfs_ioc_pool_export(zc));
+		err = zfs_ioc_pool_export(zc);
+		break;
 	case ZFS_IOC_POOL_GET_HISTORY:
-		return (zfs_ioc_pool_get_history(zc));
+		err = zfs_ioc_pool_get_history(zc);
+		break;
 	case ZFS_IOC_LOG_HISTORY: {
 		nvlist_t *outnvl = fnvlist_alloc();
 
@@ -7193,7 +7203,7 @@ uzfs_handle_ioctl(const char *pool, zfs_cmd_t *zc, uzfs_info_t *ucmd_info)
 			err = puterror;
 
 		nvlist_free(outnvl);
-		return (err);
+		break;
 	}
 	case ZFS_IOC_SNAPSHOT: {
 		nvlist_t *outnvl = fnvlist_alloc();
@@ -7212,12 +7222,14 @@ uzfs_handle_ioctl(const char *pool, zfs_cmd_t *zc, uzfs_info_t *ucmd_info)
 			err = puterror;
 
 		nvlist_free(outnvl);
-		return (err);
+		break;
 	}
 	case ZFS_IOC_SNAPSHOT_LIST_NEXT:
-		return (zfs_ioc_snapshot_list_next(zc));
+		err = zfs_ioc_snapshot_list_next(zc);
+		break;
 	case ZFS_IOC_POOL_DESTROY:
-		return (zfs_ioc_pool_destroy(zc));
+		err = zfs_ioc_pool_destroy(zc);
+		break;
 	case ZFS_IOC_DESTROY_SNAPS: {
 		nvlist_t *outnvl = fnvlist_alloc();
 
@@ -7235,16 +7247,20 @@ uzfs_handle_ioctl(const char *pool, zfs_cmd_t *zc, uzfs_info_t *ucmd_info)
 			err = puterror;
 
 		nvlist_free(outnvl);
-		return (err);
+		break;
 	}
 	case ZFS_IOC_DESTROY:
-		return (zfs_ioc_destroy(zc));
+		err = zfs_ioc_destroy(zc);
+		break;
 	case ZFS_IOC_POOL_SET_PROPS:
-		return (zfs_ioc_pool_set_props(zc));
+		err = zfs_ioc_pool_set_props(zc);
+		break;
 	case ZFS_IOC_SET_PROP:
-		return (zfs_ioc_set_prop(zc));
+		err = zfs_ioc_set_prop(zc);
+		break;
 	case ZFS_IOC_SEND:
-		return (zfs_ioc_send(zc, ucmd_info));
+		err = zfs_ioc_send(zc, ucmd_info);
+		break;
 	case ZFS_IOC_SEND_NEW: {
 		nvlist_t *outnvl = fnvlist_alloc();
 
@@ -7262,10 +7278,11 @@ uzfs_handle_ioctl(const char *pool, zfs_cmd_t *zc, uzfs_info_t *ucmd_info)
 			err = puterror;
 
 		nvlist_free(outnvl);
-		return (err);
+		break;
 	}
 	case ZFS_IOC_RECV:
-		return (zfs_ioc_recv(zc, ucmd_info));
+		err = zfs_ioc_recv(zc, ucmd_info);
+		break;
 	case ZFS_IOC_RECV_NEW: {
 		nvlist_t *outnvl = fnvlist_alloc();
 
@@ -7283,22 +7300,29 @@ uzfs_handle_ioctl(const char *pool, zfs_cmd_t *zc, uzfs_info_t *ucmd_info)
 			err = puterror;
 
 		nvlist_free(outnvl);
-		return (err);
+		break;
 	}
 	case ZFS_IOC_SEND_PROGRESS:
-		return (zfs_ioc_send_progress(zc));
+		err = zfs_ioc_send_progress(zc);
+		break;
 	case ZFS_IOC_VDEV_ADD:
-		return (zfs_ioc_vdev_add(zc));
+		err = zfs_ioc_vdev_add(zc);
+		break;
 	case ZFS_IOC_VDEV_REMOVE:
-		return (zfs_ioc_vdev_remove(zc));
+		err = zfs_ioc_vdev_remove(zc);
+		break;
 	case ZFS_IOC_VDEV_ATTACH:
-		return (zfs_ioc_vdev_attach(zc));
+		err = zfs_ioc_vdev_attach(zc);
+		break;
 	case ZFS_IOC_VDEV_DETACH:
-		return (zfs_ioc_vdev_detach(zc));
+		err = zfs_ioc_vdev_detach(zc);
+		break;
 	case ZFS_IOC_VDEV_SET_STATE:
-		return (zfs_ioc_vdev_set_state(zc));
+		err = zfs_ioc_vdev_set_state(zc);
+		break;
 	case ZFS_IOC_PROMOTE:
-		return (zfs_ioc_promote(zc));
+		err = zfs_ioc_promote(zc);
+		break;
 	case ZFS_IOC_CLONE: {
 		nvlist_t *outnvl = fnvlist_alloc();
 
@@ -7315,9 +7339,12 @@ uzfs_handle_ioctl(const char *pool, zfs_cmd_t *zc, uzfs_info_t *ucmd_info)
 		if (puterror != 0)
 			err = puterror;
 		nvlist_free(outnvl);
-		return (err);
+		break;
 	}
 	}
+
+	nvlist_free(innvl);
+
 	return (err);
 }
 

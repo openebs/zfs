@@ -507,7 +507,7 @@ uzfs_zvol_mgmt_do_handshake(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	zinfo->degraded_checkpointed_ionum =
 	    uzfs_zvol_get_last_committed_io_no(zv, DEGRADED_IO_SEQNUM);
 	zinfo->running_ionum = zinfo->degraded_checkpointed_ionum;
-	LOG_INFO("IO sequence number:%lu Degraded IO sequence number:%lu\n",
+	LOG_INFO("IO sequence number:%lu Degraded IO sequence number:%lu",
 	    zinfo->checkpointed_ionum, zinfo->degraded_checkpointed_ionum);
 
 	hdr.checkpointed_io_seq = zinfo->checkpointed_ionum;
@@ -627,7 +627,7 @@ uzfs_zvol_create_snapshot_update_zap(zvol_info_t *zinfo,
 	mutex_enter(&zvol_list_mutex);
 
 	uzfs_zvol_store_last_committed_io_no(zinfo->zv,
-	    snapshot_io_num -1, HEALTHY_IO_SEQNUM);
+	    HEALTHY_IO_SEQNUM, snapshot_io_num -1);
 	zinfo->checkpointed_ionum = snapshot_io_num -1;
 	zinfo->checkpointed_time = time(NULL);
 

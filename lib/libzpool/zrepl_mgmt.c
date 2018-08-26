@@ -399,8 +399,8 @@ uzfs_zvol_get_last_committed_io_no(zvol_state_t *zv, char *key)
 }
 
 void
-uzfs_zvol_store_last_committed_io_no(zvol_state_t *zv, uint64_t io_seq,
-    char *key)
+uzfs_zvol_store_last_committed_io_no(zvol_state_t *zv, char *key,
+    uint64_t io_seq)
 {
 	uzfs_zap_kv_t *kv_array[0];
 	uzfs_zap_kv_t zap;

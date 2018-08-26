@@ -640,8 +640,8 @@ uzfs_zvol_timer_thread(void)
 					    zinfo->name);
 					uzfs_zvol_store_last_committed_io_no(
 					    zinfo->zv,
-					    zinfo->checkpointed_ionum,
-					    HEALTHY_IO_SEQNUM);
+					    HEALTHY_IO_SEQNUM,
+					    zinfo->checkpointed_ionum);
 					zinfo->checkpointed_ionum =
 					    zinfo->running_ionum;
 					zinfo->checkpointed_time = now;
@@ -663,8 +663,8 @@ uzfs_zvol_timer_thread(void)
 					    zinfo->name);
 					uzfs_zvol_store_last_committed_io_no(
 					    zinfo->zv,
-					    zinfo->degraded_checkpointed_ionum,
-					    DEGRADED_IO_SEQNUM);
+					    DEGRADED_IO_SEQNUM,
+					    zinfo->degraded_checkpointed_ionum);
 					zinfo->degraded_checkpointed_time =
 					    now;
 					next_check = now +

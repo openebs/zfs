@@ -42,6 +42,14 @@
 #define	ZVOL_REBUILD_STEP_SIZE  (10 * 1024ULL * 1024ULL * 1024ULL) // 10GB
 uint64_t zvol_rebuild_step_size = ZVOL_REBUILD_STEP_SIZE;
 
+#define	REBUILD_CMD_QUEUE_MAX_LIMIT (100)
+uint64_t zvol_rebuild_cmd_queue_limit = REBUILD_CMD_QUEUE_MAX_LIMIT;
+
+#define	IS_REBUILD_HIT_MAX_CMD_LIMIT(zinfo)	\
+	((zinfo->rebuild_cmd_queued_cnt -	\
+	    zinfo->rebuild_cmd_acked_cnt) >	\
+	    zvol_rebuild_cmd_queue_limit)
+
 uint16_t io_server_port = IO_SERVER_PORT;
 uint16_t rebuild_io_server_port = REBUILD_IO_SERVER_PORT;
 
@@ -974,10 +982,17 @@ uzfs_zvol_rebuild_scanner_callback(off_t offset, size_t len,
 	hdr.flags = ZVOL_OP_FLAG_REBUILD;
 	hdr.status = ZVOL_OP_STATUS_OK;
 
-	if ((zinfo->state == ZVOL_INFO_STATE_OFFLINE) ||
-	    (zinfo->is_io_ack_sender_created == B_FALSE))
-		return (-1);
+	while (1) {
+		if ((zinfo->state == ZVOL_INFO_STATE_OFFLINE) ||
+		    (zinfo->is_io_ack_sender_created == B_FALSE))
+			return (-1);
+		if (IS_REBUILD_HIT_MAX_CMD_LIMIT(zinfo))
+			usleep(100);
+		else
+			break;
+	}
 
+	zinfo->rebuild_cmd_queued_cnt++;
 	LOG_DEBUG("IO number for rebuild %ld", metadata->io_num);
 	zio_cmd = zio_cmd_alloc(&hdr, warg->fd);
 	/* Take refcount for uzfs_zvol_worker to work on it */
@@ -1069,6 +1084,8 @@ read_socket:
 			LOG_INFO("Rebuild scanner started on zvol %s", name);
 
 			uzfs_zvol_append_to_fd_list(zinfo, fd);
+			zinfo->rebuild_cmd_queued_cnt =
+			    zinfo->rebuild_cmd_acked_cnt = 0;
 
 			kmem_free(name, hdr.len);
 			warg.zinfo = zinfo;
@@ -1261,6 +1278,8 @@ uzfs_zvol_io_ack_sender(void *arg)
 		zio_cmd = STAILQ_FIRST(&zinfo->complete_queue);
 		STAILQ_REMOVE_HEAD(&zinfo->complete_queue, cmd_link);
 		zinfo->zio_cmd_in_ack = zio_cmd;
+		if (zio_cmd->hdr.flags & ZVOL_OP_FLAG_REBUILD)
+			zinfo->rebuild_cmd_acked_cnt++;
 		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 
 		LOG_DEBUG("ACK for op: %d, seq-id: %ld",

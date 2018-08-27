@@ -109,6 +109,8 @@ typedef struct zvol_info_s {
 	uint64_t	checkpointed_ionum;
 	uint64_t	degraded_checkpointed_ionum;
 	time_t		checkpointed_time;	/* time of the last chkpoint */
+	uint64_t	rebuild_cmd_queued_cnt;
+	uint64_t	rebuild_cmd_acked_cnt;
 	/*
 	 * time of the last stored checkedpointed io sequence number
 	 * when ZVOL was in degraded state

@@ -154,6 +154,8 @@ main(int argc, char **argv)
 	/* Ignore SIGPIPE signal */
 	signal(SIGPIPE, SIG_IGN);
 	signal(SIGTERM, exit_handler);
+	signal(SIGABRT, fatal_handler);
+	signal(SIGFPE, fatal_handler);
 	signal(SIGSEGV, fatal_handler);
 	signal(SIGBUS, fatal_handler);
 	signal(SIGILL, fatal_handler);

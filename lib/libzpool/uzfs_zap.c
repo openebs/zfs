@@ -82,6 +82,33 @@ uzfs_update_zap_entries(void *zvol, const uzfs_zap_kv_t **array,
 }
 
 /*
+ * Remove ZAP key from ZVOL_ZAP_OBJ
+ */
+int
+uzfs_remove_zap_entries(void *zvol, const char *key)
+{
+	zvol_state_t *zv = (zvol_state_t *)zvol;
+	objset_t *os = zv->zv_objset;
+	dmu_tx_t *tx;
+	int err;
+
+	tx = dmu_tx_create(os);
+	dmu_tx_hold_zap(tx, ZVOL_ZAP_OBJ, TRUE, NULL);
+
+	err = dmu_tx_assign(tx, TXG_WAIT);
+	if (err) {
+		dmu_tx_abort(tx);
+		return (SET_ERROR(err));
+	}
+
+	VERIFY0(zap_remove(os, ZVOL_ZAP_OBJ, key, tx));
+
+	dmu_tx_commit(tx);
+
+	return (0);
+}
+
+/*
  * fetch value stored in zap object of zvol by key
  */
 int
@@ -93,6 +120,57 @@ uzfs_read_zap_entry(void *zvol, uzfs_zap_kv_t *entry)
 
 	err = zap_lookup(os, ZVOL_ZAP_OBJ, entry->key, entry->size, 1,
 	    &entry->value);
+	if (err)
+		return (SET_ERROR(err));
+
+	return (0);
+}
+
+/*
+ * Rename ZAP key
+ */
+int
+uzfs_update_zap_key_name(void *zvol, const char *old_key, const char *new_key)
+{
+	zvol_state_t *zv = (zvol_state_t *)zvol;
+	objset_t *os = zv->zv_objset;
+	int err;
+	uint64_t integer_size = 0, num_integers = 0;
+	uzfs_zap_kv_t entry = { 0 }, *kv_array[0];
+
+	err = zap_length(os, ZVOL_ZAP_OBJ, new_key, &integer_size,
+	    &num_integers);
+	if (err == ENOENT) {
+		err = zap_length(os, ZVOL_ZAP_OBJ, old_key, &integer_size,
+		    &num_integers);
+		if (err) {
+			if (err == ENOENT)
+				err = 0;
+			goto out;
+		}
+
+		if (integer_size != 8 || num_integers != 1) {
+			err = EINVAL;
+			goto out;
+		}
+
+		err = zap_lookup(os, ZVOL_ZAP_OBJ, old_key,
+		    integer_size, num_integers, &entry.value);
+		if (err)
+			goto out;
+
+		entry.key = (char *)new_key;
+		entry.size = sizeof (uint64_t);
+		kv_array[0] = &entry;
+		err = uzfs_update_zap_entries(zvol,
+		    (const uzfs_zap_kv_t **) kv_array, 1);
+		if (err)
+			goto out;
+
+		err = uzfs_remove_zap_entries(zvol, old_key);
+	}
+
+out:
 	if (err)
 		return (SET_ERROR(err));
 

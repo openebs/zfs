@@ -40,6 +40,9 @@ typedef struct {
 int uzfs_update_zap_entries(void *zv, const uzfs_zap_kv_t **kv_array,
     uint64_t n);
 int uzfs_read_zap_entry(void *zv, uzfs_zap_kv_t *entry);
+int uzfs_remove_zap_entries(void *zvol, const char *key);
+int uzfs_update_zap_key_name(void *zvol, const char *old_key,
+    const char *new_key);
 int uzfs_read_last_iter_txg(void *spa, uint64_t *val);
 void uzfs_update_txg_zap_thread(void *s);
 void uzfs_update_txg_interval(spa_t *spa, uint32_t timeout);

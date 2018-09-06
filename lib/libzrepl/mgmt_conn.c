@@ -42,6 +42,7 @@
 
 #include <mgmt_conn.h>
 #include "data_conn.h"
+#include "uzfs_zap.h"
 
 /*
  * This file contains implementation of event loop (uzfs_zvol_mgmt_thread).
@@ -504,8 +505,11 @@ uzfs_zvol_mgmt_do_handshake(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 
 	zinfo->checkpointed_ionum = uzfs_zvol_get_last_committed_io_no(zv,
 	    HEALTHY_IO_SEQNUM);
+
+	uzfs_update_zap_key_name(zv, DEGRADED_IO_SEQNUM, RUNNING_IO_SEQNUM);
+
 	zinfo->degraded_checkpointed_ionum =
-	    uzfs_zvol_get_last_committed_io_no(zv, DEGRADED_IO_SEQNUM);
+	    uzfs_zvol_get_last_committed_io_no(zv, RUNNING_IO_SEQNUM);
 	zinfo->running_ionum = zinfo->degraded_checkpointed_ionum;
 	LOG_INFO("IO sequence number:%lu Degraded IO sequence number:%lu",
 	    zinfo->checkpointed_ionum, zinfo->degraded_checkpointed_ionum);
@@ -788,6 +792,7 @@ uzfs_zvol_rebuild_dw_replica_start(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	int 			io_sfd = -1;
 	rebuild_thread_arg_t	*thrd_arg;
 	kthread_t		*thrd_info;
+	rebuild_stats_t		*r_stats;
 
 	for (; rebuild_op_cnt > 0; rebuild_op_cnt--, mack++) {
 		LOG_INFO("zvol %s at %s:%u helping in rebuild",
@@ -831,11 +836,19 @@ ret_error:
 		}
 
 		uzfs_zinfo_take_refcnt(zinfo);
+		r_stats = kmem_zalloc(sizeof (*r_stats), KM_SLEEP);
+		r_stats->target.sin_port = htons(mack->port);
+		r_stats->target.sin_addr.s_addr = inet_addr(mack->ip);
+
+		mutex_enter(&zinfo->zv->rebuild_mtx);
+		TAILQ_INSERT_TAIL(&zinfo->rebuild_stats, r_stats, stat_next);
+		mutex_exit(&zinfo->zv->rebuild_mtx);
 
 		thrd_arg = kmem_alloc(sizeof (rebuild_thread_arg_t), KM_SLEEP);
 		thrd_arg->zinfo = zinfo;
 		thrd_arg->fd = io_sfd;
 		thrd_arg->port = mack->port;
+		thrd_arg->rebuild_stats = r_stats;
 		strlcpy(thrd_arg->ip, mack->ip, MAX_IP_LEN);
 		strlcpy(thrd_arg->zvol_name, mack->volname, MAXNAMELEN);
 		thrd_info = zk_thread_create(NULL, 0,

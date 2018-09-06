@@ -7877,6 +7877,41 @@ l2arc_stop(void)
 	mutex_exit(&l2arc_feed_thr_lock);
 }
 
+#if defined(_UZFS)
+void
+uzfs_dump_arc_stats(nvlist_t **stat)
+{
+	nvlist_t *nv;
+
+	ASSERT(!*stat);
+
+	if (nvlist_alloc(&nv, NV_UNIQUE_NAME, 0)) {
+		printf("failed to alloc nvlist\n");
+		return;
+	}
+
+	nvlist_add_uint64(nv, "arc_size", arc_size);
+	nvlist_add_uint64(nv, "arc_p", arc_p);
+	nvlist_add_uint64(nv, "arc_c", arc_c);
+	nvlist_add_uint64(nv, "arc_c_min", arc_c_min);
+	nvlist_add_uint64(nv, "arc_c_max", arc_c_max);
+	nvlist_add_uint64(nv, "arc_no_grow", arc_no_grow);
+	nvlist_add_uint64(nv, "arc_tempreserve", arc_tempreserve);
+	nvlist_add_uint64(nv, "arc_loaned_bytes", arc_loaned_bytes);
+	nvlist_add_uint64(nv, "arc_meta_limit", arc_meta_limit);
+	nvlist_add_uint64(nv, "arc_dnode_limit", arc_dnode_limit);
+	nvlist_add_uint64(nv, "arc_meta_min", arc_meta_min);
+	nvlist_add_uint64(nv, "arc_meta_used", arc_meta_used);
+	nvlist_add_uint64(nv, "arc_meta_max", arc_meta_max);
+	nvlist_add_uint64(nv, "arc_dbuf_size", arc_dbuf_size);
+	nvlist_add_uint64(nv, "arc_dnode_size", arc_dnode_size);
+	nvlist_add_uint64(nv, "arc_bonus_size", arc_bonus_size);
+	nvlist_add_uint64(nv, "arc_need_free", arc_need_free);
+	nvlist_add_uint64(nv, "arc_sys_free", arc_sys_free);
+	*stat = nv;
+}
+#endif
+
 #if defined(_KERNEL) && defined(HAVE_SPL)
 EXPORT_SYMBOL(arc_buf_size);
 EXPORT_SYMBOL(arc_write);

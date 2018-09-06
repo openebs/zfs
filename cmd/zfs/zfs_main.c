@@ -106,6 +106,7 @@ static int zfs_do_holds(int argc, char **argv);
 static int zfs_do_release(int argc, char **argv);
 static int zfs_do_diff(int argc, char **argv);
 static int zfs_do_bookmark(int argc, char **argv);
+static int zfs_do_stats(int argc, char **argv);
 
 /*
  * Enable a reasonable set of defaults for libumem debugging on DEBUG builds.
@@ -153,6 +154,7 @@ typedef enum {
 	HELP_RELEASE,
 	HELP_DIFF,
 	HELP_BOOKMARK,
+	HELP_STATS,
 } zfs_help_t;
 
 typedef struct zfs_command {
@@ -206,6 +208,7 @@ static zfs_command_t command_table[] = {
 	{ "holds",	zfs_do_holds,		HELP_HOLDS		},
 	{ "release",	zfs_do_release,		HELP_RELEASE		},
 	{ "diff",	zfs_do_diff,		HELP_DIFF		},
+	{ "stats",	zfs_do_stats,		HELP_STATS		},
 };
 
 #define	NCOMMAND	(sizeof (command_table) / sizeof (command_table[0]))
@@ -326,6 +329,8 @@ get_usage(zfs_help_t idx)
 		    "[snapshot|filesystem]\n"));
 	case HELP_BOOKMARK:
 		return (gettext("\tbookmark <snapshot> <bookmark>\n"));
+	case HELP_STATS:
+		return (gettext("\tstats <volume>\n"));
 	}
 
 	abort();
@@ -7034,6 +7039,29 @@ zfs_do_bookmark(int argc, char **argv)
 usage:
 	usage(B_FALSE);
 	return (-1);
+}
+
+static int
+zfs_do_stats(int argc, char **argv)
+{
+	char *volname = NULL;
+	int err = 0;
+	nvlist_t *nvl, *result;
+
+	argc -= optind;
+	argv += optind;
+
+	nvl = fnvlist_alloc();
+	if (argc > 1)
+		volname = argv[0];
+
+	err = lzc_zfs_stats(nvl, &result);
+
+	dump_nvlist(result, 0);
+
+	nvlist_free(nvl);
+	nvlist_free(result);
+	return (err != 0);
 }
 
 int

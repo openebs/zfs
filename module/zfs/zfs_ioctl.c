@@ -375,6 +375,10 @@ history_str_free(char *buf)
 }
 #endif /* _KERNEL */
 
+#ifdef _UZFS
+#include "zrepl_mgmt.h"
+#endif
+
 static int zfs_fill_zplprops_root(uint64_t, nvlist_t *, nvlist_t *,
     boolean_t *);
 
@@ -7085,6 +7089,36 @@ MODULE_VERSION(ZFS_META_VERSION "-" ZFS_META_RELEASE);
 #endif /* HAVE_SPL */
 #else /* _KERNEL */
 
+#ifdef _UZFS
+extern void uzfs_dump_arc_stats(nvlist_t **);
+static int
+zfs_ioc_get_stats(zfs_cmd_t *zc)
+{
+	int error = -1;
+	nvlist_t *stats;
+	nvlist_t *arc_stats = NULL, *zio_stats = NULL;
+
+	if (nvlist_alloc(&stats, 0, KM_SLEEP)) {
+		printf("failed to allocate nvlist\n");
+		goto out;
+	}
+
+	uzfs_dump_arc_stats(&arc_stats);
+	uzfs_dump_zvol_stats(&zio_stats);
+
+	nvlist_add_nvlist(stats, "arc", arc_stats);
+	nvlist_add_nvlist(stats, "zinfo", zio_stats);
+	nvlist_free(arc_stats);
+	nvlist_free(zio_stats);
+
+	error = put_nvlist(zc, stats);
+	nvlist_free(stats);
+
+out:
+	return (error);
+}
+#endif
+
 int
 uzfs_handle_ioctl(const char *pool, zfs_cmd_t *zc, uzfs_info_t *ucmd_info)
 {
@@ -7341,8 +7375,13 @@ uzfs_handle_ioctl(const char *pool, zfs_cmd_t *zc, uzfs_info_t *ucmd_info)
 		nvlist_free(outnvl);
 		break;
 	}
+		break;
+#ifdef	_UZFS
+	case ZFS_IOC_GET_STATS:
+		err = zfs_ioc_get_stats(zc);
+		break;
+#endif
 	}
-
 	nvlist_free(innvl);
 
 	return (err);

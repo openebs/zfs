@@ -22,12 +22,33 @@
 #ifndef	_UZFS_REBUILDING_H
 #define	_UZFS_REBUILDING_H
 
+#include <sys/queue.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 #define	IO_DIFF_SNAPNAME		".io_snap"
 #define	REBUILD_SNAPSHOT_SNAPNAME	"rebuild_snap"
 #define	REBUILD_SNAPSHOT_CLONENAME	"rebuild_clone"
+
+/*
+ * rebuild statistics
+ */
+typedef struct rebuild_stats {
+	TAILQ_ENTRY(rebuild_stats) stat_next;
+
+	uint64_t offset;	/* offset from where rebuild is happening */
+	uint64_t len;		/* size of data being rebuild */
+	uint64_t io_seq;	/* minimum io sequence number */
+	/*
+	 * current offset only for helping replica
+	 * If Replica is rebuilding itself then running_offset should be 0
+	 */
+	uint64_t running_offset;
+	struct sockaddr_in target;	/* target replica info */
+} rebuild_stats_t;
 
 /*
  * API to compare metadata

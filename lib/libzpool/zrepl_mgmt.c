@@ -6,6 +6,7 @@
 #include <sys/dnode.h>
 #include <zrepl_mgmt.h>
 #include <uzfs_mgmt.h>
+#include <mgmt_conn.h>
 #include <uzfs_zap.h>
 #include <uzfs_io.h>
 #include <sys/socket.h>
@@ -356,6 +357,8 @@ uzfs_zinfo_init(void *zv, const char *ds_name, nvlist_t *create_props)
 
 	STAILQ_INIT(&zinfo->complete_queue);
 	STAILQ_INIT(&zinfo->fd_list);
+	TAILQ_INIT(&zinfo->rebuild_stats);
+
 	uzfs_zinfo_init_mutex(zinfo);
 
 	strlcpy(zinfo->name, ds_name, MAXNAMELEN);
@@ -411,4 +414,165 @@ uzfs_zvol_store_last_committed_io_no(zvol_state_t *zv, char *key,
 	kv_array[0] = &zap;
 	VERIFY0(uzfs_update_zap_entries(zv,
 	    (const uzfs_zap_kv_t **) kv_array, 1));
+}
+
+void
+uzfs_dump_zvol_stats(nvlist_t **stat)
+{
+	zvol_info_t *zinfo = NULL;
+	nvlist_t *zstats, *nv, **nrebuild_stats;
+	int i, rebuild_count = 0;
+	rebuild_stats_t *r_stats;
+	struct sockaddr_in sock_addr;
+	socklen_t addrlen = sizeof (struct sockaddr);
+	char tbuf[50];
+	uzfs_mgmt_conn_t *conn;
+
+	ASSERT(!*stat);
+
+	if (nvlist_alloc(&zstats, NV_UNIQUE_NAME, 0)) {
+		LOG_ERR("failed to alloc nvlist\n");
+		return;
+	}
+
+	(void) mutex_enter(&zvol_list_mutex);
+	SLIST_FOREACH(zinfo, &zvol_list, zinfo_next) {
+		if (nvlist_alloc(&nv, NV_UNIQUE_NAME, 0)) {
+			LOG_ERR("failed to alloc nvlist\n");
+			return;
+		}
+		conn = zinfo->mgmt_conn;
+		nvlist_add_uint64(nv, "guid", zinfo->zvol_guid);
+		(void) getsockname(conn->conn_fd, (struct sockaddr *)&sock_addr,
+		    &addrlen);
+		nvlist_add_string(nv, "mgmt ip", inet_ntoa(sock_addr.sin_addr));
+		nvlist_add_uint64(nv, "mgmt port", ntohs(sock_addr.sin_port));
+		nvlist_add_uint64(nv, "refcnt", zinfo->refcnt);
+		nvlist_add_uint64(nv, "timeout", zinfo->timeout);
+		nvlist_add_uint64(nv, "running_ionum", zinfo->running_ionum);
+		nvlist_add_uint64(nv, "checkpointed_ionum",
+		    zinfo->checkpointed_ionum);
+		nvlist_add_uint64(nv, "degraded_checkpointed_ionum",
+		    zinfo->degraded_checkpointed_ionum);
+		(void) ctime_r(&zinfo->checkpointed_time, tbuf);
+		tbuf[strlen(tbuf) - 1] = '\0';
+		nvlist_add_string(nv, "checkpointed_time", tbuf);
+		nvlist_add_uint64(nv, "read_req_received_cnt",
+		    zinfo->read_req_received_cnt);
+		nvlist_add_uint64(nv, "write_req_received_cnt",
+		    zinfo->write_req_received_cnt);
+		nvlist_add_uint64(nv, "sync_req_received_cnt",
+		    zinfo->sync_req_received_cnt);
+		nvlist_add_uint64(nv, "read_req_ack_cnt",
+		    zinfo->read_req_ack_cnt);
+		nvlist_add_uint64(nv, "write_req_ack_cnt",
+		    zinfo->write_req_ack_cnt);
+		nvlist_add_uint64(nv, "sync_req_ack_cnt",
+		    zinfo->sync_req_ack_cnt);
+		nvlist_add_uint64(nv, "zio_cmd_inflight",
+		    zinfo->zio_cmd_inflight);
+		nvlist_add_uint64(nv, "zio_cmd_inflight",
+		    zinfo->zio_cmd_inflight);
+		nvlist_add_uint64(nv, "zio_cmd_inflight",
+		    zinfo->zio_cmd_inflight);
+		nvlist_add_uint64(nv, "zio_cmd_inflight",
+		    zinfo->zio_cmd_inflight);
+		nvlist_add_string(nv, "state",
+		    (zinfo->state == ZVOL_INFO_STATE_ONLINE) ?
+		    "online" : "offline");
+
+		nvlist_add_string(nv, "zvol status",
+		    (zinfo->zv->zv_status == ZVOL_STATUS_HEALTHY) ?
+		    "healthy" : "degraded");
+		nvlist_add_uint64(nv, "rebuild_bytes",
+		    zinfo->zv->rebuild_info.rebuild_bytes);
+		nvlist_add_uint64(nv, "rebuild count",
+		    zinfo->zv->rebuild_info.rebuild_cnt);
+		nvlist_add_uint64(nv, "rebuild done count",
+		    zinfo->zv->rebuild_info.rebuild_done_cnt);
+		nvlist_add_uint64(nv, "rebuild failed count",
+		    zinfo->zv->rebuild_info.rebuild_failed_cnt);
+		switch (zinfo->zv->rebuild_info.zv_rebuild_status) {
+			case ZVOL_REBUILDING_INIT:
+				nvlist_add_string(nv, "rebuild status",
+				    "ZVOL_REBUILDING_INIT");
+				break;
+
+			case ZVOL_REBUILDING_IN_PROGRESS:
+				nvlist_add_string(nv, "rebuild status",
+				    "ZVOL_REBUILDING_IN_PROGRESS");
+				break;
+
+			case ZVOL_REBUILDING_DONE:
+				nvlist_add_string(nv, "rebuild status",
+				    "ZVOL_REBUILDING_DONE");
+				break;
+
+			case ZVOL_REBUILDING_ERRORED:
+				nvlist_add_string(nv, "rebuild status",
+				    "ZVOL_REBUILDING_ERRORED");
+				break;
+
+			case ZVOL_REBUILDING_FAILED:
+				nvlist_add_string(nv, "rebuild status",
+				    "ZVOL_REBUILDING_FAILED");
+				break;
+		}
+
+		mutex_enter(&zinfo->zv->rebuild_mtx);
+		TAILQ_FOREACH(r_stats, &zinfo->rebuild_stats, stat_next) {
+			rebuild_count++;
+		}
+
+		nrebuild_stats = kmem_alloc(
+		    rebuild_count * sizeof (nvlist_t *), KM_SLEEP);
+		i = 0;
+		TAILQ_FOREACH(r_stats, &zinfo->rebuild_stats, stat_next) {
+			if (nvlist_alloc(&nrebuild_stats[i],
+			    NV_UNIQUE_NAME, 0)) {
+				LOG_ERR("failed to alloc nvlist for"
+				    "rebuild stats\n");
+				continue;
+			}
+
+			nvlist_add_uint64(nrebuild_stats[i], "offset",
+			    r_stats->offset);
+			nvlist_add_uint64(nrebuild_stats[i], "size",
+			    r_stats->len);
+			nvlist_add_uint64(nrebuild_stats[i], "io_sequence",
+			    r_stats->io_seq);
+
+			if (ntohs(r_stats->target.sin_port) !=
+			    REBUILD_IO_SERVER_PORT) {
+				nvlist_add_uint64(nrebuild_stats[i],
+				    "completed",
+				    r_stats->running_offset - r_stats->offset);
+				nvlist_add_string(nrebuild_stats[i],
+				    "target replica IP",
+				    inet_ntoa(r_stats->target.sin_addr));
+				nvlist_add_uint16(nrebuild_stats[i],
+				    "target replica port",
+				    ntohs(r_stats->target.sin_port));
+			} else {
+				nvlist_add_string(nrebuild_stats[i],
+				    "helping replica IP",
+				    inet_ntoa(r_stats->target.sin_addr));
+				nvlist_add_uint16(nrebuild_stats[i],
+				    "helping replica port",
+				    ntohs(r_stats->target.sin_port));
+			}
+			i++;
+		}
+		mutex_exit(&zinfo->zv->rebuild_mtx);
+		nvlist_add_nvlist_array(nv, "Rebuild stats", nrebuild_stats, i);
+		while (i)
+			nvlist_free(nrebuild_stats[--i]);
+
+		kmem_free(nrebuild_stats, rebuild_count  * sizeof (nvlist_t *));
+
+		nvlist_add_nvlist(zstats, zinfo->name, nv);
+		nvlist_free(nv);
+	}
+	(void) mutex_exit(&zvol_list_mutex);
+	*stat = zstats;
 }

@@ -1048,3 +1048,13 @@ lzc_destroy_bookmarks(nvlist_t *bmarks, nvlist_t **errlist)
 
 	return (error);
 }
+
+int
+lzc_zfs_stats(nvlist_t *args, nvlist_t **result)
+{
+	int error;
+
+	error = lzc_ioctl(ZFS_IOC_GET_STATS, NULL, args, result);
+	return (error);
+
+}

@@ -265,6 +265,10 @@ void l2arc_fini(void);
 void l2arc_start(void);
 void l2arc_stop(void);
 
+#if defined(_UZFS)
+void uzfs_arc_stats(nvlist_t **);
+#endif
+
 #ifndef _KERNEL
 extern boolean_t arc_watch;
 #endif

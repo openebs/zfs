@@ -38,6 +38,7 @@ typedef struct rebuild_thread_arg {
 	int		fd;
 	char		ip[MAX_IP_LEN];
 	uint16_t	port;
+	rebuild_stats_t *rebuild_stats;
 } rebuild_thread_arg_t;
 
 typedef struct conn_acceptors {
@@ -61,8 +62,8 @@ int uzfs_zvol_get_ip(char *host, size_t host_len);
 void uzfs_zvol_io_conn_acceptor(void *arg);
 void init_zrepl(void);
 void remove_pending_cmds_to_ack(int fd, zvol_info_t *zinfo);
-zvol_io_cmd_t *zio_cmd_alloc(zvol_io_hdr_t *hdr, int fd);
-void zio_cmd_free(zvol_io_cmd_t **cmd);
+zvol_io_cmd_t *zio_cmd_alloc(zvol_info_t *zinfo, zvol_io_hdr_t *hdr, int fd);
+void zio_cmd_free(zvol_info_t *zinfo, zvol_io_cmd_t **cmd);
 int uzfs_zvol_socket_read(int fd, char *buf, uint64_t nbytes);
 int uzfs_zvol_read_header(int fd, zvol_io_hdr_t *hdr);
 int uzfs_zvol_socket_write(int fd, char *buf, uint64_t nbytes);

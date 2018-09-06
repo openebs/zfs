@@ -633,6 +633,7 @@ create_rebuild_args(rebuild_thread_arg_t **r)
 	int rcvsize = 30;
 	int sndsize = 30;
 	int fd, rc;
+	rebuild_stats_t *r_stats;
 
 	fd = create_and_bind("", B_FALSE, B_FALSE);
 
@@ -648,6 +649,12 @@ create_rebuild_args(rebuild_thread_arg_t **r)
 	rebuild_args->port = REBUILD_IO_SERVER_PORT;
 	rc = uzfs_zvol_get_ip(rebuild_args->ip, MAX_IP_LEN);
 	EXPECT_NE(rc, -1);
+
+	r_stats = (rebuild_stats_t*)kmem_alloc(sizeof (rebuild_stats_t), KM_SLEEP);
+	rebuild_args->rebuild_stats = r_stats;
+	mutex_enter(&zinfo->zv->rebuild_mtx);
+	TAILQ_INSERT_TAIL(&zinfo->rebuild_stats, r_stats, stat_next);
+	mutex_exit(&zinfo->zv->rebuild_mtx);
 	
 	GtestUtils::strlcpy(rebuild_args->zvol_name, "vol2", MAXNAMELEN);
 	*r = rebuild_args;
@@ -662,7 +669,7 @@ TEST(uZFS, RemovePendingCmds) {
 	EXPECT_EQ(0, complete_q_list_count(zinfo));
 
 	/* Case of one IO in q */
-	zio_cmd = zio_cmd_alloc(&hdr, 1);
+	zio_cmd = zio_cmd_alloc(zinfo, &hdr, 1);
 	STAILQ_INSERT_TAIL(&zinfo->complete_queue, zio_cmd, cmd_link);
 	EXPECT_EQ(1, complete_q_list_count(zinfo));
 
@@ -673,10 +680,10 @@ TEST(uZFS, RemovePendingCmds) {
 	EXPECT_EQ(0, complete_q_list_count(zinfo));
 
 	/* Case of two IOs with different fds in q */
-	zio_cmd = zio_cmd_alloc(&hdr, 1);
+	zio_cmd = zio_cmd_alloc(zinfo, &hdr, 1);
 	STAILQ_INSERT_TAIL(&zinfo->complete_queue, zio_cmd, cmd_link);
 
-	zio_cmd = zio_cmd_alloc(&hdr, 2);
+	zio_cmd = zio_cmd_alloc(zinfo, &hdr, 2);
 	STAILQ_INSERT_TAIL(&zinfo->complete_queue, zio_cmd, cmd_link);
 
 	EXPECT_EQ(2, complete_q_list_count(zinfo));
@@ -691,10 +698,10 @@ TEST(uZFS, RemovePendingCmds) {
 	EXPECT_EQ(0, complete_q_list_count(zinfo));
 
 	/* Case of two IOs with same fds in q */
-	zio_cmd = zio_cmd_alloc(&hdr, 1);
+	zio_cmd = zio_cmd_alloc(zinfo, &hdr, 1);
 	STAILQ_INSERT_TAIL(&zinfo->complete_queue, zio_cmd, cmd_link);
 
-	zio_cmd = zio_cmd_alloc(&hdr, 1);
+	zio_cmd = zio_cmd_alloc(zinfo, &hdr, 1);
 	STAILQ_INSERT_TAIL(&zinfo->complete_queue, zio_cmd, cmd_link);
 
 	EXPECT_EQ(2, complete_q_list_count(zinfo));
@@ -703,13 +710,13 @@ TEST(uZFS, RemovePendingCmds) {
 	EXPECT_EQ(0, complete_q_list_count(zinfo));
 
 	/* Case of three IOs with diff fds in q */
-	zio_cmd = zio_cmd_alloc(&hdr, 1);
+	zio_cmd = zio_cmd_alloc(zinfo, &hdr, 1);
 	STAILQ_INSERT_TAIL(&zinfo->complete_queue, zio_cmd, cmd_link);
 
-	zio_cmd = zio_cmd_alloc(&hdr, 2);
+	zio_cmd = zio_cmd_alloc(zinfo, &hdr, 2);
 	STAILQ_INSERT_TAIL(&zinfo->complete_queue, zio_cmd, cmd_link);
 
-	zio_cmd = zio_cmd_alloc(&hdr, 3);
+	zio_cmd = zio_cmd_alloc(zinfo, &hdr, 3);
 	STAILQ_INSERT_TAIL(&zinfo->complete_queue, zio_cmd, cmd_link);
 
 	EXPECT_EQ(3, complete_q_list_count(zinfo));
@@ -982,7 +989,7 @@ next_step:
 		    (hdr.flags & ZVOL_OP_FLAG_REBUILD));
 		hdr.opcode = ZVOL_OPCODE_WRITE;
 
-		zio_cmd = zio_cmd_alloc(&hdr, sfd);
+		zio_cmd = zio_cmd_alloc(zinfo, &hdr, sfd);
 		rc = uzfs_zvol_socket_read(sfd, (char *)zio_cmd->buf, hdr.len);
 		if (rc != 0) {
 			LOG_ERR("Socket read writeIO failed");
@@ -1001,7 +1008,7 @@ next_step:
 			rc = -1;
 			goto exit;
 		}
-		zio_cmd_free(&zio_cmd);
+		zio_cmd_free(zinfo, &zio_cmd);
 	}
 
 exit:
@@ -1031,7 +1038,7 @@ exit:
 
 	kmem_free(arg, sizeof (rebuild_thread_arg_t));
 	if (zio_cmd != NULL)
-		zio_cmd_free(&zio_cmd);
+		zio_cmd_free(zinfo, &zio_cmd);
 	if (sfd != -1) {
 		shutdown(sfd, SHUT_RDWR);
 		close(sfd);

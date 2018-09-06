@@ -30,6 +30,7 @@
 #include <sys/queue.h>
 #include <uzfs_io.h>
 #include "zrepl_prot.h"
+#include "uzfs_rebuilding.h"
 #include <sys/zfs_context.h>
 
 #ifdef	__cplusplus
@@ -152,6 +153,9 @@ typedef struct zvol_info_s {
 	uint64_t 	read_req_ack_cnt;
 	uint64_t	write_req_ack_cnt;
 	uint64_t	sync_req_ack_cnt;
+	uint64_t	zio_cmd_inflight;
+	/* rebuild_stats is protected by zvol_stats->rebuild_mtx */
+	TAILQ_HEAD(, rebuild_stats) rebuild_stats;
 } zvol_info_t;
 
 typedef struct thread_args_s {
@@ -181,6 +185,7 @@ typedef struct zvol_io_cmd_s {
 typedef struct zvol_rebuild_s {
 	zvol_info_t	*zinfo;
 	int		fd;
+	rebuild_stats_t *r_stats;
 } zvol_rebuild_t;
 
 extern int uzfs_zinfo_init(void *zv, const char *ds_name,
@@ -220,12 +225,30 @@ uzfs_zinfo_take_refcnt(zvol_info_t *zinfo)
  * ZAP key for io sequence number
  */
 #define	HEALTHY_IO_SEQNUM	"io_seq"
+
+/*
+ * ZAP Key for running IO sequence number when ZVOL
+ * is in the degraded state. This key is obsolete now.
+ */
 #define	DEGRADED_IO_SEQNUM	"degraded_io_seq"
+
+/*
+ * ZAP key for running IO sequence number
+ * This key will get updated periodically
+ * 	- If ZVOL is degraded then update interval will
+ * 	be DEGRADED_IO_UPDATE_INTERVAL
+ *
+ * 	- If ZVOL is in healthy then update interval will be
+ * 	decided by timeout provided by TARGET
+ */
+#define	RUNNING_IO_SEQNUM	"running_io_seq"
 
 /*
  * update interval for io_sequence number in degraded mode
  */
 #define	DEGRADED_IO_UPDATE_INTERVAL	5
+
+void uzfs_dump_zvol_stats(nvlist_t **);
 
 #ifdef	__cplusplus
 }

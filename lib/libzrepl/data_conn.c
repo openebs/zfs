@@ -68,7 +68,7 @@ SLIST_HEAD(singly_node_list, singly_node_list_s);
  * buffer needed for IO completion.
  */
 zvol_io_cmd_t *
-zio_cmd_alloc(zvol_io_hdr_t *hdr, int fd)
+zio_cmd_alloc(zvol_info_t *zinfo, zvol_io_hdr_t *hdr, int fd)
 {
 	zvol_io_cmd_t *zio_cmd = kmem_zalloc(
 	    sizeof (zvol_io_cmd_t), KM_SLEEP);
@@ -81,6 +81,7 @@ zio_cmd_alloc(zvol_io_hdr_t *hdr, int fd)
 		zio_cmd->buf_len = hdr->len;
 	}
 
+	atomic_inc_64(&zinfo->zio_cmd_inflight);
 	zio_cmd->conn = fd;
 	return (zio_cmd);
 }
@@ -89,7 +90,7 @@ zio_cmd_alloc(zvol_io_hdr_t *hdr, int fd)
  * Free zio command along with buffer.
  */
 void
-zio_cmd_free(zvol_io_cmd_t **cmd)
+zio_cmd_free(zvol_info_t *zinfo, zvol_io_cmd_t **cmd)
 {
 	zvol_io_cmd_t *zio_cmd = *cmd;
 	zvol_op_code_t opcode = zio_cmd->hdr.opcode;
@@ -113,6 +114,7 @@ zio_cmd_free(zvol_io_cmd_t **cmd)
 	}
 
 	kmem_free(zio_cmd, sizeof (zvol_io_cmd_t));
+	atomic_dec_64(&zinfo->zio_cmd_inflight);
 	*cmd = NULL;
 }
 
@@ -283,7 +285,7 @@ uzfs_zvol_worker(void *arg)
 		hdr->status = ZVOL_OP_STATUS_FAILED;
 		hdr->len = 0;
 		if (!(rebuild_cmd_req && (hdr->opcode == ZVOL_OPCODE_WRITE)))
-			zio_cmd_free(&zio_cmd);
+			zio_cmd_free(zinfo, &zio_cmd);
 		goto drop_refcount;
 	}
 
@@ -343,7 +345,7 @@ uzfs_zvol_worker(void *arg)
 	(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
 	if (!zinfo->is_io_ack_sender_created) {
 		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
-		zio_cmd_free(&zio_cmd);
+		zio_cmd_free(zinfo, &zio_cmd);
 		goto drop_refcount;
 	}
 	STAILQ_INSERT_TAIL(&zinfo->complete_queue, zio_cmd, cmd_link);
@@ -409,6 +411,7 @@ uzfs_zvol_rebuild_dw_replica(void *arg)
 {
 	rebuild_thread_arg_t *rebuild_args = arg;
 	struct sockaddr_in replica_ip;
+	rebuild_stats_t *r_stats = rebuild_args->rebuild_stats;
 
 	int		rc = 0;
 	int		sfd = -1;
@@ -504,6 +507,10 @@ next_step:
 			hdr.len = ZVOL_VOLUME_SIZE(zvol_state) - offset;
 		else
 			hdr.len = zvol_rebuild_step_size;
+
+		r_stats->offset = hdr.offset;
+		r_stats->len = hdr.len;
+		r_stats->io_seq = hdr.checkpointed_io_seq;
 		rc = uzfs_zvol_socket_write(sfd, (char *)&hdr, sizeof (hdr));
 		if (rc != 0) {
 			LOG_ERR("Socket rebuild_step write failed");
@@ -541,7 +548,7 @@ next_step:
 		    (hdr.flags & ZVOL_OP_FLAG_REBUILD));
 		hdr.opcode = ZVOL_OPCODE_WRITE;
 
-		zio_cmd = zio_cmd_alloc(&hdr, sfd);
+		zio_cmd = zio_cmd_alloc(zinfo, &hdr, sfd);
 		rc = uzfs_zvol_socket_read(sfd, zio_cmd->buf, hdr.len);
 		if (rc != 0)
 			goto exit;
@@ -558,7 +565,7 @@ next_step:
 			rc = -1;
 			goto exit;
 		}
-		zio_cmd_free(&zio_cmd);
+		zio_cmd_free(zinfo, &zio_cmd);
 	}
 
 exit:
@@ -572,6 +579,10 @@ exit:
 		LOG_ERR("uzfs_zvol_rebuild_dw_replica thread exiting, "
 		    "rebuilding failed zvol: %s", zinfo->name);
 	}
+
+	TAILQ_REMOVE(&zinfo->rebuild_stats, r_stats, stat_next);
+	kmem_free(r_stats, sizeof (rebuild_stats_t));
+
 	(zinfo->zv->rebuild_info.rebuild_done_cnt) += 1;
 	if (zinfo->zv->rebuild_info.rebuild_cnt ==
 	    zinfo->zv->rebuild_info.rebuild_done_cnt) {
@@ -590,7 +601,7 @@ exit:
 
 	kmem_free(arg, sizeof (rebuild_thread_arg_t));
 	if (zio_cmd != NULL)
-		zio_cmd_free(&zio_cmd);
+		zio_cmd_free(zinfo, &zio_cmd);
 	if (sfd != -1) {
 		shutdown(sfd, SHUT_RDWR);
 		close(sfd);
@@ -642,6 +653,9 @@ uzfs_zvol_timer_thread(void)
 				next_check = zinfo->checkpointed_time +
 				    zinfo->update_ionum_interval;
 				if (next_check <= now) {
+					/*
+					 * Update last checkpointed io number
+					 */
 					LOG_DEBUG("Checkpointing ionum "
 					    "%lu on %s",
 					    zinfo->checkpointed_ionum,
@@ -652,6 +666,19 @@ uzfs_zvol_timer_thread(void)
 					    zinfo->checkpointed_ionum);
 					zinfo->checkpointed_ionum =
 					    zinfo->running_ionum;
+
+					/*
+					 * Update running io number or current
+					 * checkpointed io number
+					 */
+					LOG_DEBUG("Checkpointing running ionum"
+					    " %lu on %s",
+					    zinfo->checkpointed_ionum,
+					    zinfo->name);
+					uzfs_zvol_store_last_committed_io_no(
+					    zinfo->zv,
+					    RUNNING_IO_SEQNUM,
+					    zinfo->checkpointed_ionum);
 					zinfo->checkpointed_time = now;
 					next_check = now +
 					    zinfo->update_ionum_interval;
@@ -671,7 +698,7 @@ uzfs_zvol_timer_thread(void)
 					    zinfo->name);
 					uzfs_zvol_store_last_committed_io_no(
 					    zinfo->zv,
-					    DEGRADED_IO_SEQNUM,
+					    RUNNING_IO_SEQNUM,
 					    zinfo->degraded_checkpointed_ionum);
 					zinfo->degraded_checkpointed_time =
 					    now;
@@ -743,7 +770,7 @@ remove_pending_cmds_to_ack(int fd, zvol_info_t *zinfo)
 		if (zio_cmd->conn == fd) {
 			STAILQ_REMOVE(&zinfo->complete_queue, zio_cmd,
 			    zvol_io_cmd_s, cmd_link);
-			zio_cmd_free(&zio_cmd);
+			zio_cmd_free(zinfo, &zio_cmd);
 		}
 		zio_cmd = zio_cmd_next;
 	}
@@ -970,9 +997,11 @@ uzfs_zvol_rebuild_scanner_callback(off_t offset, size_t len,
 	zvol_io_cmd_t	*zio_cmd;
 	zvol_rebuild_t  *warg;
 	zvol_info_t	*zinfo;
+	rebuild_stats_t *r_stats;
 
 	warg = (zvol_rebuild_t *)args;
 	zinfo = warg->zinfo;
+	r_stats = warg->r_stats;
 
 	hdr.version = REPLICA_VERSION;
 	hdr.opcode = ZVOL_OPCODE_READ;
@@ -992,9 +1021,10 @@ uzfs_zvol_rebuild_scanner_callback(off_t offset, size_t len,
 			break;
 	}
 
+	r_stats->running_offset = offset;
 	zinfo->rebuild_cmd_queued_cnt++;
 	LOG_DEBUG("IO number for rebuild %ld", metadata->io_num);
-	zio_cmd = zio_cmd_alloc(&hdr, warg->fd);
+	zio_cmd = zio_cmd_alloc(zinfo, &hdr, warg->fd);
 	/* Take refcount for uzfs_zvol_worker to work on it */
 	uzfs_zinfo_take_refcnt(zinfo);
 	zio_cmd->zv = zinfo;
@@ -1026,12 +1056,15 @@ uzfs_zvol_rebuild_scanner(void *arg)
 	uint64_t	rebuild_req_len;
 	zvol_io_cmd_t	*zio_cmd;
 	struct linger	lo = { 1, 0 };
+	rebuild_stats_t *r_stats = NULL;
+	socklen_t len = sizeof (struct sockaddr);
 
 	if ((rc = setsockopt(fd, SOL_SOCKET, SO_LINGER, &lo, sizeof (lo)))
 	    != 0) {
 		LOG_ERRNO("setsockopt failed");
 		goto exit;
 	}
+
 read_socket:
 	if ((zinfo != NULL) &&
 	    ((zinfo->state == ZVOL_INFO_STATE_OFFLINE) ||
@@ -1088,8 +1121,18 @@ read_socket:
 			    zinfo->rebuild_cmd_acked_cnt = 0;
 
 			kmem_free(name, hdr.len);
+
+			r_stats = kmem_zalloc(sizeof (*r_stats), KM_SLEEP);
+			(void) getpeername(fd,
+			    (struct sockaddr *)&r_stats->target, &len);
+			mutex_enter(&zinfo->zv->rebuild_mtx);
+			TAILQ_INSERT_TAIL(&zinfo->rebuild_stats, r_stats,
+			    stat_next);
+			mutex_exit(&zinfo->zv->rebuild_mtx);
+
 			warg.zinfo = zinfo;
 			warg.fd = fd;
+			warg.r_stats = r_stats;
 			goto read_socket;
 
 		case ZVOL_OPCODE_REBUILD_STEP:
@@ -1107,6 +1150,10 @@ read_socket:
 			    == 1)
 				sleep(5);
 #endif
+			r_stats->offset = rebuild_req_offset;
+			r_stats->len = rebuild_req_len;
+			r_stats->io_seq = hdr.checkpointed_io_seq;
+
 			rc = uzfs_get_io_diff(zinfo->zv, &metadata,
 			    uzfs_zvol_rebuild_scanner_callback,
 			    rebuild_req_offset, rebuild_req_len, &warg);
@@ -1119,7 +1166,7 @@ read_socket:
 			hdr.status = ZVOL_OP_STATUS_OK;
 			hdr.version = REPLICA_VERSION;
 			hdr.opcode = ZVOL_OPCODE_REBUILD_STEP_DONE;
-			zio_cmd = zio_cmd_alloc(&hdr, fd);
+			zio_cmd = zio_cmd_alloc(zinfo, &hdr, fd);
 			/* Take refcount for uzfs_zvol_worker to work on it */
 			uzfs_zinfo_take_refcnt(zinfo);
 			zio_cmd->zv = zinfo;
@@ -1138,6 +1185,13 @@ read_socket:
 	}
 
 exit:
+	if (r_stats) {
+		mutex_enter(&zinfo->zv->rebuild_mtx);
+		TAILQ_REMOVE(&zinfo->rebuild_stats, r_stats, stat_next);
+		mutex_exit(&zinfo->zv->rebuild_mtx);
+		kmem_free(r_stats, sizeof (rebuild_stats_t));
+	}
+
 	if (zinfo != NULL) {
 		LOG_INFO("Closing rebuild connection for zvol %s", zinfo->name);
 		remove_pending_cmds_to_ack(fd, zinfo);
@@ -1311,10 +1365,10 @@ uzfs_zvol_io_ack_sender(void *arg)
 			 * to iscsi target
 			 */
 			if (zio_cmd->conn == fd) {
-				zio_cmd_free(&zio_cmd);
+				zio_cmd_free(zinfo, &zio_cmd);
 				goto exit;
 			}
-			zio_cmd_free(&zio_cmd);
+			zio_cmd_free(zinfo, &zio_cmd);
 			continue;
 		}
 
@@ -1326,7 +1380,7 @@ uzfs_zvol_io_ack_sender(void *arg)
 					zinfo->zio_cmd_in_ack = NULL;
 					LOG_ERRNO("socket write err");
 					if (zio_cmd->conn == fd) {
-						zio_cmd_free(&zio_cmd);
+						zio_cmd_free(zinfo, &zio_cmd);
 						goto exit;
 					}
 				}
@@ -1339,7 +1393,7 @@ uzfs_zvol_io_ack_sender(void *arg)
 				atomic_inc_64(&zinfo->sync_req_ack_cnt);
 		}
 		zinfo->zio_cmd_in_ack = NULL;
-		zio_cmd_free(&zio_cmd);
+		zio_cmd_free(zinfo, &zio_cmd);
 	}
 exit:
 	zinfo->zio_cmd_in_ack = NULL;
@@ -1571,18 +1625,18 @@ uzfs_zvol_io_receiver(void *arg)
 			break;
 		}
 
-		zio_cmd = zio_cmd_alloc(&hdr, fd);
+		zio_cmd = zio_cmd_alloc(zinfo, &hdr, fd);
 		/* Read payload for commands which have it */
 		if (hdr.opcode == ZVOL_OPCODE_WRITE) {
 			rc = uzfs_zvol_socket_read(fd, zio_cmd->buf, hdr.len);
 			if (rc != 0) {
-				zio_cmd_free(&zio_cmd);
+				zio_cmd_free(zinfo, &zio_cmd);
 				break;
 			}
 		}
 
 		if (zinfo->state == ZVOL_INFO_STATE_OFFLINE) {
-			zio_cmd_free(&zio_cmd);
+			zio_cmd_free(zinfo, &zio_cmd);
 			break;
 		}
 		/* Take refcount for uzfs_zvol_worker to work on it */

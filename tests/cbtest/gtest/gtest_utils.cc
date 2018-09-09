@@ -120,7 +120,7 @@ void GtestUtils::TestPool::createZvol(std::string name, std::string arg /*= ""*/
 }
 
 void GtestUtils::TestPool::destroyZvol(std::string name) {
-	execCmd("zfs", std::string("destroy ") + m_name + "/" + name);
+	execCmd("zfs", std::string("destroy -R ") + m_name + "/" + name);
 }
 
 std::string GtestUtils::TestPool::getZvolName(std::string name) {

@@ -56,10 +56,10 @@ int uzfs_get_nonoverlapping_ondisk_blks(zvol_state_t *zv, uint64_t offset,
     uint64_t len, blk_metadata_t *incoming_md, void **list);
 int
 uzfs_zvol_create_snaprebuild_clone(zvol_state_t *zv,
-    zvol_state_t **snap_zv);
+    zvol_state_t **snap_zv, zvol_state_t **clone_zv);
 int
 uzfs_zvol_destroy_snaprebuild_clone(zvol_state_t *zv,
-    zvol_state_t *snap_zv);
+    zvol_state_t **snap_zv, zvol_state_t **clone_zv);
 #ifdef __cplusplus
 }
 #endif

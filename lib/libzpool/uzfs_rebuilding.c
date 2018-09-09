@@ -319,20 +319,30 @@ exit:
 
 int
 uzfs_zvol_destroy_snaprebuild_clone(zvol_state_t *zv,
-    zvol_state_t *snap_zv)
+    zvol_state_t **snap_zv, zvol_state_t **clone_zv)
 {
 	int ret = 0;
 	char *clonename;
+
+	if (*snap_zv == NULL) {
+		ASSERT(*clone_zv == NULL);
+		return (ret);
+	}
 
 	clonename = kmem_asprintf("%s/%s_%s", spa_name(zv->zv_spa),
 	    strchr(zv->zv_name, '/') + 1,
 	    REBUILD_SNAPSHOT_CLONENAME);
 
-	/* Close dataset */
-	uzfs_close_dataset(snap_zv);
+	/* Close clone dataset */
+	uzfs_close_dataset(*clone_zv);
+	*clone_zv = NULL;
 
 	/* Destroy clone */
 	ret = dsl_destroy_head(clonename);
+
+	/* Close snapshot dataset */
+	uzfs_close_dataset(*snap_zv);
+	*snap_zv = NULL;
 
 	/* Destroy snapshot */
 	destroy_snapshot_zv(zv, REBUILD_SNAPSHOT_SNAPNAME);
@@ -346,11 +356,12 @@ uzfs_zvol_destroy_snaprebuild_clone(zvol_state_t *zv,
  */
 int
 uzfs_zvol_create_snaprebuild_clone(zvol_state_t *zv,
-    zvol_state_t **snap_zv)
+    zvol_state_t **snap_zv, zvol_state_t **clone_zv)
 {
 	int ret = 0;
 	char *snapname = NULL;
 	char *clonename = NULL;
+	char *clone_subname = NULL;
 
 	ret = get_snapshot_zv(zv, REBUILD_SNAPSHOT_SNAPNAME, snap_zv);
 	if (ret != 0) {
@@ -366,17 +377,35 @@ uzfs_zvol_create_snaprebuild_clone(zvol_state_t *zv,
 	    strchr(zv->zv_name, '/') + 1,
 	    REBUILD_SNAPSHOT_CLONENAME);
 
+	clone_subname = kmem_asprintf("%s_%s", strchr(zv->zv_name, '/') + 1,
+	    REBUILD_SNAPSHOT_CLONENAME);
+
 	ret = dmu_objset_clone(clonename, snapname);
-	if (ret == EEXIST) {
+	if ((ret == EEXIST) || (ret == 0)) {
 		LOG_INFO("Volume:%s already has clone for snap rebuild",
 		    zv->zv_name);
+		ret = uzfs_open_dataset(zv->zv_spa, clone_subname, clone_zv);
+		if (ret == 0) {
+			ret = uzfs_hold_dataset(*clone_zv);
+			if (ret != 0) {
+				LOG_ERR("Failed to hold clone: %d", ret);
+				uzfs_close_dataset(*clone_zv);
+				*clone_zv = NULL;
+				uzfs_close_dataset(*snap_zv);
+				destroy_snapshot_zv(zv,
+				    REBUILD_SNAPSHOT_SNAPNAME);
+				*snap_zv = NULL;
+			}
+		} else
+			LOG_INFO("Clone:%s not able to open", clone_subname);
 	} else if (ret != 0) {
 		uzfs_close_dataset(*snap_zv);
 		destroy_snapshot_zv(zv, REBUILD_SNAPSHOT_SNAPNAME);
 		*snap_zv = NULL;
 	}
 
-	strfree(snapname);
+	strfree(clone_subname);
 	strfree(clonename);
+	strfree(snapname);
 	return (ret);
 }

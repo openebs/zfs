@@ -92,7 +92,9 @@ typedef struct zvol_info_s {
 	/* Logical Unit related fields */
 	zvol_info_state_t	state;
 	char 		name[MAXPATHLEN];
-	zvol_state_t	*zv;
+	zvol_state_t	*original_zv;
+	zvol_state_t	*clone_zv;
+	zvol_state_t	*snap_zv;
 	uint64_t	refcnt;
 
 	union {
@@ -171,7 +173,7 @@ typedef struct zinfo_fd_s {
 typedef struct zvol_io_cmd_s {
 	STAILQ_ENTRY(zvol_io_cmd_s) cmd_link;
 	zvol_io_hdr_t 	hdr;
-	void		*zv;
+	zvol_info_t	*zinfo;
 	void		*buf;
 	uint64_t	buf_len;
 	metadata_desc_t	*metadata_desc;

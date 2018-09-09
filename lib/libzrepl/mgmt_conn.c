@@ -250,7 +250,7 @@ zinfo_create_cb(zvol_info_t *zinfo, nvlist_t *create_props)
 	char target_host[MAXNAMELEN];
 	uint16_t target_port;
 	uzfs_mgmt_conn_t *conn, *new_mgmt_conn;
-	zvol_state_t *zv = zinfo->zv;
+	zvol_state_t *zv = zinfo->original_zv;
 	char *delim, *ip;
 	uint64_t val = 1;
 	int rc;
@@ -457,7 +457,7 @@ static int
 uzfs_zvol_mgmt_do_handshake(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
     const char *name, zvol_info_t *zinfo)
 {
-	zvol_state_t	*zv = zinfo->zv;
+	zvol_state_t	*zv = zinfo->original_zv;
 	mgmt_ack_t 	mgmt_ack;
 	zvol_io_hdr_t	hdr;
 
@@ -523,7 +523,7 @@ uzfs_zvol_rebuild_status(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	zrepl_status_ack_t	status_ack;
 	zvol_io_hdr_t		hdr;
 
-	status_ack.state = uzfs_zvol_get_status(zinfo->zv);
+	status_ack.state = uzfs_zvol_get_status(zinfo->original_zv);
 
 	bzero(&hdr, sizeof (hdr));
 	hdr.version = REPLICA_VERSION;
@@ -532,20 +532,22 @@ uzfs_zvol_rebuild_status(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	hdr.len = sizeof (status_ack);
 	hdr.status = ZVOL_OP_STATUS_OK;
 
-	mutex_enter(&zinfo->zv->rebuild_mtx);
-	status_ack.rebuild_status = uzfs_zvol_get_rebuild_status(zinfo->zv);
+	mutex_enter(&zinfo->original_zv->rebuild_mtx);
+	status_ack.rebuild_status = uzfs_zvol_get_rebuild_status(
+	    zinfo->original_zv);
 
 	/*
 	 * Once the REBUILD_FAILED status is sent to target, rebuild status
 	 * need to be set to INIT so that rebuild can be retriggered
 	 */
-	if (uzfs_zvol_get_rebuild_status(zinfo->zv) == ZVOL_REBUILDING_FAILED) {
-		memset(&zinfo->zv->rebuild_info, 0,
+	if (uzfs_zvol_get_rebuild_status(zinfo->original_zv) ==
+	    ZVOL_REBUILDING_FAILED) {
+		memset(&zinfo->original_zv->rebuild_info, 0,
 		    sizeof (zvol_rebuild_info_t));
-		uzfs_zvol_set_rebuild_status(zinfo->zv,
+		uzfs_zvol_set_rebuild_status(zinfo->original_zv,
 		    ZVOL_REBUILDING_INIT);
 	}
-	mutex_exit(&zinfo->zv->rebuild_mtx);
+	mutex_exit(&zinfo->original_zv->rebuild_mtx);
 	return (reply_data(conn, &hdr, &status_ack, sizeof (status_ack)));
 }
 
@@ -554,10 +556,11 @@ uzfs_zvol_stats(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp, zvol_info_t *zinfo)
 {
 	zvol_io_hdr_t	hdr;
 	zvol_op_stat_t	stat;
+	objset_t	*zv_objset = zinfo->original_zv->zv_objset;
 
 	strlcpy(stat.label, "used", sizeof (stat.label));
 	stat.value = dsl_dir_phys(
-	    zinfo->zv->zv_objset->os_dsl_dataset->ds_dir)->dd_used_bytes;
+	    zv_objset->os_dsl_dataset->ds_dir)->dd_used_bytes;
 
 	bzero(&hdr, sizeof (hdr));
 	hdr.version = REPLICA_VERSION;
@@ -617,16 +620,15 @@ uzfs_zvol_create_snapshot_update_zap(zvol_info_t *zinfo,
 {
 	int ret = 0;
 
-	if (uzfs_zvol_get_status(zinfo->zv) != ZVOL_STATUS_HEALTHY) {
+	if (uzfs_zvol_get_status(zinfo->original_zv) != ZVOL_STATUS_HEALTHY)
 		return (ret = -1);
-	}
 
 	if (zinfo->running_ionum > snapshot_io_num -1)
 		return (ret = -1);
 
 	mutex_enter(&zvol_list_mutex);
 
-	uzfs_zvol_store_last_committed_io_no(zinfo->zv,
+	uzfs_zvol_store_last_committed_io_no(zinfo->original_zv,
 	    HEALTHY_IO_SEQNUM, snapshot_io_num -1);
 	zinfo->checkpointed_ionum = snapshot_io_num -1;
 	zinfo->checkpointed_time = time(NULL);
@@ -649,7 +651,7 @@ uzfs_zvol_get_snap_dataset_with_io(zvol_info_t *zinfo,
 
 	char *longsnap = kmem_asprintf("%s@%s",
 	    strchr(zinfo->name, '/') + 1, snapname);
-	ret = uzfs_open_dataset(zinfo->zv->zv_spa, longsnap, snap_zv);
+	ret = uzfs_open_dataset(zinfo->original_zv->zv_spa, longsnap, snap_zv);
 	if (ret != 0) {
 		LOG_ERR("Failed to get info about %s", longsnap);
 		strfree(longsnap);
@@ -713,11 +715,13 @@ uzfs_zvol_execute_async_command(void *arg)
 		break;
 	case ZVOL_OPCODE_RESIZE:
 		volsize = *(uint64_t *)async_task->payload;
-		rc = zvol_check_volsize(volsize, zinfo->zv->zv_volblocksize);
+		rc = zvol_check_volsize(volsize,
+		    zinfo->original_zv->zv_volblocksize);
 		if (rc == 0) {
-			rc = zvol_update_volsize(volsize, zinfo->zv->zv_objset);
+			rc = zvol_update_volsize(volsize,
+			    zinfo->original_zv->zv_objset);
 			if (rc == 0)
-				zvol_size_changed(zinfo->zv, volsize);
+				zvol_size_changed(zinfo->original_zv, volsize);
 		}
 		if (rc != 0) {
 			LOG_ERR("Failed to resize zvol %s", zinfo->name);
@@ -796,27 +800,27 @@ uzfs_zvol_rebuild_dw_replica_start(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 			LOG_ERR("zvol %s not matching with zinfo %s",
 			    mack->dw_volname, zinfo->name);
 ret_error:
-			mutex_enter(&zinfo->zv->rebuild_mtx);
+			mutex_enter(&zinfo->original_zv->rebuild_mtx);
 
 			/* Error happened, so set to REBUILD_ERRORED state */
-			uzfs_zvol_set_rebuild_status(zinfo->zv,
+			uzfs_zvol_set_rebuild_status(zinfo->original_zv,
 			    ZVOL_REBUILDING_ERRORED);
 
-			(zinfo->zv->rebuild_info.rebuild_failed_cnt) +=
+			(zinfo->original_zv->rebuild_info.rebuild_failed_cnt) +=
 			    rebuild_op_cnt;
-			(zinfo->zv->rebuild_info.rebuild_done_cnt) +=
+			(zinfo->original_zv->rebuild_info.rebuild_done_cnt) +=
 			    rebuild_op_cnt;
 
 			/*
 			 * If all the triggered rebuilds are done,
 			 * mark state as REBUILD_FAILED
 			 */
-			if (zinfo->zv->rebuild_info.rebuild_cnt ==
-			    zinfo->zv->rebuild_info.rebuild_done_cnt)
-				uzfs_zvol_set_rebuild_status(zinfo->zv,
+			if (zinfo->original_zv->rebuild_info.rebuild_cnt ==
+			    zinfo->original_zv->rebuild_info.rebuild_done_cnt)
+				uzfs_zvol_set_rebuild_status(zinfo->original_zv,
 				    ZVOL_REBUILDING_FAILED);
 
-			mutex_exit(&zinfo->zv->rebuild_mtx);
+			mutex_exit(&zinfo->original_zv->rebuild_mtx);
 			return (reply_nodata(conn,
 			    ZVOL_OP_STATUS_FAILED,
 			    hdrp->opcode, hdrp->io_seq));
@@ -873,7 +877,7 @@ handle_start_rebuild_req(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	mgmt_ack_t *mack = (mgmt_ack_t *)payload;
 	zinfo = uzfs_zinfo_lookup(mack->dw_volname);
 	if ((zinfo == NULL) || (zinfo->mgmt_conn != conn) ||
-	    (zinfo->zv == NULL)) {
+	    (zinfo->original_zv == NULL)) {
 		if (zinfo != NULL) {
 			LOG_ERR("rebuilding failed for %s..", zinfo->name);
 			uzfs_zinfo_drop_refcnt(zinfo);
@@ -885,11 +889,11 @@ handle_start_rebuild_req(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 		goto end;
 	}
 
-	mutex_enter(&zinfo->zv->rebuild_mtx);
+	mutex_enter(&zinfo->original_zv->rebuild_mtx);
 	/* Check rebuild status of downgraded zinfo */
-	if (uzfs_zvol_get_rebuild_status(zinfo->zv) !=
+	if (uzfs_zvol_get_rebuild_status(zinfo->original_zv) !=
 	    ZVOL_REBUILDING_INIT) {
-		mutex_exit(&zinfo->zv->rebuild_mtx);
+		mutex_exit(&zinfo->original_zv->rebuild_mtx);
 		uzfs_zinfo_drop_refcnt(zinfo);
 		LOG_ERR("rebuilding failed for %s due to improper rebuild "
 		    "status", zinfo->name);
@@ -897,22 +901,24 @@ handle_start_rebuild_req(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 		    hdrp->opcode, hdrp->io_seq);
 		goto end;
 	}
-	memset(&zinfo->zv->rebuild_info, 0, sizeof (zvol_rebuild_info_t));
+
+	memset(&zinfo->original_zv->rebuild_info, 0,
+	    sizeof (zvol_rebuild_info_t));
 	int rebuild_op_cnt = (payload_size / sizeof (mgmt_ack_t));
 	/* Track # of rebuilds we are initializing on replica */
-	zinfo->zv->rebuild_info.rebuild_cnt = rebuild_op_cnt;
+	zinfo->original_zv->rebuild_info.rebuild_cnt = rebuild_op_cnt;
 
 	/*
 	 * Case where just one replica is being used by customer
 	 */
 	if ((strcmp(mack->volname, "")) == 0) {
-		zinfo->zv->rebuild_info.rebuild_cnt = 0;
-		zinfo->zv->rebuild_info.rebuild_done_cnt = 0;
+		zinfo->original_zv->rebuild_info.rebuild_cnt = 0;
+		zinfo->original_zv->rebuild_info.rebuild_done_cnt = 0;
 		/* Mark replica healthy now */
-		uzfs_zvol_set_rebuild_status(zinfo->zv,
+		uzfs_zvol_set_rebuild_status(zinfo->original_zv,
 		    ZVOL_REBUILDING_DONE);
-		mutex_exit(&zinfo->zv->rebuild_mtx);
-		uzfs_zvol_set_status(zinfo->zv,
+		mutex_exit(&zinfo->original_zv->rebuild_mtx);
+		uzfs_zvol_set_status(zinfo->original_zv,
 		    ZVOL_STATUS_HEALTHY);
 		uzfs_update_ionum_interval(zinfo, 0);
 		LOG_INFO("Rebuild of zvol %s completed",
@@ -922,9 +928,9 @@ handle_start_rebuild_req(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 		    hdrp->opcode, hdrp->io_seq);
 		goto end;
 	}
-	uzfs_zvol_set_rebuild_status(zinfo->zv,
+	uzfs_zvol_set_rebuild_status(zinfo->original_zv,
 	    ZVOL_REBUILDING_IN_PROGRESS);
-	mutex_exit(&zinfo->zv->rebuild_mtx);
+	mutex_exit(&zinfo->original_zv->rebuild_mtx);
 
 	DBGCONN(conn, "Rebuild start command");
 	/* Call API to start threads with every helping replica */

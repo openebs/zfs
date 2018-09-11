@@ -1155,6 +1155,7 @@ TEST(TargetIPTest, CreateAndDestroy) {
 	rc = read(fdExpl, buf, sizeof (buf));
 	ASSERT_EQ(rc, 0);
 	close(fdExpl);
+	zrepl.kill();
 }
 
 /*
@@ -1208,6 +1209,7 @@ TEST(TargetIPTest, Reconnect) {
 	rc = read(fd, buf, sizeof (buf));
 	ASSERT_EQ(rc, 0);
 	close(fd);
+	zrepl.kill();
 }
 
 /*

@@ -336,9 +336,14 @@ uzfs_zvol_destroy_snaprebuild_clone(zvol_state_t *zv,
 	/* Close clone dataset */
 	uzfs_close_dataset(*clone_zv);
 	*clone_zv = NULL;
+	LOG_INFO("Destroying rebuild_snap and rebuild_clone on:%s",
+		zv->zv_name);
 
 	/* Destroy clone */
 	ret = dsl_destroy_head(clonename);
+	if (ret != 0)
+		LOG_ERRNO("Rebuild_clone destroy failed on:%s"
+		    " with err:%d", zv->zv_name, ret);
 
 	/* Close snapshot dataset */
 	uzfs_close_dataset(*snap_zv);
@@ -382,8 +387,9 @@ uzfs_zvol_create_snaprebuild_clone(zvol_state_t *zv,
 
 	ret = dmu_objset_clone(clonename, snapname);
 	if ((ret == EEXIST) || (ret == 0)) {
-		LOG_INFO("Volume:%s already has clone for snap rebuild",
-		    zv->zv_name);
+		if (ret == EEXIST)
+			LOG_INFO("Volume:%s already has clone for snap rebuild",
+			    zv->zv_name);
 		ret = uzfs_open_dataset(zv->zv_spa, clone_subname, clone_zv);
 		if (ret == 0) {
 			ret = uzfs_hold_dataset(*clone_zv);

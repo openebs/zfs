@@ -1155,7 +1155,6 @@ TEST(TargetIPTest, CreateAndDestroy) {
 	rc = read(fdExpl, buf, sizeof (buf));
 	ASSERT_EQ(rc, 0);
 	close(fdExpl);
-	zrepl.kill();
 }
 
 /*
@@ -1209,7 +1208,6 @@ TEST(TargetIPTest, Reconnect) {
 	rc = read(fd, buf, sizeof (buf));
 	ASSERT_EQ(rc, 0);
 	close(fd);
-	zrepl.kill();
 }
 
 /*
@@ -1287,6 +1285,9 @@ TEST(Misc, ZreplCheckpointInterval) {
 	ASSERT_EQ(rc, sizeof (buf));
 
 	sleep(10);	/* Due to spa sync interval, sleep for 10 sec is required here */
+	datasock_slow.graceful_close();
+	datasock_fast.graceful_close();
+	sleep(5);
 
 	zrepl.kill();
 
@@ -1308,8 +1309,8 @@ TEST(Misc, ZreplCheckpointInterval) {
 
 	do_data_connection(datasock_slow.fd(), host_slow, port_slow, zvol_name_slow,
 	    4096, 1000);
-	datasock_slow.graceful_close();
 	datasock_fast.graceful_close();
+	datasock_slow.graceful_close();
 	graceful_close(control_fd);
 	sleep(5);
 }

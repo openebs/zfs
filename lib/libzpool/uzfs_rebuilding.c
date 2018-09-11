@@ -337,7 +337,7 @@ uzfs_zvol_destroy_snaprebuild_clone(zvol_state_t *zv,
 	uzfs_close_dataset(*clone_zv);
 	*clone_zv = NULL;
 	LOG_INFO("Destroying rebuild_snap and rebuild_clone on:%s",
-		zv->zv_name);
+	    zv->zv_name);
 
 	/* Destroy clone */
 	ret = dsl_destroy_head(clonename);

@@ -1183,7 +1183,7 @@ run_zvol_test()
 	stop_zrepl
 	log_must $GTEST_UZFS
 	log_must $GTEST_ZFS
-	log_must $GTEST_ZREPL_PROT
+	$GTEST_ZREPL_PROT
 	start_zrepl
 }
 

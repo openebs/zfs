@@ -1385,9 +1385,9 @@ TEST_F(ZreplBlockSizeTest, SetMetaBlockSize) {
 	do_data_connection(datasock1.fd(), m_host, m_port, m_zvol_name, 4096);
 	write_data_and_verify_resp(datasock1.fd(), m_ioseq, 0, 1);
 	datasock1.graceful_close();
+	sleep(5);
 	do_data_connection(datasock2.fd(), m_host, m_port, m_zvol_name, 4096);
 	write_data_and_verify_resp(datasock2.fd(), m_ioseq, 0, 1);
-	datasock1.graceful_close();
 	datasock2.graceful_close();
 	sleep(5);
 }
@@ -1425,9 +1425,9 @@ TEST_F(ZreplBlockSizeTest, SetDifferentMetaBlockSizes) {
 	do_data_connection(datasock1.fd(), m_host, m_port, m_zvol_name, 4096);
 	write_data_and_verify_resp(datasock1.fd(), m_ioseq, 0, 1);
 	datasock1.graceful_close();
+	sleep(5);
 	do_data_connection(datasock2.fd(), m_host, m_port, m_zvol_name, 512, 120,
 	    ZVOL_OP_STATUS_FAILED);
-	datasock1.graceful_close();
 	datasock2.graceful_close();
 	sleep(5);
 }

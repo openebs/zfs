@@ -27,6 +27,10 @@
 #include <uzfs_io.h>
 #include <zrepl_mgmt.h>
 
+#if DEBUG
+inject_error_t	inject_error;
+#endif
+
 #define	GET_NEXT_CHUNK(chunk_io, offset, len, end)		\
 	do {							\
 		uzfs_io_chunk_list_t *node;			\
@@ -82,6 +86,7 @@ uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 	 * If trying IO on fresh zvol before metadata granularity is set return
 	 * error.
 	 */
+
 	if (zv->zv_metavolblocksize == 0)
 		return (EINVAL);
 	ASSERT3P(zv->zv_metavolblocksize, !=, 0);
@@ -96,6 +101,12 @@ uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 	sync = (dmu_objset_syncprop(os) == ZFS_SYNC_ALWAYS) ? 1 : 0;
 	ASSERT3P(zv->zv_volmetablocksize, !=, 0);
 
+#if DEBUG
+	if (inject_error.delay.pre_uzfs_write_data == 1) {
+		LOG_DEBUG("delaying write");
+		sleep(10);
+	}
+#endif
 	if (metadata != NULL) {
 		mlen = get_metadata_len(zv, offset, len);
 		VERIFY((mlen % metadatasize) == 0);
@@ -478,6 +489,13 @@ uzfs_update_metadata_granularity(zvol_state_t *zv, uint64_t tgt_block_size)
 
 	if (tgt_block_size == zv->zv_metavolblocksize)
 		return (0);	/* nothing to update */
+
+	if ((zv->zv_metavolblocksize != 0) &&
+	    (tgt_block_size != zv->zv_metavolblocksize)) {
+		LOG_ERR("Update metadata granularity from old %lu to new %lu "
+		    "failed", zv->zv_metavolblocksize, tgt_block_size);
+		return (-1);
+	}
 
 	tx = dmu_tx_create(zv->zv_objset);
 	dmu_tx_hold_zap(tx, ZVOL_ZAP_OBJ, TRUE, NULL);

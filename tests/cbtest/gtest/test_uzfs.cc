@@ -556,42 +556,32 @@ TEST(uZFS, RemovePendingCmds) {
 	EXPECT_EQ(0, complete_q_list_count(zinfo));
 }
 
-/* Create clone for snap rebuild */
+/* Internal clone create API testing */
 TEST(SnapRebuild, CloneCreate) {
+
+	int ret_val = 0;
 
 	/* Create snapshot and clone it */
 	EXPECT_EQ(0, uzfs_zvol_get_or_create_internal_clone(
-	    zinfo->main_zv, &zinfo->snap_zv, &zinfo->clone_zv));
+	    zinfo->main_zv, &zinfo->snap_zv, &zinfo->clone_zv, &ret_val));
 	EXPECT_EQ(NULL, !zinfo->snap_zv);
 	EXPECT_EQ(NULL, !zinfo->clone_zv);
-	
-	EXPECT_EQ(0, uzfs_zvol_destroy_internal_clone(
-	    zinfo->main_zv, &zinfo->snap_zv, &zinfo->clone_zv));
+	EXPECT_EQ(0, ret_val);
+
+	/* Release clone and snapshot */
+	EXPECT_EQ(0, uzfs_zvol_release_internal_clone(zinfo->main_zv,
+	    &zinfo->snap_zv, &zinfo->clone_zv));
 	EXPECT_EQ(NULL, zinfo->snap_zv);
 	EXPECT_EQ(NULL, zinfo->clone_zv);
 
-}
-
-/* Retry creating same clone, it should error out with EEXIST */
-TEST(SnapRebuild, CloneReCreateFailure) {
-
-	zvol_state_t *dup_clone_zv = NULL;
-
-	/* Create snapshot and clone it */
+	/* Create clone, this time it should load existing clone */
 	EXPECT_EQ(0, uzfs_zvol_get_or_create_internal_clone(
-	    zinfo->main_zv, &zinfo->snap_zv, &zinfo->clone_zv));
+	    zinfo->main_zv, &zinfo->snap_zv, &zinfo->clone_zv, &ret_val));
 	EXPECT_EQ(NULL, !zinfo->snap_zv);
 	EXPECT_EQ(NULL, !zinfo->clone_zv);
+	EXPECT_EQ(EEXIST, ret_val);
 
-	/* Release dataset and close it */
-	uzfs_close_dataset(zinfo->snap_zv);
-
-	/* Try to create clone, this time it should error out */
-	EXPECT_EQ(EBUSY, uzfs_zvol_get_or_create_internal_clone(
-	    zinfo->main_zv, &zinfo->snap_zv, &dup_clone_zv));
-	EXPECT_EQ(NULL, !zinfo->snap_zv);
-	EXPECT_EQ(NULL, dup_clone_zv);
-
+	/* Destroy internal clone and internal snapshot */
 	EXPECT_EQ(0, uzfs_zvol_destroy_internal_clone(
 	    zinfo->main_zv, &zinfo->snap_zv, &zinfo->clone_zv));
 	EXPECT_EQ(NULL, zinfo->snap_zv);

@@ -402,7 +402,7 @@ uzfs_zvol_destroy_internal_clone(zvol_state_t *zv,
  */
 int
 uzfs_zvol_get_or_create_internal_clone(zvol_state_t *zv,
-    zvol_state_t **snap_zv, zvol_state_t **clone_zv)
+    zvol_state_t **snap_zv, zvol_state_t **clone_zv, int *error)
 {
 	int ret = 0;
 	char *snapname = NULL;
@@ -427,10 +427,13 @@ uzfs_zvol_get_or_create_internal_clone(zvol_state_t *zv,
 	    REBUILD_SNAPSHOT_CLONENAME);
 
 	ret = dmu_objset_clone(clonename, snapname);
+	if (ret == EEXIST)
+		LOG_INFO("Volume:%s already has clone for snap rebuild",
+		    zv->zv_name);
+	if (error)
+		*error = ret;
+
 	if ((ret == EEXIST) || (ret == 0)) {
-		if (ret == EEXIST)
-			LOG_INFO("Volume:%s already has clone for snap rebuild",
-			    zv->zv_name);
 		ret = uzfs_open_dataset(zv->zv_spa, clone_subname, clone_zv);
 		if (ret == 0) {
 			ret = uzfs_hold_dataset(*clone_zv);
@@ -438,6 +441,12 @@ uzfs_zvol_get_or_create_internal_clone(zvol_state_t *zv,
 				LOG_ERR("Failed to hold clone: %d", ret);
 				uzfs_close_dataset(*clone_zv);
 				*clone_zv = NULL;
+				/* Destroy clone */
+				ret = dsl_destroy_head(clonename);
+				if (ret != 0)
+					LOG_ERRNO("Rebuild_clone destroy "
+					    "failed on:%s with err:%d",
+					    zv->zv_name, ret);
 				uzfs_close_dataset(*snap_zv);
 				destroy_snapshot_zv(zv,
 				    REBUILD_SNAPSHOT_SNAPNAME);

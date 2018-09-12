@@ -1495,7 +1495,7 @@ open_zvol(int fd, zvol_info_t **zinfopp)
 		ASSERT3P(zinfo->clone_zv, ==, NULL);
 		/* Create clone for rebuild */
 		if (uzfs_zvol_get_or_create_internal_clone(zinfo->main_zv,
-		    &zinfo->snap_zv, &zinfo->clone_zv) != 0) {
+		    &zinfo->snap_zv, &zinfo->clone_zv, NULL) != 0) {
 			if (rele_dataset_on_error == 1)
 				uzfs_rele_dataset(zv);
 			LOG_ERR("Failed to create clone for rebuild");

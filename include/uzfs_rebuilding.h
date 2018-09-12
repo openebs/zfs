@@ -58,6 +58,9 @@ int
 uzfs_zvol_create_snaprebuild_clone(zvol_state_t *zv,
     zvol_state_t **snap_zv, zvol_state_t **clone_zv);
 int
+uzfs_zvol_release_rebuild_dataset(zvol_state_t *zv,
+    zvol_state_t **snap_zv, zvol_state_t **clone_zv);
+int
 uzfs_zvol_destroy_snaprebuild_clone(zvol_state_t *zv,
     zvol_state_t **snap_zv, zvol_state_t **clone_zv);
 #ifdef __cplusplus

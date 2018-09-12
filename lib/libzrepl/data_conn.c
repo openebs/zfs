@@ -1645,7 +1645,7 @@ exit:
 
 	reinitialize_zv_state(zinfo->original_zv);
 	zinfo->is_io_receiver_created = B_FALSE;
-	(void) uzfs_zvol_destroy_snaprebuild_clone(zinfo->original_zv,
+	(void) uzfs_zvol_release_rebuild_dataset(zinfo->original_zv,
 	    &zinfo->snap_zv, &zinfo->clone_zv);
 	uzfs_zinfo_drop_refcnt(zinfo);
 thread_exit:

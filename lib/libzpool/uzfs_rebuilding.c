@@ -318,6 +318,37 @@ exit:
 }
 
 int
+uzfs_zvol_release_rebuild_dataset(zvol_state_t *zv,
+    zvol_state_t **snap_zv, zvol_state_t **clone_zv)
+{
+	int ret = 0;
+	char *clonename;
+
+	if (*snap_zv == NULL) {
+		ASSERT(*clone_zv == NULL);
+		return (ret);
+	}
+
+	clonename = kmem_asprintf("%s/%s_%s", spa_name(zv->zv_spa),
+	    strchr(zv->zv_name, '/') + 1,
+	    REBUILD_SNAPSHOT_CLONENAME);
+
+	LOG_INFO("Closing rebuild_snap and rebuild_clone dataset on:%s",
+	    zv->zv_name);
+	/* Close clone dataset */
+	uzfs_close_dataset(*clone_zv);
+	*clone_zv = NULL;
+
+	/* Close snapshot dataset */
+	uzfs_close_dataset(*snap_zv);
+	*snap_zv = NULL;
+
+	strfree(clonename);
+
+	return (ret);
+}
+
+int
 uzfs_zvol_destroy_snaprebuild_clone(zvol_state_t *zv,
     zvol_state_t **snap_zv, zvol_state_t **clone_zv)
 {

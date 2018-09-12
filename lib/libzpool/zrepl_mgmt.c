@@ -320,7 +320,7 @@ uzfs_zinfo_destroy(const char *name, spa_t *spa)
 				clone_zv = zinfo->clone_zv;
 				snap_zv = zinfo->snap_zv;
 				uzfs_mark_offline_and_free_zinfo(zinfo);
-				(void) uzfs_zvol_destroy_snaprebuild_clone(
+				(void) uzfs_zvol_release_rebuild_dataset(
 				    original_zv, &snap_zv, &clone_zv);
 				uzfs_close_dataset(original_zv);
 				mutex_enter(&zvol_list_mutex);
@@ -340,7 +340,7 @@ uzfs_zinfo_destroy(const char *name, spa_t *spa)
 				clone_zv = zinfo->clone_zv;
 				snap_zv = zinfo->snap_zv;
 				uzfs_mark_offline_and_free_zinfo(zinfo);
-				(void) uzfs_zvol_destroy_snaprebuild_clone(
+				(void) uzfs_zvol_release_rebuild_dataset(
 				    original_zv, &snap_zv, &clone_zv);
 				uzfs_close_dataset(original_zv);
 				mutex_enter(&zvol_list_mutex);

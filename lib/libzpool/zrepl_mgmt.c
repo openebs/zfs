@@ -303,7 +303,7 @@ uzfs_zinfo_destroy(const char *name, spa_t *spa)
 	int namelen = ((name) ? strlen(name) : 0);
 	zvol_state_t  *clone_zv = NULL;
 	zvol_state_t  *snap_zv = NULL;
-	zvol_state_t  *original_zv;
+	zvol_state_t  *main_zv;
 
 	mutex_enter(&zvol_list_mutex);
 
@@ -316,13 +316,13 @@ uzfs_zinfo_destroy(const char *name, spa_t *spa)
 				    zinfo_next);
 
 				mutex_exit(&zvol_list_mutex);
-				original_zv = zinfo->original_zv;
+				main_zv = zinfo->main_zv;
 				clone_zv = zinfo->clone_zv;
 				snap_zv = zinfo->snap_zv;
 				uzfs_mark_offline_and_free_zinfo(zinfo);
-				(void) uzfs_zvol_release_rebuild_dataset(
-				    original_zv, &snap_zv, &clone_zv);
-				uzfs_close_dataset(original_zv);
+				(void) uzfs_zvol_release_internal_clone(
+				    main_zv, &snap_zv, &clone_zv);
+				uzfs_close_dataset(main_zv);
 				mutex_enter(&zvol_list_mutex);
 			}
 		}
@@ -336,13 +336,13 @@ uzfs_zinfo_destroy(const char *name, spa_t *spa)
 				    zinfo_next);
 
 				mutex_exit(&zvol_list_mutex);
-				original_zv = zinfo->original_zv;
+				main_zv = zinfo->main_zv;
 				clone_zv = zinfo->clone_zv;
 				snap_zv = zinfo->snap_zv;
 				uzfs_mark_offline_and_free_zinfo(zinfo);
-				(void) uzfs_zvol_release_rebuild_dataset(
-				    original_zv, &snap_zv, &clone_zv);
-				uzfs_close_dataset(original_zv);
+				(void) uzfs_zvol_release_internal_clone(
+				    main_zv, &snap_zv, &clone_zv);
+				uzfs_close_dataset(main_zv);
 				mutex_enter(&zvol_list_mutex);
 				break;
 			}
@@ -372,7 +372,7 @@ uzfs_zinfo_init(void *zv, const char *ds_name, nvlist_t *create_props)
 	uzfs_zinfo_init_mutex(zinfo);
 
 	strlcpy(zinfo->name, ds_name, MAXNAMELEN);
-	zinfo->original_zv = zv;
+	zinfo->main_zv = zv;
 	zinfo->state = ZVOL_INFO_STATE_ONLINE;
 	/* iSCSI target will overwrite this value during handshake */
 	zinfo->update_ionum_interval = 6000;

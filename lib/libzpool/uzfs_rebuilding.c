@@ -317,8 +317,11 @@ exit:
 	return (count);
 }
 
+/*
+ * This API is used to release internal clone dataset
+ */
 int
-uzfs_zvol_release_rebuild_dataset(zvol_state_t *zv,
+uzfs_zvol_release_internal_clone(zvol_state_t *zv,
     zvol_state_t **snap_zv, zvol_state_t **clone_zv)
 {
 	int ret = 0;
@@ -348,8 +351,12 @@ uzfs_zvol_release_rebuild_dataset(zvol_state_t *zv,
 	return (ret);
 }
 
+/*
+ * This API is used to delete internal
+ * cloned volume and backing snapshot.
+ */
 int
-uzfs_zvol_destroy_snaprebuild_clone(zvol_state_t *zv,
+uzfs_zvol_destroy_internal_clone(zvol_state_t *zv,
     zvol_state_t **snap_zv, zvol_state_t **clone_zv)
 {
 	int ret = 0;
@@ -388,10 +395,13 @@ uzfs_zvol_destroy_snaprebuild_clone(zvol_state_t *zv,
 }
 
 /*
- * Create snapshot and create clone from that snapshot
+ * This API is used to create internal clone for rebuild.
+ * It will load the clone dataset if clone already exist.
+ * Cloned volume created through this API can not be exposed
+ * to client.
  */
 int
-uzfs_zvol_create_snaprebuild_clone(zvol_state_t *zv,
+uzfs_zvol_get_or_create_internal_clone(zvol_state_t *zv,
     zvol_state_t **snap_zv, zvol_state_t **clone_zv)
 {
 	int ret = 0;
@@ -433,8 +443,12 @@ uzfs_zvol_create_snaprebuild_clone(zvol_state_t *zv,
 				    REBUILD_SNAPSHOT_SNAPNAME);
 				*snap_zv = NULL;
 			}
-		} else
+		} else {
+			uzfs_close_dataset(*snap_zv);
+			destroy_snapshot_zv(zv, REBUILD_SNAPSHOT_SNAPNAME);
+			*snap_zv = NULL;
 			LOG_INFO("Clone:%s not able to open", clone_subname);
+		}
 	} else if (ret != 0) {
 		uzfs_close_dataset(*snap_zv);
 		destroy_snapshot_zv(zv, REBUILD_SNAPSHOT_SNAPNAME);

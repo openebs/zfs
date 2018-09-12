@@ -465,7 +465,7 @@ zvol_set_volsize(const char *name, uint64_t volsize)
 	zvol_info_t *zinfo = uzfs_zinfo_lookup(name);
 	if (zinfo == NULL)
 		return (SET_ERROR(ENOENT));
-	zv = zinfo->original_zv;
+	zv = zinfo->main_zv;
 #else
 	zv = zvol_find_by_name(name, RW_READER);
 	ASSERT(zv == NULL || (MUTEX_HELD(&zv->zv_state_lock) &&

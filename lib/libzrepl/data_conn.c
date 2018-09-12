@@ -227,7 +227,7 @@ uzfs_submit_writes(zvol_info_t *zinfo, zvol_io_cmd_t *zio_cmd)
 		if (remain < write_hdr->len)
 			return (-1);
 
-		rc = uzfs_write_data(zinfo->original_zv, datap, data_offset,
+		rc = uzfs_write_data(zinfo->main_zv, datap, data_offset,
 		    write_hdr->len, &metadata, is_rebuild);
 		if (rc != 0)
 			break;
@@ -281,7 +281,7 @@ uzfs_zvol_worker(void *arg)
 	zio_cmd = (zvol_io_cmd_t *)arg;
 	hdr = &zio_cmd->hdr;
 	zinfo = zio_cmd->zinfo;
-	zvol_state = zinfo->original_zv;
+	zvol_state = zinfo->main_zv;
 	rebuild_cmd_req = hdr->flags & ZVOL_OP_FLAG_REBUILD;
 	read_metadata = hdr->flags & ZVOL_OP_FLAG_READ_METADATA;
 
@@ -310,7 +310,7 @@ uzfs_zvol_worker(void *arg)
 	}
 	switch (hdr->opcode) {
 		case ZVOL_OPCODE_READ:
-			rc = uzfs_read_data(zinfo->original_zv,
+			rc = uzfs_read_data(zinfo->main_zv,
 			    (char *)zio_cmd->buf,
 			    hdr->offset, hdr->len,
 			    metadata_desc);
@@ -323,7 +323,7 @@ uzfs_zvol_worker(void *arg)
 			break;
 
 		case ZVOL_OPCODE_SYNC:
-			uzfs_flush_data(zinfo->original_zv);
+			uzfs_flush_data(zinfo->main_zv);
 			atomic_inc_64(&zinfo->sync_req_received_cnt);
 			break;
 
@@ -459,8 +459,8 @@ uzfs_zvol_rebuild_dw_replica(void *arg)
 
 	/* Set state in-progess state now */
 	checkpointed_ionum = uzfs_zvol_get_last_committed_io_no(
-	    zinfo->original_zv, HEALTHY_IO_SEQNUM);
-	zvol_state = zinfo->original_zv;
+	    zinfo->main_zv, HEALTHY_IO_SEQNUM);
+	zvol_state = zinfo->main_zv;
 	bzero(&hdr, sizeof (hdr));
 	hdr.status = ZVOL_OP_STATUS_OK;
 	hdr.version = REPLICA_VERSION;
@@ -482,7 +482,7 @@ uzfs_zvol_rebuild_dw_replica(void *arg)
 
 next_step:
 
-	if (ZVOL_IS_REBUILDING_ERRORED(zinfo->original_zv)) {
+	if (ZVOL_IS_REBUILDING_ERRORED(zinfo->main_zv)) {
 		LOG_ERR("rebuilding errored.. for %s..", zinfo->name);
 		rc = -1;
 		goto exit;
@@ -522,7 +522,7 @@ next_step:
 
 	while (1) {
 
-		if (ZVOL_IS_REBUILDING_ERRORED(zinfo->original_zv)) {
+		if (ZVOL_IS_REBUILDING_ERRORED(zinfo->main_zv)) {
 			LOG_ERR("rebuilding already errored.. for %s..",
 			    zinfo->name);
 			rc = -1;
@@ -573,30 +573,30 @@ next_step:
 exit:
 	uzfs_zvol_remove_from_fd_list(zinfo, sfd);
 
-	mutex_enter(&zinfo->original_zv->rebuild_mtx);
+	mutex_enter(&zinfo->main_zv->rebuild_mtx);
 	if (rc != 0) {
-		uzfs_zvol_set_rebuild_status(zinfo->original_zv,
+		uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 		    ZVOL_REBUILDING_ERRORED);
-		(zinfo->original_zv->rebuild_info.rebuild_failed_cnt) += 1;
+		(zinfo->main_zv->rebuild_info.rebuild_failed_cnt) += 1;
 		LOG_ERR("uzfs_zvol_rebuild_dw_replica thread exiting, "
 		    "rebuilding failed zvol: %s", zinfo->name);
 	}
-	(zinfo->original_zv->rebuild_info.rebuild_done_cnt) += 1;
-	if (zinfo->original_zv->rebuild_info.rebuild_cnt ==
-	    zinfo->original_zv->rebuild_info.rebuild_done_cnt) {
-		if (zinfo->original_zv->rebuild_info.rebuild_failed_cnt != 0)
-			uzfs_zvol_set_rebuild_status(zinfo->original_zv,
+	(zinfo->main_zv->rebuild_info.rebuild_done_cnt) += 1;
+	if (zinfo->main_zv->rebuild_info.rebuild_cnt ==
+	    zinfo->main_zv->rebuild_info.rebuild_done_cnt) {
+		if (zinfo->main_zv->rebuild_info.rebuild_failed_cnt != 0)
+			uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 			    ZVOL_REBUILDING_FAILED);
 		else {
 			/* Mark replica healthy now */
-			uzfs_zvol_set_rebuild_status(zinfo->original_zv,
+			uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 			    ZVOL_REBUILDING_DONE);
-			uzfs_zvol_set_status(zinfo->original_zv,
+			uzfs_zvol_set_status(zinfo->main_zv,
 			    ZVOL_STATUS_HEALTHY);
 			uzfs_update_ionum_interval(zinfo, 0);
 		}
 	}
-	mutex_exit(&zinfo->original_zv->rebuild_mtx);
+	mutex_exit(&zinfo->main_zv->rebuild_mtx);
 
 	kmem_free(arg, sizeof (rebuild_thread_arg_t));
 	if (zio_cmd != NULL)
@@ -647,9 +647,9 @@ uzfs_zvol_timer_thread(void)
 		next_check = now = time(NULL);
 		SLIST_FOREACH(n_zinfo, &zvol_node_list, node_next) {
 			zinfo = (zvol_info_t *)n_zinfo->node;
-			if (uzfs_zvol_get_status(zinfo->original_zv) ==
+			if (uzfs_zvol_get_status(zinfo->main_zv) ==
 			    ZVOL_STATUS_HEALTHY &&
-			    zinfo->original_zv->zv_objset) {
+			    zinfo->main_zv->zv_objset) {
 				next_check = zinfo->checkpointed_time +
 				    zinfo->update_ionum_interval;
 				if (next_check <= now) {
@@ -658,7 +658,7 @@ uzfs_zvol_timer_thread(void)
 					    zinfo->checkpointed_ionum,
 					    zinfo->name);
 					uzfs_zvol_store_last_committed_io_no(
-					    zinfo->original_zv,
+					    zinfo->main_zv,
 					    HEALTHY_IO_SEQNUM,
 					    zinfo->checkpointed_ionum);
 					zinfo->checkpointed_ionum =
@@ -667,9 +667,9 @@ uzfs_zvol_timer_thread(void)
 					next_check = now +
 					    zinfo->update_ionum_interval;
 				}
-			} else if (uzfs_zvol_get_status(zinfo->original_zv) ==
+			} else if (uzfs_zvol_get_status(zinfo->main_zv) ==
 			    ZVOL_STATUS_DEGRADED &&
-			    zinfo->original_zv->zv_objset) {
+			    zinfo->main_zv->zv_objset) {
 				next_check = zinfo->degraded_checkpointed_time
 				    + DEGRADED_IO_UPDATE_INTERVAL;
 				if (next_check <= now &&
@@ -682,7 +682,7 @@ uzfs_zvol_timer_thread(void)
 					    zinfo->degraded_checkpointed_ionum,
 					    zinfo->name);
 					uzfs_zvol_store_last_committed_io_no(
-					    zinfo->original_zv,
+					    zinfo->main_zv,
 					    DEGRADED_IO_SEQNUM,
 					    zinfo->degraded_checkpointed_ionum);
 					zinfo->degraded_checkpointed_time =
@@ -1119,7 +1119,7 @@ read_socket:
 			    == 1)
 				sleep(5);
 #endif
-			rc = uzfs_get_io_diff(zinfo->original_zv, &metadata,
+			rc = uzfs_get_io_diff(zinfo->main_zv, &metadata,
 			    uzfs_zvol_rebuild_scanner_callback,
 			    rebuild_req_offset, rebuild_req_len, &warg);
 			if (rc != 0) {
@@ -1441,7 +1441,7 @@ open_zvol(int fd, zvol_info_t **zinfopp)
 		goto open_reply;
 	}
 
-	zv = zinfo->original_zv;
+	zv = zinfo->main_zv;
 	ASSERT3P(zv, !=, NULL);
 
 	ASSERT3P(zv->zv_status, ==, ZVOL_STATUS_DEGRADED);
@@ -1494,7 +1494,7 @@ open_zvol(int fd, zvol_info_t **zinfopp)
 	if (zinfo->snap_zv == NULL) {
 		ASSERT3P(zinfo->clone_zv, ==, NULL);
 		/* Create clone for rebuild */
-		if (uzfs_zvol_create_snaprebuild_clone(zinfo->original_zv,
+		if (uzfs_zvol_get_or_create_internal_clone(zinfo->main_zv,
 		    &zinfo->snap_zv, &zinfo->clone_zv) != 0) {
 			if (rele_dataset_on_error == 1)
 				uzfs_rele_dataset(zv);
@@ -1643,9 +1643,9 @@ exit:
 
 	zinfo->io_ack_waiting = 0;
 
-	reinitialize_zv_state(zinfo->original_zv);
+	reinitialize_zv_state(zinfo->main_zv);
 	zinfo->is_io_receiver_created = B_FALSE;
-	(void) uzfs_zvol_release_rebuild_dataset(zinfo->original_zv,
+	(void) uzfs_zvol_release_internal_clone(zinfo->main_zv,
 	    &zinfo->snap_zv, &zinfo->clone_zv);
 	uzfs_zinfo_drop_refcnt(zinfo);
 thread_exit:

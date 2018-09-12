@@ -560,13 +560,13 @@ TEST(uZFS, RemovePendingCmds) {
 TEST(SnapRebuild, CloneCreate) {
 
 	/* Create snapshot and clone it */
-	EXPECT_EQ(0, uzfs_zvol_create_snaprebuild_clone(
-	    zinfo->original_zv, &zinfo->snap_zv, &zinfo->clone_zv));
+	EXPECT_EQ(0, uzfs_zvol_get_or_create_internal_clone(
+	    zinfo->main_zv, &zinfo->snap_zv, &zinfo->clone_zv));
 	EXPECT_EQ(NULL, !zinfo->snap_zv);
 	EXPECT_EQ(NULL, !zinfo->clone_zv);
 	
-	EXPECT_EQ(0, uzfs_zvol_destroy_snaprebuild_clone(
-	    zinfo->original_zv, &zinfo->snap_zv, &zinfo->clone_zv));
+	EXPECT_EQ(0, uzfs_zvol_destroy_internal_clone(
+	    zinfo->main_zv, &zinfo->snap_zv, &zinfo->clone_zv));
 	EXPECT_EQ(NULL, zinfo->snap_zv);
 	EXPECT_EQ(NULL, zinfo->clone_zv);
 
@@ -578,8 +578,8 @@ TEST(SnapRebuild, CloneReCreateFailure) {
 	zvol_state_t *dup_clone_zv = NULL;
 
 	/* Create snapshot and clone it */
-	EXPECT_EQ(0, uzfs_zvol_create_snaprebuild_clone(
-	    zinfo->original_zv, &zinfo->snap_zv, &zinfo->clone_zv));
+	EXPECT_EQ(0, uzfs_zvol_get_or_create_internal_clone(
+	    zinfo->main_zv, &zinfo->snap_zv, &zinfo->clone_zv));
 	EXPECT_EQ(NULL, !zinfo->snap_zv);
 	EXPECT_EQ(NULL, !zinfo->clone_zv);
 
@@ -587,13 +587,13 @@ TEST(SnapRebuild, CloneReCreateFailure) {
 	uzfs_close_dataset(zinfo->snap_zv);
 
 	/* Try to create clone, this time it should error out */
-	EXPECT_EQ(EBUSY, uzfs_zvol_create_snaprebuild_clone(
-	    zinfo->original_zv, &zinfo->snap_zv, &dup_clone_zv));
+	EXPECT_EQ(EBUSY, uzfs_zvol_get_or_create_internal_clone(
+	    zinfo->main_zv, &zinfo->snap_zv, &dup_clone_zv));
 	EXPECT_EQ(NULL, !zinfo->snap_zv);
 	EXPECT_EQ(NULL, dup_clone_zv);
 
-	EXPECT_EQ(0, uzfs_zvol_destroy_snaprebuild_clone(
-	    zinfo->original_zv, &zinfo->snap_zv, &zinfo->clone_zv));
+	EXPECT_EQ(0, uzfs_zvol_destroy_internal_clone(
+	    zinfo->main_zv, &zinfo->snap_zv, &zinfo->clone_zv));
 	EXPECT_EQ(NULL, zinfo->snap_zv);
 	EXPECT_EQ(NULL, zinfo->clone_zv);
 }
@@ -608,8 +608,8 @@ TEST(SnapCreate, SnapCreateFailureHigherIO) {
 	 * By default volume state is marked downgraded
 	 * so updation of ZAP attribute would fail
 	 */
-	uzfs_zvol_set_rebuild_status(zinfo->original_zv, ZVOL_REBUILDING_INIT);
-	uzfs_zvol_set_status(zinfo->original_zv, ZVOL_STATUS_DEGRADED);
+	uzfs_zvol_set_rebuild_status(zinfo->main_zv, ZVOL_REBUILDING_INIT);
+	uzfs_zvol_set_status(zinfo->main_zv, ZVOL_STATUS_DEGRADED);
 
 	zinfo->running_ionum = snapshot_io_num + 1;
 	/* Create snapshot */
@@ -624,8 +624,8 @@ TEST(SnapCreate, SnapCreateFailure) {
 	 * By default volume state is marked downgraded
 	 * so updation of ZAP attribute would fail
 	 */
-	uzfs_zvol_set_rebuild_status(zinfo->original_zv, ZVOL_REBUILDING_INIT);
-	uzfs_zvol_set_status(zinfo->original_zv, ZVOL_STATUS_DEGRADED);
+	uzfs_zvol_set_rebuild_status(zinfo->main_zv, ZVOL_REBUILDING_INIT);
+	uzfs_zvol_set_status(zinfo->main_zv, ZVOL_STATUS_DEGRADED);
 
 	zinfo->running_ionum = snapshot_io_num -1;
 	/* Create snapshot */
@@ -640,8 +640,8 @@ TEST(SnapCreate, SnapCreateSuccess) {
 	 * Set volume state to healthy so that we can
 	 * update ZAP attribute and take snapshot
 	 */
-	uzfs_zvol_set_rebuild_status(zinfo->original_zv, ZVOL_REBUILDING_DONE);
-	uzfs_zvol_set_status(zinfo->original_zv, ZVOL_STATUS_HEALTHY);
+	uzfs_zvol_set_rebuild_status(zinfo->main_zv, ZVOL_REBUILDING_DONE);
+	uzfs_zvol_set_status(zinfo->main_zv, ZVOL_STATUS_HEALTHY);
 
 	zinfo->running_ionum = snapshot_io_num -1;
 	/* Create snapshot */
@@ -737,7 +737,7 @@ TEST(uZFSRebuildStart, TestStartRebuild) {
 	/* invalid rebuild state */
 	for (i = 1; i < 5; i++) {
 		conn->conn_buf = NULL;
-		uzfs_zvol_set_rebuild_status(zinfo->original_zv,
+		uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 		    rebuild_status[i]);
 		set_start_rebuild_mgmt_ack(mack, "vol1", NULL);
 		handle_start_rebuild_req(conn, hdrp, payload, sizeof (mgmt_ack_t));
@@ -747,25 +747,25 @@ TEST(uZFSRebuildStart, TestStartRebuild) {
 
 	/* rebuild for single replica case */
 	conn->conn_buf = NULL;
-	uzfs_zvol_set_rebuild_status(zinfo->original_zv,
+	uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 	    ZVOL_REBUILDING_INIT);
 	set_start_rebuild_mgmt_ack(mack, "vol1", NULL);
 	handle_start_rebuild_req(conn, hdrp, payload, sizeof (mgmt_ack_t));
 	EXPECT_EQ(ZVOL_OP_STATUS_OK, ((zvol_io_hdr_t *)conn->conn_buf)->status);
-	EXPECT_EQ(ZVOL_REBUILDING_DONE, uzfs_zvol_get_rebuild_status(zinfo->original_zv));
-	EXPECT_EQ(ZVOL_STATUS_HEALTHY, uzfs_zvol_get_status(zinfo->original_zv));
+	EXPECT_EQ(ZVOL_REBUILDING_DONE, uzfs_zvol_get_rebuild_status(zinfo->main_zv));
+	EXPECT_EQ(ZVOL_STATUS_HEALTHY, uzfs_zvol_get_status(zinfo->main_zv));
 	EXPECT_EQ(2, zinfo->refcnt);
 
 	/* rebuild in two replicas case with 'connect' failure */
 	conn->conn_buf = NULL;
-	uzfs_zvol_set_rebuild_status(zinfo->original_zv,
+	uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 	    ZVOL_REBUILDING_INIT);
 	set_start_rebuild_mgmt_ack(mack, "pool1/vol1", "vol2");
 	handle_start_rebuild_req(conn, hdrp, payload, sizeof (mgmt_ack_t));
 	EXPECT_EQ(ZVOL_OP_STATUS_OK, ((zvol_io_hdr_t *)conn->conn_buf)->status);
 	while (1) {
 		/* wait to get FAILD status, and threads to return with refcnt to 2 */
-		if (ZVOL_REBUILDING_FAILED != uzfs_zvol_get_rebuild_status(zinfo->original_zv))
+		if (ZVOL_REBUILDING_FAILED != uzfs_zvol_get_rebuild_status(zinfo->main_zv))
 			sleep(1);
 		else if (2 != zinfo->refcnt)
 			sleep(1);
@@ -775,7 +775,7 @@ TEST(uZFSRebuildStart, TestStartRebuild) {
 
 	/* rebuild in three replicas case with invalid volname to rebuild */
 	conn->conn_buf = NULL;
-	uzfs_zvol_set_rebuild_status(zinfo->original_zv,
+	uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 	    ZVOL_REBUILDING_INIT);
 	set_start_rebuild_mgmt_ack(mack, "pool1/vol1", "vol3");
 	set_start_rebuild_mgmt_ack(mack + 1, "vol2", "vol3");
@@ -783,7 +783,7 @@ TEST(uZFSRebuildStart, TestStartRebuild) {
 	EXPECT_EQ(ZVOL_OP_STATUS_FAILED, ((zvol_io_hdr_t *)conn->conn_buf)->status);
 	while (1) {
 		/* wait to get FAILD status, and threads to return with refcnt to 2 */
-		if (ZVOL_REBUILDING_FAILED != uzfs_zvol_get_rebuild_status(zinfo->original_zv))
+		if (ZVOL_REBUILDING_FAILED != uzfs_zvol_get_rebuild_status(zinfo->main_zv))
 			sleep(1);
 		else if (2 != zinfo->refcnt)
 			sleep(1);
@@ -793,7 +793,7 @@ TEST(uZFSRebuildStart, TestStartRebuild) {
 
 	/* rebuild in three replicas case with 'connect' failing */
 	conn->conn_buf = NULL;
-	uzfs_zvol_set_rebuild_status(zinfo->original_zv,
+	uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 	    ZVOL_REBUILDING_INIT);
 	set_start_rebuild_mgmt_ack(mack, "pool1/vol1", "vol3");
 	set_start_rebuild_mgmt_ack(mack + 1, "pool1/vol1", "vol3");
@@ -801,7 +801,7 @@ TEST(uZFSRebuildStart, TestStartRebuild) {
 	EXPECT_EQ(ZVOL_OP_STATUS_OK, ((zvol_io_hdr_t *)conn->conn_buf)->status);
 	while (1) {
 		/* wait to get FAILD status, and threads to return with refcnt to 2 */
-		if (ZVOL_REBUILDING_FAILED != uzfs_zvol_get_rebuild_status(zinfo->original_zv))
+		if (ZVOL_REBUILDING_FAILED != uzfs_zvol_get_rebuild_status(zinfo->main_zv))
 			sleep(1);
 		else if (2 != zinfo->refcnt)
 			sleep(1);
@@ -971,8 +971,8 @@ uzfs_mock_zvol_rebuild_dw_replica(void *arg)
 send_hdr_again:
 	/* Set state in-progess state now */
 	checkpointed_ionum = uzfs_zvol_get_last_committed_io_no(
-	    zinfo->original_zv, (char *)HEALTHY_IO_SEQNUM);
-	zvol_state = zinfo->original_zv;
+	    zinfo->main_zv, (char *)HEALTHY_IO_SEQNUM);
+	zvol_state = zinfo->main_zv;
 	bzero(&hdr, sizeof (hdr));
 	hdr.status = ZVOL_OP_STATUS_OK;
 	hdr.version = REPLICA_VERSION;
@@ -1119,29 +1119,29 @@ next_step:
 	}
 
 exit:
-	mutex_enter(&zinfo->original_zv->rebuild_mtx);
+	mutex_enter(&zinfo->main_zv->rebuild_mtx);
 	if (rc != 0) {
-		uzfs_zvol_set_rebuild_status(zinfo->original_zv,
+		uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 		    ZVOL_REBUILDING_ERRORED);
-		(zinfo->original_zv->rebuild_info.rebuild_failed_cnt) += 1;
+		(zinfo->main_zv->rebuild_info.rebuild_failed_cnt) += 1;
 		LOG_ERR("uzfs_zvol_rebuild_dw_replica thread exiting, "
 		    "rebuilding failed zvol: %s", zinfo->name);
 	}
-	(zinfo->original_zv->rebuild_info.rebuild_done_cnt) += 1;
-	if (zinfo->original_zv->rebuild_info.rebuild_cnt ==
-	    zinfo->original_zv->rebuild_info.rebuild_done_cnt) {
-		if (zinfo->original_zv->rebuild_info.rebuild_failed_cnt != 0)
-			uzfs_zvol_set_rebuild_status(zinfo->original_zv,
+	(zinfo->main_zv->rebuild_info.rebuild_done_cnt) += 1;
+	if (zinfo->main_zv->rebuild_info.rebuild_cnt ==
+	    zinfo->main_zv->rebuild_info.rebuild_done_cnt) {
+		if (zinfo->main_zv->rebuild_info.rebuild_failed_cnt != 0)
+			uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 			    ZVOL_REBUILDING_FAILED);
 		else {
 			/* Mark replica healthy now */
-			uzfs_zvol_set_rebuild_status(zinfo->original_zv,
+			uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 			    ZVOL_REBUILDING_DONE);
-			uzfs_zvol_set_status(zinfo->original_zv, ZVOL_STATUS_HEALTHY);
+			uzfs_zvol_set_status(zinfo->main_zv, ZVOL_STATUS_HEALTHY);
 			uzfs_update_ionum_interval(zinfo, 0);
 		}
 	}
-	mutex_exit(&zinfo->original_zv->rebuild_mtx);
+	mutex_exit(&zinfo->main_zv->rebuild_mtx);
 
 	kmem_free(arg, sizeof (rebuild_thread_arg_t));
 	if (zio_cmd != NULL)
@@ -1165,11 +1165,11 @@ void execute_rebuild_test_case(const char *s, int test_case,
 
 	rebuild_test_case = test_case;
 	create_rebuild_args(&rebuild_args);
-	zinfo->original_zv->zv_status = ZVOL_STATUS_DEGRADED;
-	memset(&zinfo->original_zv->rebuild_info, 0, sizeof (zvol_rebuild_info_t));
-	zinfo->original_zv->rebuild_info.rebuild_cnt = 1;
+	zinfo->main_zv->zv_status = ZVOL_STATUS_DEGRADED;
+	memset(&zinfo->main_zv->rebuild_info, 0, sizeof (zvol_rebuild_info_t));
+	zinfo->main_zv->rebuild_info.rebuild_cnt = 1;
 	uzfs_zinfo_take_refcnt(zinfo);
-	uzfs_zvol_set_rebuild_status(zinfo->original_zv, status);
+	uzfs_zvol_set_rebuild_status(zinfo->main_zv, status);
 
 	thrd = zk_thread_create(NULL, 0, dw_replica_fn,
 	    rebuild_args, 0, NULL, TS_RUN, 0, 0);
@@ -1185,7 +1185,7 @@ void execute_rebuild_test_case(const char *s, int test_case,
 
 	EXPECT_EQ(2, zinfo->refcnt);
 
-	EXPECT_EQ(verify_status, uzfs_zvol_get_rebuild_status(zinfo->original_zv));
+	EXPECT_EQ(verify_status, uzfs_zvol_get_rebuild_status(zinfo->main_zv));
 }
 
 TEST(uZFSRebuild, TestRebuildAbrupt) {
@@ -1296,9 +1296,9 @@ TEST(uZFSRebuild, TestRebuildComplete) {
 	uzfs_update_metadata_granularity(zv, 512);
 	/* thread helping rebuild will exit after writing valid write IO and REBUILD_STEP_DONE, and reads REBUILD_STEP, writes REBUILD_STEP_DONE */
 	execute_rebuild_test_case("complete rebuild", 7, ZVOL_REBUILDING_IN_PROGRESS, ZVOL_REBUILDING_DONE);
-	EXPECT_EQ(ZVOL_STATUS_HEALTHY, uzfs_zvol_get_status(zinfo->original_zv));
+	EXPECT_EQ(ZVOL_STATUS_HEALTHY, uzfs_zvol_get_status(zinfo->main_zv));
 
-	memset(&zinfo->original_zv->rebuild_info, 0, sizeof (zvol_rebuild_info_t));
+	memset(&zinfo->main_zv->rebuild_info, 0, sizeof (zvol_rebuild_info_t));
 }
 
 TEST(RebuildScanner, AbruptClose) {
@@ -1378,8 +1378,8 @@ TEST(RebuildScanner, RebuildSuccess) {
 	/* Rebuild thread sendinc complete opcode */
 	execute_rebuild_test_case("complete rebuild", 10,
 	    ZVOL_REBUILDING_IN_PROGRESS, ZVOL_REBUILDING_DONE);
-	EXPECT_EQ(ZVOL_STATUS_HEALTHY, uzfs_zvol_get_status(zinfo->original_zv));
-	memset(&zinfo->original_zv->rebuild_info, 0, sizeof (zvol_rebuild_info_t));
+	EXPECT_EQ(ZVOL_STATUS_HEALTHY, uzfs_zvol_get_status(zinfo->main_zv));
+	memset(&zinfo->main_zv->rebuild_info, 0, sizeof (zvol_rebuild_info_t));
 }
 
 /* Volume name stored in zinfo is "pool1/vol1" */

@@ -1285,9 +1285,6 @@ TEST(Misc, ZreplCheckpointInterval) {
 	ASSERT_EQ(rc, sizeof (buf));
 
 	sleep(10);	/* Due to spa sync interval, sleep for 10 sec is required here */
-	datasock_slow.graceful_close();
-	datasock_fast.graceful_close();
-	sleep(5);
 
 	zrepl.kill();
 

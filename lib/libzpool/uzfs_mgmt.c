@@ -29,6 +29,7 @@
 #include <uzfs_mgmt.h>
 #include <uzfs_io.h>
 #include <uzfs_zap.h>
+#include <uzfs_rebuilding.h>
 
 static int uzfs_fd_rand = -1;
 kmutex_t zvol_list_mutex;
@@ -462,6 +463,16 @@ ret:
 	return (error);
 }
 
+int
+is_rebuild_cloned_volume(const char *ds_name)
+{
+	size_t ds_len  = strlen(ds_name);
+	size_t pattern_len = strlen(REBUILD_SNAPSHOT_CLONENAME);
+
+	return (strcmp(ds_name + (ds_len - pattern_len),
+	    REBUILD_SNAPSHOT_CLONENAME));
+}
+
 /* uZFS Zvol create call back function */
 int
 uzfs_zvol_create_cb(const char *ds_name, void *arg)
@@ -496,7 +507,11 @@ uzfs_zvol_create_cb(const char *ds_name, void *arg)
 		if (zv->zv_target_host[0] == '\0') {
 			LOG_ERR("target IP address is empty for %s", ds_name);
 			uzfs_close_dataset(zv);
-			return (EINVAL);
+
+			/* Skip rebuild_clone volumes */
+			if (is_rebuild_cloned_volume(ds_name) != 0)
+				return (EINVAL);
+			return (0);
 		}
 	}
 	if (uzfs_zinfo_init(zv, ds_name, nvprops) != 0) {

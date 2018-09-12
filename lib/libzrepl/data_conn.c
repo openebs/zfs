@@ -276,6 +276,14 @@ uzfs_zvol_worker(void *arg)
 	rebuild_cmd_req = hdr->flags & ZVOL_OP_FLAG_REBUILD;
 	read_metadata = hdr->flags & ZVOL_OP_FLAG_READ_METADATA;
 
+	if (zinfo->is_io_ack_sender_created == B_FALSE) {
+		if (!(rebuild_cmd_req && (hdr->opcode == ZVOL_OPCODE_WRITE)))
+			zio_cmd_free(&zio_cmd);
+		if (hdr->opcode == ZVOL_OPCODE_WRITE)
+			atomic_inc_64(&zinfo->write_req_received_cnt);
+		goto drop_refcount;
+	}
+
 	/*
 	 * For rebuild case, do not free zio_cmd
 	 */
@@ -1163,7 +1171,6 @@ reinitialize_zv_state(zvol_state_t *zv)
 {
 	if (zv == NULL)
 		return;
-	zv->zv_metavolblocksize = 0;
 
 	uzfs_zvol_set_status(zv, ZVOL_STATUS_DEGRADED);
 	uzfs_zvol_set_rebuild_status(zv, ZVOL_REBUILDING_INIT);
@@ -1347,11 +1354,14 @@ exit:
 	LOG_INFO("Data connection for zvol %s closed on fd: %d",
 	    zinfo->name, fd);
 
+	(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
+	zinfo->is_io_ack_sender_created = B_FALSE;
+	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
+
 	remove_pending_cmds_to_ack(fd, zinfo);
 
 	(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
 	zinfo->conn_closed = B_FALSE;
-	zinfo->is_io_ack_sender_created = B_FALSE;
 	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 
 	uzfs_zinfo_drop_refcnt(zinfo);
@@ -1605,7 +1615,7 @@ exit:
 	 * wait for ack thread to exit to avoid races with new
 	 * connections for the same zinfo
 	 */
-	while (zinfo->conn_closed && zinfo->is_io_ack_sender_created) {
+	while (zinfo->conn_closed || zinfo->is_io_ack_sender_created) {
 		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 		usleep(1000);
 		(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
@@ -1616,6 +1626,7 @@ exit:
 
 	zinfo->io_ack_waiting = 0;
 
+	taskq_wait(zinfo->uzfs_zvol_taskq);
 	reinitialize_zv_state(zinfo->zv);
 	zinfo->is_io_receiver_created = B_FALSE;
 	uzfs_zinfo_drop_refcnt(zinfo);

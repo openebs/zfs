@@ -16,6 +16,25 @@
 #define	POOL_SIZE	(100 * 1024 * 1024)
 #define	ZVOL_SIZE	(10 * 1024 * 1024)
 
+/*
+ * We have to wait for the other end to close the connection, because the
+ * next test case could initiate a new connection before this one is
+ * fully closed and cause a handshake error. Or it could result in EBUSY
+ * error when destroying zpool if it is not released in time by zrepl.
+ */
+void GtestUtils::graceful_close(int sockfd)
+{
+	int rc;
+	char val;
+
+	if (sockfd < 0)
+		return;
+	shutdown(sockfd, SHUT_WR);
+	rc = read(sockfd, &val, sizeof (val));
+	ASSERT_EQ(rc, 0);
+	close(sockfd);
+}
+
 void GtestUtils::init_buf(void *buf, int len, const char *pattern) {
 	int i;
 	char c;

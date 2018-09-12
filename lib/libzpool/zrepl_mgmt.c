@@ -301,14 +301,15 @@ uzfs_zinfo_destroy(const char *name, spa_t *spa)
 	zvol_info_t    *zt = NULL;
 	int namelen = ((name) ? strlen(name) : 0);
 	zvol_state_t  *zv;
+	int destroyed = 0;
 
 	mutex_enter(&zvol_list_mutex);
 
 	/*  clear out all zvols for this spa_t */
 	if (name == NULL) {
 		SLIST_FOREACH_SAFE(zinfo, &zvol_list, zinfo_next, zt) {
-			if (strncmp(spa_name(spa),
-			    zinfo->name, strlen(spa_name(spa))) == 0) {
+			if (strcmp(spa_name(spa),
+			    spa_name(zinfo->zv->zv_spa)) == 0) {
 				SLIST_REMOVE(&zvol_list, zinfo, zvol_info_s,
 				    zinfo_next);
 
@@ -316,6 +317,7 @@ uzfs_zinfo_destroy(const char *name, spa_t *spa)
 				zv = zinfo->zv;
 				uzfs_mark_offline_and_free_zinfo(zinfo);
 				uzfs_close_dataset(zv);
+				destroyed++;
 				mutex_enter(&zvol_list_mutex);
 			}
 		}
@@ -332,12 +334,15 @@ uzfs_zinfo_destroy(const char *name, spa_t *spa)
 				zv = zinfo->zv;
 				uzfs_mark_offline_and_free_zinfo(zinfo);
 				uzfs_close_dataset(zv);
-				mutex_enter(&zvol_list_mutex);
-				break;
+				destroyed++;
+				goto end;
 			}
 		}
 	}
 	mutex_exit(&zvol_list_mutex);
+end:
+	LOG_INFO("Destroy for pool: %s vol: %s, destroyed: %d", (spa == NULL) ?
+	    "null" : spa_name(spa), (name == NULL) ? "null" : name, destroyed);
 	return (0);
 }
 

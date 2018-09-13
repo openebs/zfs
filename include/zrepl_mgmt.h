@@ -71,6 +71,7 @@ struct zvol_io_cmd_s;
 #if DEBUG
 typedef struct inject_delay_s {
 	int helping_replica_rebuild_step;
+	int pre_uzfs_write_data;
 } inject_delay_t;
 
 typedef struct inject_error_s {

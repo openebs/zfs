@@ -19,6 +19,7 @@
 
 namespace GtestUtils {
 
+void graceful_close(int sockfd);
 std::string execCmd(std::string const &zfsCmd, std::string const &args);
 std::string getCmdPath(std::string zfsCmd);
 int verify_buf(void *buf, int len, const char *pattern);

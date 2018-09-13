@@ -406,25 +406,6 @@ static void transition_zvol_to_online(int &ioseq, int control_fd,
 	EXPECT_EQ(hdr_in.len, 0);
 }
 
-/*
- * We have to wait for the other end to close the connection, because the
- * next test case could initiate a new connection before this one is
- * fully closed and cause a handshake error. Or it could result in EBUSY
- * error when destroying zpool if it is not released in time by zrepl.
- */
-static void graceful_close(int sockfd)
-{
-	int rc;
-	char val;
-
-	if (sockfd < 0)
-		return;
-	shutdown(sockfd, SHUT_WR);
-	rc = read(sockfd, &val, sizeof (val));
-	ASSERT_EQ(rc, 0);
-	close(sockfd);
-}
-
 static std::string getPoolState(std::string pname)
 {
 	return (execCmd("zpool", std::string("list -Ho health ") + pname));

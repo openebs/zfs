@@ -202,6 +202,8 @@ uzfs_mock_rebuild_scanner(void *arg)
 
 	if (rebuild_test_case == 6) {
 		close(data_conn_fd);
+		while (zinfo->is_io_receiver_created == B_TRUE)
+			sleep(2);
 		sleep(5);
 	}
 
@@ -236,8 +238,10 @@ uzfs_mock_rebuild_scanner(void *arg)
 exit:
 	shutdown(fd, SHUT_RDWR);
 exit1:
-	rebuild_test_case = 0;
 	close(fd);
+
+	rebuild_test_case = 0;
+
 	zk_thread_exit();
 }
 
@@ -1054,6 +1058,7 @@ next_step:
 #if DEBUG
 			inject_error.delay.helping_replica_rebuild_step = 0;
 #endif
+			LOG_INFO("Resetting delay to zero");
 		}
 
 		rc = uzfs_zvol_socket_read(sfd, (char *)&hdr, sizeof (hdr));
@@ -1148,7 +1153,8 @@ exit:
 }
 
 void execute_rebuild_test_case(const char *s, int test_case,
-    zvol_rebuild_status_t status, zvol_rebuild_status_t verify_status)
+    zvol_rebuild_status_t status, zvol_rebuild_status_t verify_status,
+    int verify_refcnt = 2)
 {
 	kthread_t *thrd;
 	rebuild_thread_arg_t *rebuild_args;
@@ -1173,7 +1179,7 @@ void execute_rebuild_test_case(const char *s, int test_case,
 			break;
 	}
 
-	EXPECT_EQ(2, zinfo->refcnt);
+	EXPECT_EQ(verify_refcnt, zinfo->refcnt);
 
 	EXPECT_EQ(verify_status, uzfs_zvol_get_rebuild_status(zinfo->main_zv));
 }
@@ -1275,19 +1281,23 @@ retry:
 TEST(uZFSRebuild, TestRebuildCompleteWithDataConn) {
 	io_receiver = &uzfs_zvol_io_receiver;
 
-	uzfs_update_metadata_granularity(zv, 0);
 	uzfs_zvol_set_rebuild_status(zv, ZVOL_REBUILDING_INIT);
-	do_data_connection(data_conn_fd, "127.0.0.1", 3232, "vol1");
+	do_data_connection(data_conn_fd, "127.0.0.1", IO_SERVER_PORT, "vol1");
 	/* thread helping rebuild will exit after writing valid write IO and REBUILD_STEP_DONE, and reads REBUILD_STEP, writes REBUILD_STEP_DONE */
 	execute_rebuild_test_case("complete rebuild with data conn", 6, ZVOL_REBUILDING_IN_PROGRESS, ZVOL_REBUILDING_INIT);
 }
 
 TEST(uZFSRebuild, TestRebuildComplete) {
-	uzfs_update_metadata_granularity(zv, 512);
+	uzfs_zvol_set_rebuild_status(zv, ZVOL_REBUILDING_INIT);
+	do_data_connection(data_conn_fd, "127.0.0.1", IO_SERVER_PORT, "vol1");
 	/* thread helping rebuild will exit after writing valid write IO and REBUILD_STEP_DONE, and reads REBUILD_STEP, writes REBUILD_STEP_DONE */
-	execute_rebuild_test_case("complete rebuild", 7, ZVOL_REBUILDING_IN_PROGRESS, ZVOL_REBUILDING_DONE);
+	execute_rebuild_test_case("complete rebuild", 7, ZVOL_REBUILDING_IN_PROGRESS, ZVOL_REBUILDING_DONE, 4);
 	EXPECT_EQ(ZVOL_STATUS_HEALTHY, uzfs_zvol_get_status(zinfo->main_zv));
 
+	close(data_conn_fd);
+	while (zinfo->is_io_receiver_created == B_TRUE)
+		sleep(2);
+	sleep(5);
 	memset(&zinfo->main_zv->rebuild_info, 0, sizeof (zvol_rebuild_info_t));
 }
 
@@ -1347,29 +1357,59 @@ TEST(RebuildScanner, AckSenderCreatedFalse) {
 	zinfo2->is_io_ack_sender_created = B_TRUE;
 	execute_rebuild_test_case("Ack Sender Created False", 8,
 	    ZVOL_REBUILDING_IN_PROGRESS, ZVOL_REBUILDING_FAILED);
-	zinfo2->is_io_ack_sender_created = B_FALSE;
+	zinfo2->is_io_ack_sender_created = B_TRUE;
 }
 
 TEST(RebuildScanner, ShutdownRebuildFd) {
 	/* Set io_ack_sender_created as B_FALSE */
-	uzfs_update_metadata_granularity(zv2, 0);
+	zinfo2->is_io_ack_sender_created = B_FALSE;
 	uzfs_zvol_set_rebuild_status(zv2, ZVOL_REBUILDING_INIT);
-	do_data_connection(data_conn_fd, "127.0.0.1", 3232, "vol3");
+	do_data_connection(data_conn_fd, "127.0.0.1", IO_SERVER_PORT, "vol3");
 	execute_rebuild_test_case("Shutdown Rebuild FD", 9,
 	    ZVOL_REBUILDING_IN_PROGRESS, ZVOL_REBUILDING_FAILED);
 }
 
 TEST(RebuildScanner, RebuildSuccess) {
-	uzfs_update_metadata_granularity(zv2, 0);
 	uzfs_zvol_set_rebuild_status(zv2, ZVOL_REBUILDING_INIT);
-	do_data_connection(data_conn_fd, "127.0.0.1", 3232, "vol3");
+	do_data_connection(data_conn_fd, "127.0.0.1", IO_SERVER_PORT, "vol3");
 	zvol_rebuild_step_size = (1024ULL * 1024ULL * 100);
 
-	/* Rebuild thread sendinc complete opcode */
+	/* Rebuild thread sending complete opcode */
 	execute_rebuild_test_case("complete rebuild", 10,
 	    ZVOL_REBUILDING_IN_PROGRESS, ZVOL_REBUILDING_DONE);
 	EXPECT_EQ(ZVOL_STATUS_HEALTHY, uzfs_zvol_get_status(zinfo->main_zv));
 	memset(&zinfo->main_zv->rebuild_info, 0, sizeof (zvol_rebuild_info_t));
+}
+
+TEST(Misc, DelayWriteAndBreakConn) {
+	struct zvol_io_rw_hdr *io_hdr;
+	zvol_io_cmd_t *zio_cmd;
+
+#if DEBUG
+	inject_error.delay.pre_uzfs_write_data = 1;
+#endif
+	zvol_io_hdr_t hdr;
+	bzero(&hdr, sizeof (hdr));
+	hdr.status = ZVOL_OP_STATUS_OK;
+	hdr.version = REPLICA_VERSION;
+	hdr.opcode = ZVOL_OPCODE_WRITE;
+	hdr.len = 512 + sizeof(struct zvol_io_rw_hdr);
+	zio_cmd = zio_cmd_alloc(&hdr, -1);
+
+	io_hdr = (struct zvol_io_rw_hdr *)zio_cmd->buf;
+	io_hdr->io_num = 100;
+	io_hdr->len = 512;
+
+	uzfs_zinfo_take_refcnt(zinfo2);
+	zio_cmd->zinfo = zinfo2;
+
+	taskq_dispatch(zinfo2->uzfs_zvol_taskq, uzfs_zvol_worker, zio_cmd, TQ_SLEEP);
+	sleep(5);
+	GtestUtils::graceful_close(data_conn_fd);
+	sleep(10);
+#if DEBUG
+	inject_error.delay.pre_uzfs_write_data = 0;
+#endif
 }
 
 /* Volume name stored in zinfo is "pool1/vol1" */

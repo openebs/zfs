@@ -317,22 +317,75 @@ exit:
 	return (count);
 }
 
+/*
+ * This API is used to release internal clone dataset
+ */
 int
-uzfs_zvol_destroy_snaprebuild_clone(zvol_state_t *zv,
-    zvol_state_t *snap_zv)
+uzfs_zvol_release_internal_clone(zvol_state_t *zv,
+    zvol_state_t **snap_zv, zvol_state_t **clone_zv)
 {
 	int ret = 0;
 	char *clonename;
+
+	if (*snap_zv == NULL) {
+		ASSERT(*clone_zv == NULL);
+		return (ret);
+	}
 
 	clonename = kmem_asprintf("%s/%s_%s", spa_name(zv->zv_spa),
 	    strchr(zv->zv_name, '/') + 1,
 	    REBUILD_SNAPSHOT_CLONENAME);
 
-	/* Close dataset */
-	uzfs_close_dataset(snap_zv);
+	LOG_INFO("Closing rebuild_snap and rebuild_clone dataset on:%s",
+	    zv->zv_name);
+	/* Close clone dataset */
+	uzfs_close_dataset(*clone_zv);
+	*clone_zv = NULL;
+
+	/* Close snapshot dataset */
+	uzfs_close_dataset(*snap_zv);
+	*snap_zv = NULL;
+
+	strfree(clonename);
+
+	return (ret);
+}
+
+/*
+ * This API is used to delete internal
+ * cloned volume and backing snapshot.
+ */
+int
+uzfs_zvol_destroy_internal_clone(zvol_state_t *zv,
+    zvol_state_t **snap_zv, zvol_state_t **clone_zv)
+{
+	int ret = 0;
+	char *clonename;
+
+	if (*snap_zv == NULL) {
+		ASSERT(*clone_zv == NULL);
+		return (ret);
+	}
+
+	clonename = kmem_asprintf("%s/%s_%s", spa_name(zv->zv_spa),
+	    strchr(zv->zv_name, '/') + 1,
+	    REBUILD_SNAPSHOT_CLONENAME);
+
+	/* Close clone dataset */
+	uzfs_close_dataset(*clone_zv);
+	*clone_zv = NULL;
+	LOG_INFO("Destroying rebuild_snap and rebuild_clone on:%s",
+	    zv->zv_name);
 
 	/* Destroy clone */
 	ret = dsl_destroy_head(clonename);
+	if (ret != 0)
+		LOG_ERRNO("Rebuild_clone destroy failed on:%s"
+		    " with err:%d", zv->zv_name, ret);
+
+	/* Close snapshot dataset */
+	uzfs_close_dataset(*snap_zv);
+	*snap_zv = NULL;
 
 	/* Destroy snapshot */
 	destroy_snapshot_zv(zv, REBUILD_SNAPSHOT_SNAPNAME);
@@ -342,21 +395,24 @@ uzfs_zvol_destroy_snaprebuild_clone(zvol_state_t *zv,
 }
 
 /*
- * Create snapshot and create clone from that snapshot
+ * This API is used to create internal clone for rebuild.
+ * It will load the clone dataset if clone already exist.
+ * Cloned volume created through this API can not be exposed
+ * to client.
  */
 int
-uzfs_zvol_create_snaprebuild_clone(zvol_state_t *zv,
-    zvol_state_t **snap_zv)
+uzfs_zvol_get_or_create_internal_clone(zvol_state_t *zv,
+    zvol_state_t **snap_zv, zvol_state_t **clone_zv, int *error)
 {
 	int ret = 0;
 	char *snapname = NULL;
 	char *clonename = NULL;
+	char *clone_subname = NULL;
 
 	ret = get_snapshot_zv(zv, REBUILD_SNAPSHOT_SNAPNAME, snap_zv);
 	if (ret != 0) {
 		LOG_ERR("Failed to get info about %s@%s",
 		    zv->zv_name, REBUILD_SNAPSHOT_SNAPNAME);
-		strfree(snapname);
 		return (ret);
 	}
 
@@ -367,17 +423,49 @@ uzfs_zvol_create_snaprebuild_clone(zvol_state_t *zv,
 	    strchr(zv->zv_name, '/') + 1,
 	    REBUILD_SNAPSHOT_CLONENAME);
 
+	clone_subname = kmem_asprintf("%s_%s", strchr(zv->zv_name, '/') + 1,
+	    REBUILD_SNAPSHOT_CLONENAME);
+
 	ret = dmu_objset_clone(clonename, snapname);
-	if (ret == EEXIST) {
+	if (ret == EEXIST)
 		LOG_INFO("Volume:%s already has clone for snap rebuild",
 		    zv->zv_name);
+	if (error)
+		*error = ret;
+
+	if ((ret == EEXIST) || (ret == 0)) {
+		ret = uzfs_open_dataset(zv->zv_spa, clone_subname, clone_zv);
+		if (ret == 0) {
+			ret = uzfs_hold_dataset(*clone_zv);
+			if (ret != 0) {
+				LOG_ERR("Failed to hold clone: %d", ret);
+				uzfs_close_dataset(*clone_zv);
+				*clone_zv = NULL;
+				/* Destroy clone */
+				ret = dsl_destroy_head(clonename);
+				if (ret != 0)
+					LOG_ERRNO("Rebuild_clone destroy "
+					    "failed on:%s with err:%d",
+					    zv->zv_name, ret);
+				uzfs_close_dataset(*snap_zv);
+				destroy_snapshot_zv(zv,
+				    REBUILD_SNAPSHOT_SNAPNAME);
+				*snap_zv = NULL;
+			}
+		} else {
+			uzfs_close_dataset(*snap_zv);
+			destroy_snapshot_zv(zv, REBUILD_SNAPSHOT_SNAPNAME);
+			*snap_zv = NULL;
+			LOG_INFO("Clone:%s not able to open", clone_subname);
+		}
 	} else if (ret != 0) {
 		uzfs_close_dataset(*snap_zv);
 		destroy_snapshot_zv(zv, REBUILD_SNAPSHOT_SNAPNAME);
 		*snap_zv = NULL;
 	}
 
-	strfree(snapname);
+	strfree(clone_subname);
 	strfree(clonename);
+	strfree(snapname);
 	return (ret);
 }

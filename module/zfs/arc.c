@@ -3999,7 +3999,7 @@ arc_all_memory(void)
 	return (ptob(totalram_pages));
 #endif /* CONFIG_HIGHMEM */
 #else
-	return (ptob(physmem) / 2);
+	return (ptob(physmem) / 4);
 #endif /* _KERNEL */
 }
 

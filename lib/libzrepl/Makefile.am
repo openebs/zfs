@@ -22,7 +22,7 @@ libzrepl_la_LIBADD = \
 	$(top_builddir)/lib/libzpool/libzpool.la \
 	$(top_builddir)/lib/libicp/libicp.la
 
-libzrepl_la_LIBADD += $(ZLIB) -ldl -lm -laio $(JEMALLOCLIB)
+libzrepl_la_LIBADD += $(ZLIB) -ldl -lm -laio $(JEMALLOCLIB) -ljson-c
 libzrepl_la_LDFLAGS = -version-info 2:0:0
 
 EXTRA_DIST = $(USER_C)

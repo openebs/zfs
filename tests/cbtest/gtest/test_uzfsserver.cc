@@ -29,6 +29,11 @@
 /* Avoid including conflicting C++ declarations for LE-BE conversions */
 #define _SYS_BYTEORDER_H
 #include <libuzfs.h>
+#include <zrepl_mgmt.h>
+
+#if DEBUG
+inject_error_t inject_error;
+#endif
 
 TEST(uZFSServer, Setup) {
 	kernel_init(FREAD);

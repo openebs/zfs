@@ -298,7 +298,8 @@ rebuild_replica_thread(void *arg)
 
 	uzfs_zvol_set_rebuild_status(to_zvol, ZVOL_REBUILDING_INIT);
 
-	latest_io = uzfs_zvol_get_last_committed_io_no(from_zvol);
+	latest_io = uzfs_zvol_get_last_committed_io_no(from_zvol,
+	    HEALTHY_IO_SEQNUM);
 	printf("io number... healthy replica:%lu degraded replica:%lu\n",
 	    latest_io, r_info->base_io_num);
 	uzfs_zvol_set_rebuild_status(to_zvol, ZVOL_REBUILDING_IN_PROGRESS);
@@ -379,6 +380,25 @@ rebuild_replica_thread(void *arg)
 }
 
 static void
+uzfs_zvol_store_last_committed_io_no(zvol_state_t *zv, char *key,
+    uint64_t io_seq)
+{
+	uzfs_zap_kv_t *kv_array[0];
+	uzfs_zap_kv_t zap;
+
+	if (io_seq == 0)
+		return;
+
+	zap.key = key;
+	zap.value = io_seq;
+	zap.size = sizeof (io_seq);
+
+	kv_array[0] = &zap;
+	VERIFY0(uzfs_update_zap_entries(zv,
+	    (const uzfs_zap_kv_t **) kv_array, 1));
+}
+
+static void
 replica_writer_thread(void *arg)
 {
 	worker_args_t *warg = (worker_args_t *)arg;
@@ -452,10 +472,11 @@ replica_writer_thread(void *arg)
 		 * update ZAP entries for io_number frequently.
 		 */
 		if (!(io_num % 30)) {
-			uzfs_zvol_store_last_committed_io_no(zvol1, io_num);
+			uzfs_zvol_store_last_committed_io_no(zvol1,
+			    HEALTHY_IO_SEQNUM, io_num);
 			if (replica_active)
 				uzfs_zvol_store_last_committed_io_no(zvol2,
-				    io_num);
+				    HEALTHY_IO_SEQNUM, io_num);
 		}
 
 		if (replica_active) {
@@ -489,7 +510,8 @@ replica_writer_thread(void *arg)
 			 * and continue to update last_committed_io_number in
 			 * degraded replica.
 			 */
-			last_io_num = uzfs_zvol_get_last_committed_io_no(zvol2);
+			last_io_num = uzfs_zvol_get_last_committed_io_no(zvol2,
+			    HEALTHY_IO_SEQNUM);
 			rebuild_info.base_io_num = last_io_num;
 		} else if (now > replica_rebuild_start_time &&
 		    !rebuilding_started) {

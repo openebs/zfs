@@ -68,6 +68,19 @@ extern kmutex_t zvol_list_mutex;
 extern struct zvol_list zvol_list;
 struct zvol_io_cmd_s;
 
+#if DEBUG
+typedef struct inject_delay_s {
+	int helping_replica_rebuild_step;
+	int pre_uzfs_write_data;
+} inject_delay_t;
+
+typedef struct inject_error_s {
+	inject_delay_t delay;
+} inject_error_t;
+
+extern inject_error_t inject_error;
+#endif
+
 typedef enum zvol_info_state_e {
 	ZVOL_INFO_STATE_ONLINE,
 	ZVOL_INFO_STATE_OFFLINE,
@@ -80,14 +93,47 @@ typedef struct zvol_info_s {
 	/* Logical Unit related fields */
 	zvol_info_state_t	state;
 	char 		name[MAXPATHLEN];
-	zvol_state_t	*zv;
+	zvol_state_t	*main_zv;
+	zvol_state_t	*clone_zv;
+	zvol_state_t	*snap_zv;
 	uint64_t	refcnt;
-	int		is_io_ack_sender_created;
+
+	union {
+		struct {
+			int	is_io_ack_sender_created	: 1;
+			int	is_io_receiver_created		: 1;
+		};
+		int flags;
+	};
+
 	uint32_t	timeout;	/* iSCSI timeout val for this zvol */
 	uint64_t	zvol_guid;
+
+	/* Highest IO num of received write IOs */
 	uint64_t	running_ionum;
+
+	/* IO num that is stored to ZAP as healthy_ionum when vol is healthy */
+	uint64_t	stored_healthy_ionum;
+
+	/*
+	 * IO num that will be written to ZAP as healthy_ionum
+	 * This tells that all IOs lesser than this are committed to replica
+	 * So, running_ionum will be made as checkpointed_ionum and will be
+	 * stored to ZAP after 'update_ionum_interval' time period.
+	 */
 	uint64_t	checkpointed_ionum;
+
+	/* running_ionum that is stored to ZAP when vol is degraded */
+	uint64_t	degraded_checkpointed_ionum;
+
 	time_t		checkpointed_time;	/* time of the last chkpoint */
+	uint64_t	rebuild_cmd_queued_cnt;
+	uint64_t	rebuild_cmd_acked_cnt;
+	/*
+	 * time of the last stored checkedpointed io sequence number
+	 * when ZVOL was in degraded state
+	 */
+	time_t		degraded_checkpointed_time;
 	uint32_t	update_ionum_interval;	/* how often to update io seq */
 	taskq_t		*uzfs_zvol_taskq;	/* Taskq for minor management */
 
@@ -98,22 +144,25 @@ typedef struct zvol_info_s {
 	 */
 	pthread_mutex_t	zinfo_mutex;
 	pthread_cond_t	io_ack_cond;
-
-	pthread_t 	io_receiver_thread;
-	pthread_t 	io_ack_sender_thread;
+	pthread_mutex_t	zinfo_ionum_mutex;
 
 	/* All cmds after execution will go here for ack */
 	STAILQ_HEAD(, zvol_io_cmd_s)	complete_queue;
 
+	/* fds related to this zinfo on which threads are waiting */
+	STAILQ_HEAD(, zinfo_fd_s)	fd_list;
+
 	uint8_t		io_ack_waiting;
-	uint8_t		error_count;
 
 	/* Will be used to singal ack-sender to exit */
 	uint8_t		conn_closed;
 	/* Pointer to mgmt connection for this zinfo */
 	void		*mgmt_conn;
 
-	/* Perfromance counter */
+	/* ongoing command that is being worked on to ack to its sender */
+	void		*zio_cmd_in_ack;
+
+	/* Performance counter */
 
 	/* Debug counters */
 	uint64_t 	read_req_received_cnt;
@@ -122,9 +171,6 @@ typedef struct zvol_info_s {
 	uint64_t 	read_req_ack_cnt;
 	uint64_t	write_req_ack_cnt;
 	uint64_t	sync_req_ack_cnt;
-
-	/* ongoing command that is being worked on to ack to its sender */
-	void		*zio_cmd_in_ack;
 } zvol_info_t;
 
 typedef struct thread_args_s {
@@ -136,11 +182,17 @@ typedef struct thread_args_s {
 extern void (*zinfo_create_hook)(zvol_info_t *, nvlist_t *);
 extern void (*zinfo_destroy_hook)(zvol_info_t *);
 
+typedef struct zinfo_fd_s {
+	STAILQ_ENTRY(zinfo_fd_s) fd_link;
+	int fd;
+} zinfo_fd_t;
+
 typedef struct zvol_io_cmd_s {
 	STAILQ_ENTRY(zvol_io_cmd_s) cmd_link;
 	zvol_io_hdr_t 	hdr;
-	void		*zv;
+	zvol_info_t	*zinfo;
 	void		*buf;
+	uint64_t	buf_len;
 	metadata_desc_t	*metadata_desc;
 	int		conn;
 } zvol_io_cmd_t;
@@ -155,12 +207,16 @@ extern int uzfs_zinfo_init(void *zv, const char *ds_name,
 extern zvol_info_t *uzfs_zinfo_lookup(const char *name);
 extern void uzfs_zinfo_replay_zil_all(void);
 extern int uzfs_zinfo_destroy(const char *ds_name, spa_t *spa);
-uint64_t uzfs_zvol_get_last_committed_io_no(zvol_state_t *zv);
-void uzfs_zvol_store_last_committed_io_no(zvol_state_t *zv,
+uint64_t uzfs_zvol_get_last_committed_io_no(zvol_state_t *zv, char *key);
+void uzfs_zvol_store_last_committed_healthy_io_no(zvol_info_t *zinfo,
     uint64_t io_seq);
+void uzfs_zvol_store_last_committed_degraded_io_no(zvol_info_t *zv,
+    uint64_t io_seq);
+extern int set_socket_keepalive(int sfd);
 extern int create_and_bind(const char *port, int bind_needed,
     boolean_t nonblocking);
 int uzfs_zvol_name_compare(zvol_info_t *zv, const char *name);
+void shutdown_fds_related_to_zinfo(zvol_info_t *zinfo);
 
 /*
  * API to drop refcnt on zinfo. If refcnt
@@ -180,6 +236,17 @@ uzfs_zinfo_take_refcnt(zvol_info_t *zinfo)
 {
 	atomic_inc_64(&zinfo->refcnt);
 }
+
+/*
+ * ZAP key for io sequence number
+ */
+#define	HEALTHY_IO_SEQNUM	"io_seq"
+#define	DEGRADED_IO_SEQNUM	"degraded_io_seq"
+
+/*
+ * update interval for io_sequence number in degraded mode
+ */
+#define	DEGRADED_IO_UPDATE_INTERVAL	5
 
 #ifdef	__cplusplus
 }

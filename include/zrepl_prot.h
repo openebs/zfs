@@ -71,6 +71,7 @@ enum zvol_op_code {
 	ZVOL_OPCODE_REBUILD_COMPLETE,
 	ZVOL_OPCODE_SNAP_CREATE,
 	ZVOL_OPCODE_SNAP_DESTROY,
+	ZVOL_OPCODE_SNAP_LIST,
 	ZVOL_OPCODE_RESIZE,
 	ZVOL_OPCODE_STATS,
 } __attribute__((packed));
@@ -107,6 +108,7 @@ struct zvol_io_hdr {
 	 */
 	uint64_t	len;
 	uint64_t	checkpointed_io_seq;
+	uint64_t	checkpointed_degraded_io_seq;
 } __attribute__((packed));
 
 typedef struct zvol_io_hdr zvol_io_hdr_t;
@@ -153,8 +155,8 @@ typedef enum zvol_rebuild_status zvol_rebuild_status_t;
  * zvol status
  */
 enum zvol_status {
-	ZVOL_STATUS_HEALTHY,		/* zvol has latest data */
-	ZVOL_STATUS_DEGRADED		/* zvol is missing some data */
+	ZVOL_STATUS_DEGRADED,		/* zvol is missing some data */
+	ZVOL_STATUS_HEALTHY		/* zvol has latest data */
 } __attribute__((packed));
 
 typedef enum zvol_status zvol_status_t;
@@ -195,6 +197,17 @@ struct zvol_io_rw_hdr {
 	uint64_t	io_num;
 	uint64_t	len;
 } __attribute__((packed));
+
+struct zvol_snapshot_list {
+	uint64_t zvol_guid;
+	uint64_t data_len;
+	char data[0];
+};
+
+#define	SLIST_FOREACH_SAFE(var, head, field, tvar)			\
+	for ((var) = SLIST_FIRST((head));				\
+	    (var) && ((tvar) = SLIST_NEXT((var), field), 1);		\
+	    (var) = (tvar))
 
 #ifdef	__cplusplus
 }

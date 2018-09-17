@@ -51,6 +51,8 @@ thread_func_t rebuild_scanner;
 extern void (*io_receiver)(void *arg);
 extern void (*rebuild_scanner)(void *arg);
 
+extern void uzfs_zvol_io_receiver(void *);
+
 extern uint16_t io_server_port;
 extern uint16_t rebuild_io_server_port;
 extern uint64_t zvol_rebuild_step_size;
@@ -69,6 +71,8 @@ void uzfs_zvol_rebuild_dw_replica(void *arg);
 void uzfs_zvol_rebuild_scanner(void *arg);
 void uzfs_update_ionum_interval(zvol_info_t *zinfo, uint32_t timeout);
 void uzfs_zvol_timer_thread(void);
+
+void signal_fds_related_to_zinfo(zvol_info_t *zinfo);
 
 #ifdef __cplusplus
 }

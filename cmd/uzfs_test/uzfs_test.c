@@ -124,6 +124,7 @@ verify_vol_data(void *zv, uint64_t block_size, uint64_t vol_size)
 			len = vol_size - i;
 		if (iodata[i/block_size] == 0)
 			continue;
+		memset(buf, 0, block_size);
 		uzfs_read_data(zv, buf, i, len, &md, NULL, NULL);
 		for (j = 0; j < len; j++)
 			if (data[i+j] != buf[j]) {
@@ -157,6 +158,7 @@ reader_thread(void *arg)
 	uint64_t *total_ios = warg->total_ios;
 	uint64_t vol_size = warg->active_size;
 	uint64_t block_size = warg->io_block_size;
+	int read_error, md_error;
 	metadata_desc_t *md;
 
 	for (j = 0; j < 15; j++)
@@ -176,8 +178,9 @@ reader_thread(void *arg)
 		offset = blk_offset * block_size;
 
 		idx = uzfs_random(15);
+		memset(buf[idx], 0, (idx + 1) * block_size);
 		err = uzfs_read_data(zv, buf[idx], offset,
-		    (idx + 1) * block_size, &md, NULL, NULL);
+		    (idx + 1) * block_size, &md, &read_error, &md_error);
 
 		if (err != 0)
 			printf("RIO error at offset: %lu len: %lu\n", offset,

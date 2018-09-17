@@ -977,7 +977,7 @@ run_uzfs_test()
 	    -p uzfs_pool4 -d uzfs_vol4 -l -i 8192 -b 65536 -T 6 &
 	pid4=$!
 
-	wait_for_pids $pid1 $pid2 $pid3 $pid4
+	wait_for_pids $pid1 $pid2 $pid3 $pid4 $sync_pid
 	cleanup_uzfs_test uzfs_pool1 uzfs_test_vdev1
 	cleanup_uzfs_test uzfs_pool2 uzfs_test_vdev2
 	cleanup_uzfs_test uzfs_pool3 uzfs_test_vdev3
@@ -1105,15 +1105,15 @@ run_uzfs_test()
 	    -p uzfs_pool15 -d uzfs_vol15 -l -i 8192 -b 65536 -T 2 &
 	pid1=$!
 
-	log_must setup_uzfs_test log 65536 $UZFS_TEST_VOLSIZE standard uzfs_pool16 uzfs_vol16 uzfs_test_vdev16 uzfs_test_log16
-	log_must export_pool uzfs_pool16
+	log_must setup_uzfs_test log 65536 $UZFS_TEST_VOLSIZE standard uzfs_pool17 uzfs_vol17 uzfs_test_vdev17 uzfs_test_log17
+	log_must export_pool uzfs_pool17
 	log_must $UZFS_TEST -t 30 -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
-	    -p uzfs_pool16 -d uzfs_vol16 -l -i 8192 -b 65536 -T 6 &
+	    -p uzfs_pool17 -d uzfs_vol17 -l -i 8192 -b 65536 -T 6 &
 	pid2=$!
 
-	wait_for_pids $pid1 $pid2 $sync_pid
+	wait_for_pids $pid1 $pid2
 	cleanup_uzfs_test uzfs_pool15 uzfs_test_vdev15 uzfs_test_log15
-	cleanup_uzfs_test uzfs_pool16 uzfs_test_vdev16 uzfs_test_log16
+	cleanup_uzfs_test uzfs_pool17 uzfs_test_vdev17 uzfs_test_log17
 
 	return 0
 }

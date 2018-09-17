@@ -103,6 +103,7 @@ replica_reader_thread(void *arg)
 	uint64_t block_size = warg->io_block_size;
 	uint64_t len1 = 0, len2 = 0;
 	uint64_t mismatch_count = 0;
+	int read_error, md_error;
 
 	for (j = 0; j < 15; j++) {
 		buf1[j] = (char *)umem_alloc(sizeof (char)*(j+1)* block_size,
@@ -129,9 +130,10 @@ replica_reader_thread(void *arg)
 
 		if ((offset + len) > end)
 			len = end - offset;
-
+		memset(buf1[idx], 0, len);
+		memset(buf2[idx], 0, len);
 		err = uzfs_read_data(zvol1, buf1[idx], offset, len,
-		    NULL, NULL, NULL);
+		    NULL, &read_error, &md_error);
 		if (err != 0) {
 			printf("IO error at offset: %lu len: %lu in read"
 			    " err(%d)\n", offset, len, err);
@@ -139,7 +141,7 @@ replica_reader_thread(void *arg)
 		}
 
 		err = uzfs_read_data(zvol2, buf2[idx], offset, len,
-		    NULL, NULL, NULL);
+		    NULL, &read_error, &md_error);
 		if (err != 0) {
 			printf("IO error at offset: %lu len: %lu in read"
 			    " err(%d)\n", offset, len, err);

@@ -479,7 +479,7 @@ uzfs_read_metadata(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 		if (bytes > (metaobjectsize - offset))
 			bytes = metaobjectsize - offset;
 
-		ret = uzfs_dmu_read(zv->zv_objset, ZVOL_META_OBJ, offset, bytes,
+		ret = dmu_read(zv->zv_objset, ZVOL_META_OBJ, offset, bytes,
 		    buf + read, 0);
 		if (ret) {
 			ret = UZFS_IO_READ_FAIL;

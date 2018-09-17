@@ -72,7 +72,7 @@ static int ready_for_read(int fd, int timeout) {
  * res is the expected status of handshake
  */
 static void do_handshake(std::string zvol_name, std::string &host,
-    uint16_t &port, uint64_t *ionum, int control_fd, int res) {
+    uint16_t &port, uint64_t *ionum, uint64_t *degraded_ionum, int control_fd, int res) {
 	zvol_io_hdr_t hdr_in, hdr_out = {0};
 	int rc;
 	mgmt_ack_t mgmt_ack;
@@ -103,6 +103,8 @@ static void do_handshake(std::string zvol_name, std::string &host,
 	port = mgmt_ack.port;
 	if (ionum != NULL)
 		*ionum = hdr_in.checkpointed_io_seq;
+	if (degraded_ionum != NULL)
+		*degraded_ionum = hdr_in.checkpointed_degraded_io_seq;
 }
 
 /*
@@ -111,45 +113,55 @@ static void do_handshake(std::string zvol_name, std::string &host,
  * NOTE: Return value must be void otherwise we could not use asserts
  * (pecularity of gtest framework).
  */
-static void do_data_connection(int data_fd, std::string host, uint16_t port,
+static void do_data_connection(int &data_fd, std::string host, uint16_t port,
     std::string zvol_name, int bs=4096, int timeout=120,
     int res=ZVOL_OP_STATUS_OK) {
 	struct sockaddr_in addr;
 	zvol_io_hdr_t hdr_in, hdr_out = {0};
 	zvol_op_open_data_t open_data;
 	int rc;
+	char val;
+	int fd;
 
 	memset(&addr, 0, sizeof (addr));
 	addr.sin_family = AF_INET;
 	addr.sin_port = htons(port);
 	rc = inet_pton(AF_INET, host.c_str(), &addr.sin_addr);
 	ASSERT_TRUE(rc > 0);
-	rc = connect(data_fd, (struct sockaddr *)&addr, sizeof (addr));
+retry:
+	fd = socket(AF_INET, SOCK_STREAM, 0);
+	rc = connect(fd, (struct sockaddr *)&addr, sizeof (addr));
 	if (rc != 0) {
 		perror("connect");
 		ASSERT_EQ(errno, 0);
 	}
-
 	hdr_out.version = REPLICA_VERSION;
 	hdr_out.opcode = ZVOL_OPCODE_OPEN;
 	hdr_out.status = ZVOL_OP_STATUS_OK;
 	hdr_out.len = sizeof (open_data);
 
-	rc = write(data_fd, &hdr_out, sizeof (hdr_out));
+	rc = write(fd, &hdr_out, sizeof (hdr_out));
 	ASSERT_EQ(rc, sizeof (hdr_out));
 
 	open_data.tgt_block_size = bs;
 	open_data.timeout = timeout;
 	GtestUtils::strlcpy(open_data.volname, zvol_name.c_str(),
 	    sizeof (open_data.volname));
-	rc = write(data_fd, &open_data, hdr_out.len);
+	rc = write(fd, &open_data, hdr_out.len);
 
-	rc = read(data_fd, &hdr_in, sizeof (hdr_in));
+	rc = read(fd, &hdr_in, sizeof (hdr_in));
 	ASSERT_EQ(rc, sizeof (hdr_in));
 	ASSERT_EQ(hdr_in.version, REPLICA_VERSION);
 	ASSERT_EQ(hdr_in.opcode, ZVOL_OPCODE_OPEN);
 	ASSERT_EQ(hdr_in.len, 0);
-	ASSERT_EQ(hdr_in.status, res);
+	if (hdr_in.status != res) {
+		sleep(2);
+		shutdown(fd, SHUT_WR);
+		rc = read(fd, &val, sizeof (val));
+		close(fd);
+		goto retry;
+	}
+	data_fd = fd;
 }
 
 /*
@@ -392,25 +404,6 @@ static void transition_zvol_to_online(int &ioseq, int control_fd,
 	EXPECT_EQ(hdr_in.io_seq, ioseq);
 	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
 	EXPECT_EQ(hdr_in.len, 0);
-}
-
-/*
- * We have to wait for the other end to close the connection, because the
- * next test case could initiate a new connection before this one is
- * fully closed and cause a handshake error. Or it could result in EBUSY
- * error when destroying zpool if it is not released in time by zrepl.
- */
-static void graceful_close(int sockfd)
-{
-	int rc;
-	char val;
-
-	if (sockfd < 0)
-		return;
-	shutdown(sockfd, SHUT_WR);
-	rc = read(sockfd, &val, sizeof (val));
-	ASSERT_EQ(rc, 0);
-	close(sockfd);
 }
 
 static std::string getPoolState(std::string pname)
@@ -691,15 +684,15 @@ protected:
 
 		m_zrepl->start();
 		m_pool1->create();
-		m_pool1->createZvol("vol1", "-o io.openebs:targetip=127.0.0.1:6060");
-		m_zvol_name1 = m_pool1->getZvolName("vol1");
+		m_pool1->createZvol("ivol1", "-o io.openebs:targetip=127.0.0.1:6060");
+		m_zvol_name1 = m_pool1->getZvolName("ivol1");
 
 		rc = target1.listen();
 		ASSERT_GE(rc, 0);
 		m_control_fd1 = target1.accept(-1);
 		ASSERT_GE(m_control_fd1, 0);
 
-		do_handshake(m_zvol_name1, m_host1, m_port1, NULL, m_control_fd1,
+		do_handshake(m_zvol_name1, m_host1, m_port1, NULL, NULL, m_control_fd1,
 		    ZVOL_OP_STATUS_OK);
 		m_zrepl->kill();
 
@@ -708,28 +701,28 @@ protected:
 		m_control_fd1 = target1.accept(-1);
 		ASSERT_GE(m_control_fd1, 0);
 
-		do_handshake(m_zvol_name1, m_host1, m_port1, NULL, m_control_fd1,
+		do_handshake(m_zvol_name1, m_host1, m_port1, NULL, NULL, m_control_fd1,
 		    ZVOL_OP_STATUS_OK);
 
 		m_pool2->create();
 		m_pool2->createZvol("vol1", "-o io.openebs:targetip=127.0.0.1:12345");
-		m_zvol_name2 = m_pool1->getZvolName("vol1");
+		m_zvol_name2 = m_pool1->getZvolName("ivol1");
 
 		rc = target2.listen(12345);
 		ASSERT_GE(rc, 0);
 		m_control_fd2 = target2.accept(-1);
 		ASSERT_GE(m_control_fd2, 0);
 
-		do_handshake(m_zvol_name2, m_host2, m_port2, NULL, m_control_fd2,
+		do_handshake(m_zvol_name2, m_host2, m_port2, NULL, NULL, m_control_fd2,
 		    ZVOL_OP_STATUS_FAILED);
 
 		m_zvol_name2 = m_pool2->getZvolName("vol1");
-		do_handshake(m_zvol_name2, m_host2, m_port2, NULL, m_control_fd2,
+		do_handshake(m_zvol_name2, m_host2, m_port2, NULL, NULL, m_control_fd2,
 		    ZVOL_OP_STATUS_OK);
 	}
 
 	static void TearDownTestCase() {
-		m_pool1->destroyZvol("vol1");
+		m_pool1->destroyZvol("ivol1");
 		m_pool2->destroyZvol("vol1");
 		delete m_pool1;
 		delete m_pool2;
@@ -800,6 +793,9 @@ TEST_F(ZreplDataTest, WriteAndReadBlocksWithIonum) {
 	write_data_and_verify_resp(m_datasock2.fd(), m_ioseq2, 0, 123);
 	write_two_chunks_and_verify_resp(m_datasock2.fd(), m_ioseq2, 4096);
 	read_data_and_verify_resp(m_datasock2.fd(), m_ioseq2);
+	m_datasock1.graceful_close();
+	m_datasock2.graceful_close();
+	sleep(5);
 }
 
 /* Read two blocks without metadata from the end of zvol */
@@ -825,6 +821,9 @@ TEST_F(ZreplDataTest, ReadBlockWithoutMeta) {
 		ASSERT_EQ(rc, read_hdr.len);
 		offset += sizeof (buf);
 	}
+	m_datasock1.graceful_close();
+	m_datasock2.graceful_close();
+	sleep(5);
 }
 
 /*
@@ -862,6 +861,9 @@ TEST_F(ZreplDataTest, WriteAndSync) {
 	EXPECT_EQ(hdr_in.io_seq, m_ioseq1);
 	EXPECT_EQ(hdr_in.offset, 0);
 	EXPECT_EQ(hdr_in.len, 0);
+	m_datasock1.graceful_close();
+	m_datasock2.graceful_close();
+	sleep(5);
 }
 
 TEST_F(ZreplDataTest, UnknownOpcode) {
@@ -883,6 +885,9 @@ TEST_F(ZreplDataTest, UnknownOpcode) {
 	EXPECT_EQ(hdr_in.opcode, 255);
 	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_FAILED);
 	EXPECT_EQ(hdr_in.io_seq, m_ioseq1);
+	m_datasock1.graceful_close();
+	m_datasock2.graceful_close();
+	sleep(5);
 }
 
 TEST_F(ZreplDataTest, ReadInvalidOffset) {
@@ -898,6 +903,9 @@ TEST_F(ZreplDataTest, ReadInvalidOffset) {
 	read_data_start(m_datasock1.fd(), m_ioseq1, ZVOL_SIZE + 4096, 4096, &hdr_in);
 	ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_FAILED);
 	ASSERT_EQ(hdr_in.len, 0);
+	m_datasock1.graceful_close();
+	m_datasock2.graceful_close();
+	sleep(5);
 }
 
 TEST_F(ZreplDataTest, ReadInvalidLength) {
@@ -913,6 +921,9 @@ TEST_F(ZreplDataTest, ReadInvalidLength) {
 	read_data_start(m_datasock1.fd(), m_ioseq1, ZVOL_SIZE - 4096, 2 * 4096, &hdr_in);
 	ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_FAILED);
 	ASSERT_EQ(hdr_in.len, 0);
+	m_datasock1.graceful_close();
+	m_datasock2.graceful_close();
+	sleep(5);
 }
 
 TEST_F(ZreplDataTest, WriteInvalidOffset) {
@@ -938,6 +949,9 @@ TEST_F(ZreplDataTest, WriteInvalidOffset) {
 	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_WRITE);
 	EXPECT_EQ(hdr_in.io_seq, m_ioseq1);
 	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_FAILED);
+	m_datasock1.graceful_close();
+	m_datasock2.graceful_close();
+	sleep(5);
 }
 
 TEST_F(ZreplDataTest, WriteInvalidLength) {
@@ -954,6 +968,9 @@ TEST_F(ZreplDataTest, WriteInvalidLength) {
 	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_WRITE);
 	EXPECT_EQ(hdr_in.io_seq, m_ioseq1);
 	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_FAILED);
+	m_datasock1.graceful_close();
+	m_datasock2.graceful_close();
+	sleep(5);
 }
 
 /*
@@ -1007,6 +1024,9 @@ TEST_F(ZreplDataTest, RebuildFlag) {
 	rc = read(m_datasock1.fd(), buf, sizeof (buf));
 	ASSERT_ERRNO("read", rc >= 0);
 	ASSERT_EQ(rc, sizeof (buf));
+	m_datasock1.graceful_close();
+	m_datasock2.graceful_close();
+	sleep(5);
 }
 
 /*
@@ -1025,19 +1045,6 @@ TEST_F(ZreplDataTest, ReadMetaDataFlag) {
 	/* write a data block with known ionum */
 	write_data_and_verify_resp(m_datasock1.fd(), m_ioseq1, 0, 654);
 
-	/* read the block without ZVOL_OP_FLAG_READ_METADATA flag */
-	read_data_start(m_datasock1.fd(), m_ioseq1, 0, sizeof (buf), &hdr_in, 0);
-	ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
-	ASSERT_EQ(hdr_in.len, sizeof (read_hdr) + sizeof (buf));
-	rc = read(m_datasock1.fd(), &read_hdr, sizeof (read_hdr));
-	ASSERT_ERRNO("read", rc >= 0);
-	ASSERT_EQ(rc, sizeof (read_hdr));
-	ASSERT_EQ(read_hdr.io_num, 0);
-	ASSERT_EQ(read_hdr.len, sizeof (buf));
-	rc = read(m_datasock1.fd(), buf, sizeof (buf));
-	ASSERT_ERRNO("read", rc >= 0);
-	ASSERT_EQ(rc, sizeof (buf));
-
 	/* read the block with ZVOL_OP_FLAG_READ_METADATA flag */
 	read_data_start(m_datasock1.fd(), m_ioseq1, 0, sizeof (buf), &hdr_in, ZVOL_OP_FLAG_READ_METADATA);
 	ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
@@ -1050,6 +1057,9 @@ TEST_F(ZreplDataTest, ReadMetaDataFlag) {
 	rc = read(m_datasock1.fd(), buf, sizeof (buf));
 	ASSERT_ERRNO("read", rc >= 0);
 	ASSERT_EQ(rc, sizeof (buf));
+	m_datasock1.graceful_close();
+	m_datasock2.graceful_close();
+	sleep(5);
 }
 
 /*
@@ -1197,6 +1207,14 @@ TEST(Misc, ZreplCheckpointInterval) {
 	std::string host_slow, host_fast;
 	uint16_t port_slow, port_fast;
 	uint64_t ionum_slow, ionum_fast;
+	uint64_t degraded_ionum_slow, degraded_ionum_fast;
+
+	zvol_io_hdr_t hdr_in;
+	struct zvol_io_rw_hdr read_hdr;
+	struct zvol_io_rw_hdr write_hdr;
+	struct zrepl_status_ack status;
+	struct mgmt_ack mgmt_ack;
+	char buf[4096];
 
 	zrepl.start();
 	pool.create();
@@ -1210,22 +1228,43 @@ TEST(Misc, ZreplCheckpointInterval) {
 	control_fd = target.accept(-1);
 	ASSERT_GE(control_fd, 0);
 
-	do_handshake(zvol_name_slow, host_slow, port_slow, &ionum_slow,
+	do_handshake(zvol_name_slow, host_slow, port_slow, &ionum_slow, &degraded_ionum_slow,
 	    control_fd, ZVOL_OP_STATUS_OK);
-	do_handshake(zvol_name_fast, host_fast, port_fast, &ionum_fast,
+	do_handshake(zvol_name_fast, host_fast, port_fast, &ionum_fast, &degraded_ionum_fast,
 	    control_fd, ZVOL_OP_STATUS_OK);
 	ASSERT_NE(ionum_slow, 888);
 	ASSERT_NE(ionum_fast, 888);
-	transition_zvol_to_online(ioseq, control_fd, zvol_name_slow);
-	transition_zvol_to_online(ioseq, control_fd, zvol_name_fast);
 
 	do_data_connection(datasock_slow.fd(), host_slow, port_slow, zvol_name_slow,
 	    4096, 1000);
 	do_data_connection(datasock_fast.fd(), host_fast, port_fast, zvol_name_fast,
 	    4096, 2);
 
+	write_data_and_verify_resp(datasock_slow.fd(), ioseq, 0, 555);
+	write_data_and_verify_resp(datasock_fast.fd(), ioseq, 0, 555);
+
+	/* we are updating io_seq for degraded mode in every 5 seconds */
+	sleep(7);	// sleep more than 5 seconds
+
+	transition_zvol_to_online(ioseq, control_fd, zvol_name_slow);
+	transition_zvol_to_online(ioseq, control_fd, zvol_name_fast);
+
 	write_data_and_verify_resp(datasock_slow.fd(), ioseq, 0, 888);
 	write_data_and_verify_resp(datasock_fast.fd(), ioseq, 0, 888);
+
+	/* read the block without ZVOL_OP_FLAG_READ_METADATA flag in healthy state */
+	read_data_start(datasock_slow.fd(), ioseq, 0, sizeof (buf), &hdr_in, 0);
+	ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
+	ASSERT_EQ(hdr_in.len, sizeof (read_hdr) + sizeof (buf));
+	rc = read(datasock_slow.fd(), &read_hdr, sizeof (read_hdr));
+	ASSERT_ERRNO("read", rc >= 0);
+	ASSERT_EQ(rc, sizeof (read_hdr));
+	ASSERT_EQ(read_hdr.io_num, 0);
+	ASSERT_EQ(read_hdr.len, sizeof (buf));
+	rc = read(datasock_slow.fd(), buf, sizeof (buf));
+	ASSERT_ERRNO("read", rc >= 0);
+	ASSERT_EQ(rc, sizeof (buf));
+
 	sleep(10);	/* Due to spa sync interval, sleep for 10 sec is required here */
 
 	zrepl.kill();
@@ -1236,17 +1275,22 @@ TEST(Misc, ZreplCheckpointInterval) {
 	control_fd = target.accept(-1);
 	ASSERT_GE(control_fd, 0);
 
-	do_handshake(zvol_name_slow, host_slow, port_slow, &ionum_slow,
+	do_handshake(zvol_name_slow, host_slow, port_slow, &ionum_slow, &degraded_ionum_slow,
 	    control_fd, ZVOL_OP_STATUS_OK);
-	do_handshake(zvol_name_fast, host_fast, port_fast, &ionum_fast,
+	do_handshake(zvol_name_fast, host_fast, port_fast, &ionum_fast, &degraded_ionum_fast,
 	    control_fd, ZVOL_OP_STATUS_OK);
 
 	ASSERT_NE(ionum_slow, 888);
 	ASSERT_EQ(ionum_fast, 888);
+	ASSERT_EQ(degraded_ionum_slow, 555);
+	ASSERT_EQ(degraded_ionum_fast, 555);
 
-	datasock_slow.graceful_close();
+	do_data_connection(datasock_slow.fd(), host_slow, port_slow, zvol_name_slow,
+	    4096, 1000);
 	datasock_fast.graceful_close();
+	datasock_slow.graceful_close();
 	graceful_close(control_fd);
+	sleep(5);
 }
 
 class ZreplBlockSizeTest : public testing::Test {
@@ -1288,7 +1332,7 @@ protected:
 		m_control_fd = target.accept(-1);
 		ASSERT_GE(m_control_fd, 0);
 
-		do_handshake(m_zvol_name, m_host, m_port, NULL, m_control_fd,
+		do_handshake(m_zvol_name, m_host, m_port, NULL, NULL, m_control_fd,
 		    ZVOL_OP_STATUS_OK);
 	}
 
@@ -1319,8 +1363,11 @@ TEST_F(ZreplBlockSizeTest, SetMetaBlockSize) {
 	do_data_connection(datasock1.fd(), m_host, m_port, m_zvol_name, 4096);
 	write_data_and_verify_resp(datasock1.fd(), m_ioseq, 0, 1);
 	datasock1.graceful_close();
+	sleep(5);
 	do_data_connection(datasock2.fd(), m_host, m_port, m_zvol_name, 4096);
 	write_data_and_verify_resp(datasock2.fd(), m_ioseq, 0, 1);
+	datasock2.graceful_close();
+	sleep(5);
 }
 
 TEST_F(ZreplBlockSizeTest, SetMetaBlockSizeSmallerThanBlockSize) {
@@ -1328,6 +1375,8 @@ TEST_F(ZreplBlockSizeTest, SetMetaBlockSizeSmallerThanBlockSize) {
 
 	do_data_connection(datasock.fd(), m_host, m_port, m_zvol_name, 512);
 	write_data_and_verify_resp(datasock.fd(), m_ioseq, 0, 1, 512);
+	datasock.graceful_close();
+	sleep(5);
 }
 
 TEST_F(ZreplBlockSizeTest, SetMetaBlockSizeBiggerThanBlockSize) {
@@ -1335,6 +1384,8 @@ TEST_F(ZreplBlockSizeTest, SetMetaBlockSizeBiggerThanBlockSize) {
 
 	do_data_connection(datasock.fd(), m_host, m_port, m_zvol_name, 8192);
 	write_data_and_verify_resp(datasock.fd(), m_ioseq, 0, 1, 8192);
+	datasock.graceful_close();
+	sleep(5);
 }
 
 TEST_F(ZreplBlockSizeTest, SetMetaBlockSizeUnaligned) {
@@ -1342,6 +1393,8 @@ TEST_F(ZreplBlockSizeTest, SetMetaBlockSizeUnaligned) {
 
 	do_data_connection(datasock.fd(), m_host, m_port, m_zvol_name, 513, 120,
 	    ZVOL_OP_STATUS_FAILED);
+	datasock.graceful_close();
+	sleep(5);
 }
 
 TEST_F(ZreplBlockSizeTest, SetDifferentMetaBlockSizes) {
@@ -1350,8 +1403,11 @@ TEST_F(ZreplBlockSizeTest, SetDifferentMetaBlockSizes) {
 	do_data_connection(datasock1.fd(), m_host, m_port, m_zvol_name, 4096);
 	write_data_and_verify_resp(datasock1.fd(), m_ioseq, 0, 1);
 	datasock1.graceful_close();
+	sleep(5);
 	do_data_connection(datasock2.fd(), m_host, m_port, m_zvol_name, 512, 120,
 	    ZVOL_OP_STATUS_FAILED);
+	datasock2.graceful_close();
+	sleep(5);
 }
 
 /*
@@ -1379,7 +1435,7 @@ TEST(DiskReplaceTest, SpareReplacement) {
 	ASSERT_GE(rc, 0);
 	control_fd = target.accept(-1);
 	ASSERT_GE(control_fd, 0);
-	do_handshake(pool.getZvolName("vol"), host, port, NULL, control_fd,
+	do_handshake(pool.getZvolName("vol"), host, port, NULL, NULL, control_fd,
 	    ZVOL_OP_STATUS_OK);
 	do_data_connection(datasock.fd(), host, port, pool.getZvolName("vol"));
 	write_data_and_verify_resp(datasock.fd(), ioseq, 0, 10);
@@ -1411,6 +1467,7 @@ TEST(DiskReplaceTest, SpareReplacement) {
 
 	datasock.graceful_close();
 	graceful_close(control_fd);
+	sleep(5);
 }
 
 /*
@@ -1422,9 +1479,13 @@ TEST(Snapshot, CreateAndDestroy) {
 	Target target;
 	int rc, control_fd;
 	TestPool pool("snappool");
+	std::string vol_name = pool.getZvolName("vol");
 	std::string snap_name = pool.getZvolName("vol@snap");
 	std::string bad_snap_name = pool.getZvolName("vol");
 	std::string unknown_snap_name = pool.getZvolName("unknown@snap");
+	int ioseq;
+	std::string host;
+	uint16_t port;
 
 	zrepl.start();
 	pool.create();
@@ -1435,6 +1496,7 @@ TEST(Snapshot, CreateAndDestroy) {
 	control_fd = target.accept(-1);
 	ASSERT_GE(control_fd, 0);
 
+	do_handshake(vol_name, host, port, NULL, NULL, control_fd, ZVOL_OP_STATUS_OK);
 	// try to create snap of invalid zvol
 	hdr_out.version = REPLICA_VERSION;
 	hdr_out.opcode = ZVOL_OPCODE_SNAP_CREATE;
@@ -1462,7 +1524,20 @@ TEST(Snapshot, CreateAndDestroy) {
 	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_FAILED);
 	ASSERT_EQ(hdr_in.len, 0);
 
+	// try to create snap on degraded zvol
+	hdr_out.io_seq = 1;
+	hdr_out.len = snap_name.length() + 1;
+	rc = write(control_fd, &hdr_out, sizeof (hdr_out));
+	ASSERT_EQ(rc, sizeof (hdr_out));
+	rc = write(control_fd, snap_name.c_str(), hdr_out.len);
+	ASSERT_EQ(rc, hdr_out.len);
+	rc = read(control_fd, &hdr_in, sizeof (hdr_in));
+	ASSERT_EQ(rc, sizeof (hdr_in));
+	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_FAILED);
+	ASSERT_EQ(hdr_in.len, 0);
+
 	// create the snapshot
+	transition_zvol_to_online(ioseq, control_fd, vol_name);
 	hdr_out.io_seq = 2;
 	hdr_out.len = snap_name.length() + 1;
 	rc = write(control_fd, &hdr_out, sizeof (hdr_out));
@@ -1530,7 +1605,7 @@ TEST(ZvolResizeTest, ResizeZvol) {
 	ASSERT_GE(rc, 0);
 	control_fd = target.accept(-1);
 	ASSERT_GE(control_fd, 0);
-	do_handshake(zvolname, host, port, NULL, control_fd,
+	do_handshake(zvolname, host, port, NULL, NULL, control_fd,
 	    ZVOL_OP_STATUS_OK);
 
 	hdr_out.version = REPLICA_VERSION;
@@ -1595,7 +1670,7 @@ TEST(ZvolCloneTest, CloneZvol) {
 	ASSERT_GE(rc, 0);
 	control_fd = target.accept(-1);
 	ASSERT_GE(control_fd, 0);
-	do_handshake(zvolname, host, port, NULL, control_fd,
+	do_handshake(zvolname, host, port, NULL, NULL, control_fd,
 	    ZVOL_OP_STATUS_OK);
 
 	// promote the clone
@@ -1660,7 +1735,7 @@ TEST(ZvolStatsTest, StatsZvol) {
 	ASSERT_GE(rc, 0);
 	control_fd = target.accept(-1);
 	ASSERT_GE(control_fd, 0);
-	do_handshake(zvolname, host, port, NULL, control_fd,
+	do_handshake(zvolname, host, port, NULL, NULL, control_fd,
 	    ZVOL_OP_STATUS_OK);
 
 	// get "used" before
@@ -1671,6 +1746,7 @@ TEST(ZvolStatsTest, StatsZvol) {
 		write_data_and_verify_resp(datasock.fd(), ioseq, 4096 * i, i + 1);
 	}
 	datasock.graceful_close();
+	sleep(5);
 
 	// get "used" after
 	get_used(control_fd, zvolname, &val2);

@@ -477,7 +477,7 @@ static int fio_repl_open_file(struct thread_data *td, struct fio_file *f)
 		if (get_data_endpoint(td, f->file_name, &port, host) != 0)
 			return (1);
 	}
-
+again:
 	f->fd = socket(AF_INET, SOCK_STREAM, 0);
 	if (f->fd < 0) {
 		td_verror(td, errno, "socket");
@@ -498,10 +498,12 @@ static int fio_repl_open_file(struct thread_data *td, struct fio_file *f)
 
 	if (set_window_size(td, f->fd)) {
 		close(f->fd);
+		f->fd = -1;
 		return (1);
 	}
 	if (set_mss(td, f->fd)) {
 		close(f->fd);
+		f->fd = -1;
 		return (1);
 	}
 
@@ -512,6 +514,7 @@ static int fio_repl_open_file(struct thread_data *td, struct fio_file *f)
 	if (inet_pton(AF_INET, host, &addr.sin_addr) <= 0) {
 		td_verror(td, errno, "inet_pton");
 		close(f->fd);
+		f->fd = -1;
 		return (1);
 	}
 	log_info("repl: opening zvol %s on data connection\n",
@@ -519,13 +522,15 @@ static int fio_repl_open_file(struct thread_data *td, struct fio_file *f)
 	if (connect(f->fd, (struct sockaddr *)&addr, sizeof (addr)) < 0) {
 		td_verror(td, errno, "connect");
 		close(f->fd);
+		f->fd = -1;
 		return (1);
 	}
 
 	// send volume name we want to open to replica
 	if (open_zvol(td, f->fd, f->file_name) != 0) {
 		close(f->fd);
-		return (1);
+		sleep(2);
+		goto again;
 	}
 
 	return (0);

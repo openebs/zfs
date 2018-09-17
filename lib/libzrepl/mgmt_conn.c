@@ -45,6 +45,7 @@
 
 #include <mgmt_conn.h>
 #include "data_conn.h"
+#include "uzfs_rebuilding.h"
 
 /*
  * This file contains implementation of event loop (uzfs_zvol_mgmt_thread).
@@ -69,12 +70,15 @@
  */
 
 /* log wrappers which prefix log message by iscsi target address */
-#define	DBGCONN(c, fmt, ...)	LOG_DEBUG("[tgt %s:%u]: " fmt, \
-				(c)->conn_host, (c)->conn_port, ##__VA_ARGS__)
-#define	LOGCONN(c, fmt, ...)	LOG_INFO("[tgt %s:%u]: " fmt, \
-				(c)->conn_host, (c)->conn_port, ##__VA_ARGS__)
-#define	LOGERRCONN(c, fmt, ...)	LOG_ERR("[tgt %s:%u]: " fmt, \
-				(c)->conn_host, (c)->conn_port, ##__VA_ARGS__)
+#define	DBGCONN(c, fmt, ...)	LOG_DEBUG("[tgt %s:%u:%d]: " fmt, \
+				(c)->conn_host, (c)->conn_port, \
+				c->conn_fd, ##__VA_ARGS__)
+#define	LOGCONN(c, fmt, ...)	LOG_INFO("[tgt %s:%u:%d]: " fmt, \
+				(c)->conn_host, (c)->conn_port, \
+				c->conn_fd, ##__VA_ARGS__)
+#define	LOGERRCONN(c, fmt, ...)	LOG_ERR("[tgt %s:%u:%d]: " fmt, \
+				(c)->conn_host, (c)->conn_port, \
+				c->conn_fd, ##__VA_ARGS__)
 
 /* Max # of events from epoll processed at once */
 #define	MAX_EVENTS	10
@@ -189,6 +193,7 @@ connect_to_tgt(uzfs_mgmt_conn_t *conn)
 		    conn->conn_port);
 		return (-1);
 	}
+
 	return (sfd);
 }
 
@@ -249,7 +254,7 @@ zinfo_create_cb(zvol_info_t *zinfo, nvlist_t *create_props)
 	char target_host[MAXNAMELEN];
 	uint16_t target_port;
 	uzfs_mgmt_conn_t *conn, *new_mgmt_conn;
-	zvol_state_t *zv = zinfo->zv;
+	zvol_state_t *zv = zinfo->main_zv;
 	char *delim, *ip;
 	uint64_t val = 1;
 	int rc;
@@ -456,7 +461,7 @@ static int
 uzfs_zvol_mgmt_do_handshake(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
     const char *name, zvol_info_t *zinfo)
 {
-	zvol_state_t	*zv = zinfo->zv;
+	zvol_state_t	*zv = zinfo->main_zv;
 	mgmt_ack_t 	mgmt_ack;
 	zvol_io_hdr_t	hdr;
 
@@ -500,7 +505,18 @@ uzfs_zvol_mgmt_do_handshake(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	hdr.io_seq = hdrp->io_seq;
 	hdr.len = sizeof (mgmt_ack);
 	hdr.status = ZVOL_OP_STATUS_OK;
-	hdr.checkpointed_io_seq = uzfs_zvol_get_last_committed_io_no(zv);
+
+	zinfo->checkpointed_ionum =
+	    uzfs_zvol_get_last_committed_io_no(zv, HEALTHY_IO_SEQNUM);
+	zinfo->degraded_checkpointed_ionum =
+	    uzfs_zvol_get_last_committed_io_no(zv, DEGRADED_IO_SEQNUM);
+	zinfo->stored_healthy_ionum = zinfo->checkpointed_ionum;
+	zinfo->running_ionum = zinfo->degraded_checkpointed_ionum;
+	LOG_INFO("IO sequence number:%lu Degraded IO sequence number:%lu",
+	    zinfo->checkpointed_ionum, zinfo->degraded_checkpointed_ionum);
+
+	hdr.checkpointed_io_seq = zinfo->checkpointed_ionum;
+	hdr.checkpointed_degraded_io_seq = zinfo->degraded_checkpointed_ionum;
 
 	return (reply_data(conn, &hdr, &mgmt_ack, sizeof (mgmt_ack)));
 }
@@ -512,7 +528,7 @@ uzfs_zvol_rebuild_status(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	zrepl_status_ack_t	status_ack;
 	zvol_io_hdr_t		hdr;
 
-	status_ack.state = uzfs_zvol_get_status(zinfo->zv);
+	status_ack.state = uzfs_zvol_get_status(zinfo->main_zv);
 
 	bzero(&hdr, sizeof (hdr));
 	hdr.version = REPLICA_VERSION;
@@ -521,20 +537,22 @@ uzfs_zvol_rebuild_status(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	hdr.len = sizeof (status_ack);
 	hdr.status = ZVOL_OP_STATUS_OK;
 
-	mutex_enter(&zinfo->zv->rebuild_mtx);
-	status_ack.rebuild_status = uzfs_zvol_get_rebuild_status(zinfo->zv);
+	mutex_enter(&zinfo->main_zv->rebuild_mtx);
+	status_ack.rebuild_status = uzfs_zvol_get_rebuild_status(
+	    zinfo->main_zv);
 
 	/*
 	 * Once the REBUILD_FAILED status is sent to target, rebuild status
 	 * need to be set to INIT so that rebuild can be retriggered
 	 */
-	if (uzfs_zvol_get_rebuild_status(zinfo->zv) == ZVOL_REBUILDING_FAILED) {
-		memset(&zinfo->zv->rebuild_info, 0,
+	if (uzfs_zvol_get_rebuild_status(zinfo->main_zv) ==
+	    ZVOL_REBUILDING_FAILED) {
+		memset(&zinfo->main_zv->rebuild_info, 0,
 		    sizeof (zvol_rebuild_info_t));
-		uzfs_zvol_set_rebuild_status(zinfo->zv,
+		uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 		    ZVOL_REBUILDING_INIT);
 	}
-	mutex_exit(&zinfo->zv->rebuild_mtx);
+	mutex_exit(&zinfo->main_zv->rebuild_mtx);
 	return (reply_data(conn, &hdr, &status_ack, sizeof (status_ack)));
 }
 
@@ -543,10 +561,11 @@ uzfs_zvol_stats(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp, zvol_info_t *zinfo)
 {
 	zvol_io_hdr_t	hdr;
 	zvol_op_stat_t	stat;
+	objset_t	*zv_objset = zinfo->main_zv->zv_objset;
 
 	strlcpy(stat.label, "used", sizeof (stat.label));
 	stat.value = dsl_dir_phys(
-	    zinfo->zv->zv_objset->os_dsl_dataset->ds_dir)->dd_used_bytes;
+	    zv_objset->os_dsl_dataset->ds_dir)->dd_used_bytes;
 
 	bzero(&hdr, sizeof (hdr));
 	hdr.version = REPLICA_VERSION;
@@ -604,22 +623,22 @@ uzfs_append_snapshot_properties(nvlist_t *nv, struct json_object *robj,
 			break;
 
 		default:
-			LOG_ERR("nvpair type : %d\n", nvpair_type(elem));
+			LOG_ERR("nvpair type : %d name:%s\n",
+			    nvpair_type(elem), nvpair_name(elem));
 		}
 		prop_name = NULL;
 	}
 }
 
 static int
-uzfs_zvol_fetch_snapshot_list(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
-    zvol_info_t *zinfo)
+uzfs_zvol_fetch_snapshot_list(zvol_info_t *zinfo, void **buf,
+    size_t *buflen)
 {
-	zvol_io_hdr_t   hdr;
 	char *snapname;
 	boolean_t case_conflict;
 	uint64_t id, pos = 0;
 	int error = 0;
-	zvol_state_t *zv = (zvol_state_t *)zinfo->zv;
+	zvol_state_t *zv = (zvol_state_t *)zinfo->main_zv;
 	objset_t *os = zv->zv_objset;
 	struct zvol_snapshot_list *snap_list;
 	dsl_dataset_t *ds;
@@ -641,6 +660,11 @@ uzfs_zvol_fetch_snapshot_list(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 		if (error) {
 			dsl_pool_config_exit(dmu_objset_pool(os), FTAG);
 			goto out;
+		}
+
+		if (strcmp(snapname, REBUILD_SNAPSHOT_SNAPNAME) == 0) {
+			dsl_pool_config_exit(dmu_objset_pool(os), FTAG);
+			continue;
 		}
 
 		jobj = json_object_new_object();
@@ -685,16 +709,10 @@ out:
 	strncpy(snap_list->data, json_string, total_len);
 	json_object_put(jobj);
 
+	*buf = snap_list;
+	*buflen = total_len + sizeof (*snap_list);
 
-	bzero(&hdr, sizeof (hdr));
-	hdr.version = REPLICA_VERSION;
-	hdr.opcode = hdrp->opcode;
-	hdr.io_seq = hdrp->io_seq;
-	hdr.len = total_len + sizeof (*snap_list);
-	hdr.status = ZVOL_OP_STATUS_OK;
-
-	return (reply_data(conn, &hdr, snap_list,
-	    total_len + sizeof (*snap_list)));
+	return (0);
 }
 
 static void
@@ -702,7 +720,10 @@ free_async_task(async_task_t *async_task)
 {
 	ASSERT(MUTEX_HELD(&async_tasks_mtx));
 	uzfs_zinfo_drop_refcnt(async_task->zinfo);
-	kmem_free(async_task->payload, async_task->payload_length);
+	if (async_task->payload)
+		kmem_free(async_task->payload, async_task->payload_length);
+	if (async_task->output)
+		kmem_free(async_task->output, async_task->output_length);
 	kmem_free(async_task, sizeof (*async_task));
 }
 
@@ -724,8 +745,16 @@ finish_async_tasks(void)
 			continue;
 		/* connection could have been closed in the meantime */
 		if (!async_task->conn_closed) {
-			rc = reply_nodata(async_task->conn, async_task->status,
-			    async_task->hdr.opcode, async_task->hdr.io_seq);
+			if (async_task->output) {
+				async_task->hdr.status = async_task->status;
+				async_task->hdr.len = async_task->output_length;
+				rc = reply_data(async_task->conn,
+				    &async_task->hdr, async_task->output,
+				    async_task->output_length);
+			} else
+				rc = reply_nodata(async_task->conn,
+				    async_task->status, async_task->hdr.opcode,
+				    async_task->hdr.io_seq);
 		}
 		SLIST_REMOVE(&async_tasks, async_task, async_task, task_next);
 		free_async_task(async_task);
@@ -734,6 +763,63 @@ finish_async_tasks(void)
 	}
 	mutex_exit(&async_tasks_mtx);
 	return (rc);
+}
+
+/*
+ * Checks that running io_num is not greater than snapshot_io_num
+ * Update snapshot IO to ZAP and take snapshot.
+ */
+int
+uzfs_zvol_create_snapshot_update_zap(zvol_info_t *zinfo,
+    char *snapname, uint64_t snapshot_io_num)
+{
+	int ret = 0;
+
+	if (zinfo->running_ionum > snapshot_io_num -1) {
+		LOG_ERR("Failed to create snapshot as running_ionum %lu"
+		    "is greater than snapshot_io_num %lu",
+		    zinfo->running_ionum, snapshot_io_num);
+		return (ret = -1);
+	}
+
+	uzfs_zvol_store_last_committed_healthy_io_no(zinfo, snapshot_io_num-1);
+
+	ret = dmu_objset_snapshot_one(zinfo->name, snapname);
+	return (ret);
+}
+
+/*
+ * For a given snap name, get snap dataset and IO number stored in ZAP
+ * Input: zinfo, snap
+ * Output: snapshot_io_num, snap_zv
+ */
+int
+uzfs_zvol_get_snap_dataset_with_io(zvol_info_t *zinfo,
+    char *snapname, uint64_t *snapshot_io_num, zvol_state_t **snap_zv)
+{
+	int ret = 0;
+
+	char *longsnap = kmem_asprintf("%s@%s",
+	    strchr(zinfo->name, '/') + 1, snapname);
+	ret = uzfs_open_dataset(zinfo->main_zv->zv_spa, longsnap, snap_zv);
+	if (ret != 0) {
+		LOG_ERR("Failed to get info about %s", longsnap);
+		strfree(longsnap);
+		return (ret);
+	}
+
+	strfree(longsnap);
+	ret = uzfs_hold_dataset(*snap_zv);
+	if (ret != 0) {
+		LOG_ERR("Failed to hold snapshot: %d", ret);
+		uzfs_close_dataset(*snap_zv);
+		*snap_zv = NULL;
+		return (ret);
+	}
+
+	(*snapshot_io_num) = uzfs_zvol_get_last_committed_io_no(*snap_zv,
+	    HEALTHY_IO_SEQNUM);
+	return (ret);
 }
 
 /*
@@ -755,7 +841,8 @@ uzfs_zvol_execute_async_command(void *arg)
 	switch (async_task->hdr.opcode) {
 	case ZVOL_OPCODE_SNAP_CREATE:
 		snap = async_task->payload;
-		rc = dmu_objset_snapshot_one(zinfo->name, snap);
+		rc = uzfs_zvol_create_snapshot_update_zap(zinfo, snap,
+		    async_task->hdr.io_seq);
 		if (rc != 0) {
 			LOG_ERR("Failed to create %s@%s: %d",
 			    zinfo->name, snap, rc);
@@ -779,14 +866,27 @@ uzfs_zvol_execute_async_command(void *arg)
 		break;
 	case ZVOL_OPCODE_RESIZE:
 		volsize = *(uint64_t *)async_task->payload;
-		rc = zvol_check_volsize(volsize, zinfo->zv->zv_volblocksize);
+		rc = zvol_check_volsize(volsize,
+		    zinfo->main_zv->zv_volblocksize);
 		if (rc == 0) {
-			rc = zvol_update_volsize(volsize, zinfo->zv->zv_objset);
+			rc = zvol_update_volsize(volsize,
+			    zinfo->main_zv->zv_objset);
 			if (rc == 0)
-				zvol_size_changed(zinfo->zv, volsize);
+				zvol_size_changed(zinfo->main_zv, volsize);
 		}
 		if (rc != 0) {
 			LOG_ERR("Failed to resize zvol %s", zinfo->name);
+			async_task->status = ZVOL_OP_STATUS_FAILED;
+		} else {
+			async_task->status = ZVOL_OP_STATUS_OK;
+		}
+		break;
+	case ZVOL_OPCODE_SNAP_LIST:
+		rc = uzfs_zvol_fetch_snapshot_list(zinfo, &async_task->output,
+		    (size_t *)&async_task->output_length);
+		if (rc != 0) {
+			LOG_ERR("Failed to fetch snapshot list for zvol %s\n",
+			    zinfo->name);
 			async_task->status = ZVOL_OP_STATUS_FAILED;
 		} else {
 			async_task->status = ZVOL_OP_STATUS_OK;
@@ -862,27 +962,27 @@ uzfs_zvol_rebuild_dw_replica_start(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 			LOG_ERR("zvol %s not matching with zinfo %s",
 			    mack->dw_volname, zinfo->name);
 ret_error:
-			mutex_enter(&zinfo->zv->rebuild_mtx);
+			mutex_enter(&zinfo->main_zv->rebuild_mtx);
 
 			/* Error happened, so set to REBUILD_ERRORED state */
-			uzfs_zvol_set_rebuild_status(zinfo->zv,
+			uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 			    ZVOL_REBUILDING_ERRORED);
 
-			(zinfo->zv->rebuild_info.rebuild_failed_cnt) +=
+			(zinfo->main_zv->rebuild_info.rebuild_failed_cnt) +=
 			    rebuild_op_cnt;
-			(zinfo->zv->rebuild_info.rebuild_done_cnt) +=
+			(zinfo->main_zv->rebuild_info.rebuild_done_cnt) +=
 			    rebuild_op_cnt;
 
 			/*
 			 * If all the triggered rebuilds are done,
 			 * mark state as REBUILD_FAILED
 			 */
-			if (zinfo->zv->rebuild_info.rebuild_cnt ==
-			    zinfo->zv->rebuild_info.rebuild_done_cnt)
-				uzfs_zvol_set_rebuild_status(zinfo->zv,
+			if (zinfo->main_zv->rebuild_info.rebuild_cnt ==
+			    zinfo->main_zv->rebuild_info.rebuild_done_cnt)
+				uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 				    ZVOL_REBUILDING_FAILED);
 
-			mutex_exit(&zinfo->zv->rebuild_mtx);
+			mutex_exit(&zinfo->main_zv->rebuild_mtx);
 			return (reply_nodata(conn,
 			    ZVOL_OP_STATUS_FAILED,
 			    hdrp->opcode, hdrp->io_seq));
@@ -939,7 +1039,7 @@ handle_start_rebuild_req(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	mgmt_ack_t *mack = (mgmt_ack_t *)payload;
 	zinfo = uzfs_zinfo_lookup(mack->dw_volname);
 	if ((zinfo == NULL) || (zinfo->mgmt_conn != conn) ||
-	    (zinfo->zv == NULL)) {
+	    (zinfo->main_zv == NULL)) {
 		if (zinfo != NULL) {
 			LOG_ERR("rebuilding failed for %s..", zinfo->name);
 			uzfs_zinfo_drop_refcnt(zinfo);
@@ -951,11 +1051,11 @@ handle_start_rebuild_req(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 		goto end;
 	}
 
-	mutex_enter(&zinfo->zv->rebuild_mtx);
+	mutex_enter(&zinfo->main_zv->rebuild_mtx);
 	/* Check rebuild status of downgraded zinfo */
-	if (uzfs_zvol_get_rebuild_status(zinfo->zv) !=
+	if (uzfs_zvol_get_rebuild_status(zinfo->main_zv) !=
 	    ZVOL_REBUILDING_INIT) {
-		mutex_exit(&zinfo->zv->rebuild_mtx);
+		mutex_exit(&zinfo->main_zv->rebuild_mtx);
 		uzfs_zinfo_drop_refcnt(zinfo);
 		LOG_ERR("rebuilding failed for %s due to improper rebuild "
 		    "status", zinfo->name);
@@ -963,22 +1063,24 @@ handle_start_rebuild_req(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 		    hdrp->opcode, hdrp->io_seq);
 		goto end;
 	}
-	memset(&zinfo->zv->rebuild_info, 0, sizeof (zvol_rebuild_info_t));
+
+	memset(&zinfo->main_zv->rebuild_info, 0,
+	    sizeof (zvol_rebuild_info_t));
 	int rebuild_op_cnt = (payload_size / sizeof (mgmt_ack_t));
 	/* Track # of rebuilds we are initializing on replica */
-	zinfo->zv->rebuild_info.rebuild_cnt = rebuild_op_cnt;
+	zinfo->main_zv->rebuild_info.rebuild_cnt = rebuild_op_cnt;
 
 	/*
 	 * Case where just one replica is being used by customer
 	 */
 	if ((strcmp(mack->volname, "")) == 0) {
-		zinfo->zv->rebuild_info.rebuild_cnt = 0;
-		zinfo->zv->rebuild_info.rebuild_done_cnt = 0;
+		zinfo->main_zv->rebuild_info.rebuild_cnt = 0;
+		zinfo->main_zv->rebuild_info.rebuild_done_cnt = 0;
 		/* Mark replica healthy now */
-		uzfs_zvol_set_rebuild_status(zinfo->zv,
+		uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 		    ZVOL_REBUILDING_DONE);
-		mutex_exit(&zinfo->zv->rebuild_mtx);
-		uzfs_zvol_set_status(zinfo->zv,
+		mutex_exit(&zinfo->main_zv->rebuild_mtx);
+		uzfs_zvol_set_status(zinfo->main_zv,
 		    ZVOL_STATUS_HEALTHY);
 		uzfs_update_ionum_interval(zinfo, 0);
 		LOG_INFO("Rebuild of zvol %s completed",
@@ -988,9 +1090,9 @@ handle_start_rebuild_req(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 		    hdrp->opcode, hdrp->io_seq);
 		goto end;
 	}
-	uzfs_zvol_set_rebuild_status(zinfo->zv,
+	uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 	    ZVOL_REBUILDING_IN_PROGRESS);
-	mutex_exit(&zinfo->zv->rebuild_mtx);
+	mutex_exit(&zinfo->main_zv->rebuild_mtx);
 
 	DBGCONN(conn, "Rebuild start command");
 	/* Call API to start threads with every helping replica */
@@ -1015,7 +1117,7 @@ process_message(uzfs_mgmt_conn_t *conn)
 	size_t payload_size = conn->conn_bufsiz;
 	zvol_op_resize_data_t *resize_data;
 	zvol_info_t *zinfo;
-	char *snap;
+	char *snap = NULL;
 	int rc = 0;
 
 	conn->conn_hdr = NULL;
@@ -1082,22 +1184,25 @@ process_message(uzfs_mgmt_conn_t *conn)
 
 	case ZVOL_OPCODE_SNAP_CREATE:
 	case ZVOL_OPCODE_SNAP_DESTROY:
-		if (payload_size == 0 || payload_size > MAX_NAME_LEN) {
+	case ZVOL_OPCODE_SNAP_LIST:
+		if (payload_size == 0 || payload_size >= MAX_NAME_LEN) {
 			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
 			    hdrp->opcode, hdrp->io_seq);
 			break;
 		}
 		strlcpy(zvol_name, payload, payload_size);
 		zvol_name[payload_size] = '\0';
-		snap = strchr(zvol_name, '@');
-		if (snap == NULL) {
-			LOG_ERR("Invalid snapshot name: %s",
-			    zvol_name);
-			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
-			    hdrp->opcode, hdrp->io_seq);
-			break;
+		if (hdrp->opcode != ZVOL_OPCODE_SNAP_LIST) {
+			snap = strchr(zvol_name, '@');
+			if (snap == NULL) {
+				LOG_ERR("Invalid snapshot name: %s",
+				    zvol_name);
+				rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
+				    hdrp->opcode, hdrp->io_seq);
+				break;
+			}
+			*snap++ = '\0';
 		}
-		*snap++ = '\0';
 		/* ref will be released when async command has finished */
 		if ((zinfo = uzfs_zinfo_lookup(zvol_name)) == NULL) {
 			LOGERRCONN(conn, "Unknown zvol: %s", zvol_name);
@@ -1108,7 +1213,22 @@ process_message(uzfs_mgmt_conn_t *conn)
 		if (zinfo->mgmt_conn != conn) {
 			uzfs_zinfo_drop_refcnt(zinfo);
 			LOGERRCONN(conn, "Target used invalid connection for "
-			    "zvol %s", zvol_name);
+			    "zvol %s to take %s snapshot", zvol_name, snap);
+			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
+			    hdrp->opcode, hdrp->io_seq);
+			break;
+		}
+		if (hdrp->opcode == ZVOL_OPCODE_SNAP_LIST) {
+			LOGCONN(conn, "Snaplist command for %s", zinfo->name);
+			rc = uzfs_zvol_dispatch_command(conn, hdrp, NULL, 0,
+			    zinfo);
+			break;
+		}
+		if (uzfs_zvol_get_status(zinfo->main_zv) !=
+		    ZVOL_STATUS_HEALTHY) {
+			uzfs_zinfo_drop_refcnt(zinfo);
+			LOG_ERR("zvol %s is not healthy to take %s snapshot",
+			    zvol_name, snap);
 			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
 			    hdrp->opcode, hdrp->io_seq);
 			break;
@@ -1159,32 +1279,6 @@ process_message(uzfs_mgmt_conn_t *conn)
 		    payload_size);
 		break;
 
-	case ZVOL_OPCODE_SNAP_LIST:
-		if (payload_size == 0 || payload_size > MAX_NAME_LEN) {
-			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
-			    hdrp->opcode, hdrp->io_seq);
-			break;
-		}
-		strlcpy(zvol_name, payload, payload_size);
-		zvol_name[payload_size] = '\0';
-		if ((zinfo = uzfs_zinfo_lookup(zvol_name)) == NULL) {
-			LOGERRCONN(conn, "Unknown zvol: %s", zvol_name);
-			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
-			    hdrp->opcode, hdrp->io_seq);
-			break;
-		}
-		if (zinfo->mgmt_conn != conn) {
-			uzfs_zinfo_drop_refcnt(zinfo);
-			LOGERRCONN(conn, "Target used invalid connection for "
-			    "zvol %s", zvol_name);
-			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
-			    hdrp->opcode, hdrp->io_seq);
-			break;
-		}
-		LOGCONN(conn, "Snaplist command for %s", zinfo->name);
-		rc = uzfs_zvol_fetch_snapshot_list(conn, hdrp, zinfo);
-		break;
-
 	default:
 		LOGERRCONN(conn, "Message with unknown OP code %d",
 		    hdrp->opcode);
@@ -1216,6 +1310,10 @@ move_to_next_state(uzfs_mgmt_conn_t *conn)
 	switch (conn->conn_state) {
 	case CS_CONNECT:
 		LOGCONN(conn, "Connected");
+		rc = set_socket_keepalive(conn->conn_fd);
+		if (rc != 0)
+			LOGERRCONN(conn, "Failed to set keepalive");
+		rc = 0;
 		/* Fall-through */
 	case CS_INIT:
 		DBGCONN(conn, "Reading version..");
@@ -1296,9 +1394,7 @@ uzfs_zvol_mgmt_thread(void *arg)
 	int			nfds, i, rc;
 	boolean_t		do_scan;
 	async_task_t		*async_task;
-
-	mutex_init(&conn_list_mtx, NULL, MUTEX_DEFAULT, NULL);
-	mutex_init(&async_tasks_mtx, NULL, MUTEX_DEFAULT, NULL);
+	struct timespec diff_time, now, last_time;
 
 	mgmt_eventfd = eventfd(0, EFD_NONBLOCK);
 	if (mgmt_eventfd < 0) {
@@ -1318,6 +1414,7 @@ uzfs_zvol_mgmt_thread(void *arg)
 	}
 
 	prctl(PR_SET_NAME, "mgmt_conn", 0, 0, 0);
+	clock_gettime(CLOCK_MONOTONIC, &last_time);
 
 	/*
 	 * The only reason to break from this loop is a failure to update FDs
@@ -1422,10 +1519,17 @@ uzfs_zvol_mgmt_thread(void *arg)
 		 * Scan the list either if signalled or timed out waiting
 		 * for event
 		 */
+		if (nfds != 0 && !do_scan) {
+			timesdiff(CLOCK_MONOTONIC, last_time, now, diff_time);
+			if (diff_time.tv_sec >= (RECONNECT_DELAY / 2))
+				do_scan = 1;
+		}
+
 		if (nfds == 0 || do_scan) {
 			if (scan_conn_list() != 0) {
 				goto exit;
 			}
+			clock_gettime(CLOCK_MONOTONIC, &last_time);
 		}
 	}
 

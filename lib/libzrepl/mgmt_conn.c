@@ -618,18 +618,19 @@ finish_async_tasks(void)
  */
 int
 uzfs_zvol_create_snapshot_update_zap(zvol_info_t *zinfo,
-    char *snapname, uint64_t snapshot_io_num)
+    char *snapname, uint64_t snapshot_io_num, boolean_t bypass_check)
 {
 	int ret = 0;
 
-	if (zinfo->running_ionum > snapshot_io_num -1) {
+	if (!bypass_check && (zinfo->running_ionum > snapshot_io_num -1)) {
 		LOG_ERR("Failed to create snapshot as running_ionum %lu"
 		    "is greater than snapshot_io_num %lu",
 		    zinfo->running_ionum, snapshot_io_num);
 		return (ret = -1);
 	}
 
-	uzfs_zvol_store_last_committed_healthy_io_no(zinfo, snapshot_io_num-1);
+	uzfs_zvol_store_last_committed_healthy_io_no(zinfo,
+	    snapshot_io_num - 1);
 
 	ret = dmu_objset_snapshot_one(zinfo->name, snapname);
 	return (ret);
@@ -689,7 +690,7 @@ uzfs_zvol_execute_async_command(void *arg)
 	case ZVOL_OPCODE_SNAP_CREATE:
 		snap = async_task->payload;
 		rc = uzfs_zvol_create_snapshot_update_zap(zinfo, snap,
-		    async_task->hdr.io_seq);
+		    async_task->hdr.io_seq, B_FALSE);
 		if (rc != 0) {
 			LOG_ERR("Failed to create %s@%s: %d",
 			    zinfo->name, snap, rc);
@@ -927,7 +928,7 @@ handle_start_rebuild_req(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 		goto end;
 	}
 	uzfs_zvol_set_rebuild_status(zinfo->main_zv,
-	    ZVOL_REBUILDING_IN_PROGRESS);
+	    ZVOL_REBUILDING_SNAP);
 	mutex_exit(&zinfo->main_zv->rebuild_mtx);
 
 	DBGCONN(conn, "Rebuild start command");

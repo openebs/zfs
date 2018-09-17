@@ -68,6 +68,8 @@ enum zvol_op_code {
 	ZVOL_OPCODE_START_REBUILD,
 	ZVOL_OPCODE_REBUILD_STEP,
 	ZVOL_OPCODE_REBUILD_STEP_DONE,
+	ZVOL_OPCODE_REBUILD_SNAP_DONE,
+	ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE,
 	ZVOL_OPCODE_REBUILD_COMPLETE,
 	ZVOL_OPCODE_SNAP_CREATE,
 	ZVOL_OPCODE_SNAP_DESTROY,
@@ -140,7 +142,8 @@ typedef struct mgmt_ack mgmt_ack_t;
  */
 enum zvol_rebuild_status {
 	ZVOL_REBUILDING_INIT,		/* rebuilding can be initiated */
-	ZVOL_REBUILDING_IN_PROGRESS,	/* zvol is rebuilding */
+	ZVOL_REBUILDING_SNAP,		/* zvol is rebuilding snapshots */
+	ZVOL_REBUILDING_AFS,		/* zvol is rebuilding active dataset */
 	ZVOL_REBUILDING_DONE,		/* Rebuilding completed with success */
 
 	/* errored during rebuilding, but not completed */

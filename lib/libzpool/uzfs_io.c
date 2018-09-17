@@ -373,7 +373,8 @@ rebuild_status_to_str(zvol_rebuild_status_t status)
 	switch (status) {
 	case ZVOL_REBUILDING_INIT:
 		return ("INIT");
-	case ZVOL_REBUILDING_IN_PROGRESS:
+	case ZVOL_REBUILDING_SNAP:
+	case ZVOL_REBUILDING_AFS:
 		return ("INPROGRESS");
 	case ZVOL_REBUILDING_DONE:
 		return ("DONE");

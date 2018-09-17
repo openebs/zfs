@@ -93,6 +93,7 @@ typedef struct zvol_state zvol_state_t;
 #define	UZFS_IO_TX_ASSIGN_FAIL	1
 #define	UZFS_IO_READ_FAIL	2
 #define	UZFS_IO_MREAD_FAIL	3
+#define	UZFS_IO_UNMAP_FAIL	4
 
 #define	ZVOL_IS_DEGRADED(zv)	(zv->zv_status == ZVOL_STATUS_DEGRADED)
 #define	ZVOL_IS_REBUILDING(zv)		\

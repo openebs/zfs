@@ -1105,8 +1105,15 @@ run_uzfs_test()
 	    -p uzfs_pool15 -d uzfs_vol15 -l -i 8192 -b 65536 -T 2 &
 	pid1=$!
 
-	wait_for_pids $pid1 $sync_pid
+	log_must setup_uzfs_test log 65536 $UZFS_TEST_VOLSIZE standard uzfs_pool16 uzfs_vol16 uzfs_test_vdev16 uzfs_test_log16
+	log_must export_pool uzfs_pool16
+	log_must $UZFS_TEST -t 30 -v $UZFS_TEST_VOLSIZE_IN_NUM -a $UZFS_TEST_VOLSIZE_IN_NUM \
+	    -p uzfs_pool16 -d uzfs_vol16 -l -i 8192 -b 65536 -T 6 &
+	pid2=$!
+
+	wait_for_pids $pid1 $pid2 $sync_pid
 	cleanup_uzfs_test uzfs_pool15 uzfs_test_vdev15 uzfs_test_log15
+	cleanup_uzfs_test uzfs_pool16 uzfs_test_vdev16 uzfs_test_log16
 
 	return 0
 }

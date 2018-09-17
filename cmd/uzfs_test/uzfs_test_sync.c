@@ -33,13 +33,13 @@ verify_fn(void *zv, char *buf, int block_size)
 	uint64_t io_num = 0;
 
 	if (metaverify != 0) {
-		err = uzfs_read_data(zv, buf, 0, block_size, &md);
+		err = uzfs_read_data(zv, buf, 0, block_size, &md, NULL, NULL);
 		if (err == 0 && md == NULL) {
 			printf("no meta data returned\n");
 			return (1);
 		}
 	} else {
-		err = uzfs_read_data(zv, buf, 0, block_size, NULL);
+		err = uzfs_read_data(zv, buf, 0, block_size, NULL, NULL, NULL);
 	}
 
 	if (err != 0) {

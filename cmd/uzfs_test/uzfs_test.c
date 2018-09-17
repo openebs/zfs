@@ -58,6 +58,7 @@ uzfs_test_info_t uzfs_tests[] = {
 	    " metadata for given data block" },
 	{ unit_test_fn, "zvol random read/write verification with metadata" },
 	{ zrepl_rebuild_test, "ZFS rebuild test" },
+	{ unmap_test_fn, "ZFS read/write/unmap test" },
 };
 
 uint64_t metaverify = 0;
@@ -123,7 +124,7 @@ verify_vol_data(void *zv, uint64_t block_size, uint64_t vol_size)
 			len = vol_size - i;
 		if (iodata[i/block_size] == 0)
 			continue;
-		uzfs_read_data(zv, buf, i, len, &md);
+		uzfs_read_data(zv, buf, i, len, &md, NULL, NULL);
 		for (j = 0; j < len; j++)
 			if (data[i+j] != buf[j]) {
 				printf("verify error at %lu\n", (i+j));
@@ -176,7 +177,7 @@ reader_thread(void *arg)
 
 		idx = uzfs_random(15);
 		err = uzfs_read_data(zv, buf[idx], offset,
-		    (idx + 1) * block_size, &md);
+		    (idx + 1) * block_size, &md, NULL, NULL);
 
 		if (err != 0)
 			printf("RIO error at offset: %lu len: %lu\n", offset,

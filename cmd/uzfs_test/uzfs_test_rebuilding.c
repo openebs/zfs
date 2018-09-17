@@ -130,14 +130,16 @@ replica_reader_thread(void *arg)
 		if ((offset + len) > end)
 			len = end - offset;
 
-		err = uzfs_read_data(zvol1, buf1[idx], offset, len, NULL);
+		err = uzfs_read_data(zvol1, buf1[idx], offset, len,
+		    NULL, NULL, NULL);
 		if (err != 0) {
 			printf("IO error at offset: %lu len: %lu in read"
 			    " err(%d)\n", offset, len, err);
 			exit(1);
 		}
 
-		err = uzfs_read_data(zvol2, buf2[idx], offset, len, NULL);
+		err = uzfs_read_data(zvol2, buf2[idx], offset, len,
+		    NULL, NULL, NULL);
 		if (err != 0) {
 			printf("IO error at offset: %lu len: %lu in read"
 			    " err(%d)\n", offset, len, err);
@@ -190,7 +192,7 @@ uzfs_test_meta_diff_traverse_cb(off_t offset, size_t len,
 	io->io_number = md->io_num;
 	io->buf = umem_alloc(len, UMEM_NOFAIL);
 
-	err = uzfs_read_data(snap_zv, io->buf, offset, len, NULL);
+	err = uzfs_read_data(snap_zv, io->buf, offset, len, NULL, NULL, NULL);
 	if (err) {
 		printf("Failed to read data from snapshot(%s) err(%d)\n",
 		    snap_zv->zv_name, err);

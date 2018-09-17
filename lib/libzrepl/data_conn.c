@@ -321,7 +321,7 @@ uzfs_zvol_worker(void *arg)
 			rc = uzfs_read_data(zinfo->main_zv,
 			    (char *)zio_cmd->buf,
 			    hdr->offset, hdr->len,
-			    metadata_desc);
+			    metadata_desc, NULL, NULL);
 			atomic_inc_64(&zinfo->read_req_received_cnt);
 			break;
 

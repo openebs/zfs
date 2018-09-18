@@ -618,13 +618,14 @@ finish_async_tasks(void)
  */
 int
 uzfs_zvol_create_snapshot_update_zap(zvol_info_t *zinfo,
-    char *snapname, uint64_t snapshot_io_num, boolean_t bypass_check)
+    char *snapname, uint64_t snapshot_io_num)
 {
 	int ret = 0;
 
-	if (!bypass_check && (zinfo->running_ionum > snapshot_io_num -1)) {
+	if ((uzfs_zvol_get_status(zinfo->main_zv) == ZVOL_STATUS_HEALTHY) &&
+	    (zinfo->running_ionum > snapshot_io_num -1)) {
 		LOG_ERR("Failed to create snapshot as running_ionum %lu"
-		    "is greater than snapshot_io_num %lu",
+		    " is greater than snapshot_io_num %lu",
 		    zinfo->running_ionum, snapshot_io_num);
 		return (ret = -1);
 	}
@@ -690,7 +691,7 @@ uzfs_zvol_execute_async_command(void *arg)
 	case ZVOL_OPCODE_SNAP_CREATE:
 		snap = async_task->payload;
 		rc = uzfs_zvol_create_snapshot_update_zap(zinfo, snap,
-		    async_task->hdr.io_seq, B_FALSE);
+		    async_task->hdr.io_seq);
 		if (rc != 0) {
 			LOG_ERR("Failed to create %s@%s: %d",
 			    zinfo->name, snap, rc);

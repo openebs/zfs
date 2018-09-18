@@ -106,7 +106,7 @@ void uzfs_zvol_mgmt_thread(void *arg);
 int finish_async_tasks(void);
 
 int uzfs_zvol_create_snapshot_update_zap(zvol_info_t *zinfo,
-    char *snapname, uint64_t snapshot_io_num, boolean_t bypass_check);
+    char *snapname, uint64_t snapshot_io_num);
 
 int uzfs_zvol_get_snap_dataset_with_io(zvol_info_t *zinfo,
     char *snapname, uint64_t *snapshot_io_num, zvol_state_t **snap_zv);

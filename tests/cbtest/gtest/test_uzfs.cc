@@ -678,13 +678,13 @@ TEST(SnapCreate, SnapCreateFailureHigherIO) {
 	 * By default volume state is marked downgraded
 	 * so updation of ZAP attribute would fail
 	 */
-	uzfs_zvol_set_rebuild_status(zinfo->main_zv, ZVOL_REBUILDING_INIT);
-	uzfs_zvol_set_status(zinfo->main_zv, ZVOL_STATUS_DEGRADED);
+	uzfs_zvol_set_rebuild_status(zinfo->main_zv, ZVOL_REBUILDING_DONE);
+	uzfs_zvol_set_status(zinfo->main_zv, ZVOL_STATUS_HEALTHY);
 
 	zinfo->running_ionum = snapshot_io_num + 1;
 	/* Create snapshot */
 	EXPECT_EQ(-1, uzfs_zvol_create_snapshot_update_zap(zinfo,
-	    snapname, snapshot_io_num, B_FALSE));
+	    snapname, snapshot_io_num));
 }
 
 /* Snap create success */
@@ -699,7 +699,7 @@ TEST(SnapCreate, SnapCreateSuccess) {
 	zinfo->running_ionum = snapshot_io_num -1;
 	/* Create snapshot */
 	EXPECT_EQ(0, uzfs_zvol_create_snapshot_update_zap(zinfo,
-	    snapname, snapshot_io_num, B_FALSE));
+	    snapname, snapshot_io_num));
 	EXPECT_EQ(999, uzfs_zvol_get_last_committed_io_no(zinfo->main_zv,
 	    (char *)HEALTHY_IO_SEQNUM));
 }

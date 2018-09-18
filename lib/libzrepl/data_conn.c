@@ -453,8 +453,7 @@ uzfs_zvol_handle_rebuild_snap_done(zvol_io_hdr_t *hdrp,
 		return (rc = -1);
 	}
 
-	rc = uzfs_zvol_create_snapshot_update_zap(zinfo, snap,
-	    hdrp->io_seq, B_TRUE);
+	rc = uzfs_zvol_create_snapshot_update_zap(zinfo, snap, hdrp->io_seq);
 	if (rc != 0) {
 		LOG_ERR("Failed to create %s@%s: %d", zinfo->name, snap, rc);
 	}

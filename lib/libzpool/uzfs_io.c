@@ -374,8 +374,9 @@ rebuild_status_to_str(zvol_rebuild_status_t status)
 	case ZVOL_REBUILDING_INIT:
 		return ("INIT");
 	case ZVOL_REBUILDING_SNAP:
+		return ("SNAP REBUILD INPROGRESS");
 	case ZVOL_REBUILDING_AFS:
-		return ("INPROGRESS");
+		return ("ACTIVE DATASET REBUILD INPROGRESS");
 	case ZVOL_REBUILDING_DONE:
 		return ("DONE");
 	case ZVOL_REBUILDING_ERRORED:

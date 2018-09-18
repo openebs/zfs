@@ -271,7 +271,7 @@ uzfs_zvol_worker(void *arg)
 {
 	zvol_io_cmd_t	*zio_cmd;
 	zvol_info_t	*zinfo;
-	zvol_state_t	*zvol_state;
+	zvol_state_t	*zvol_state, *read_zv;
 	zvol_io_hdr_t 	*hdr;
 	metadata_desc_t	**metadata_desc;
 	int		rc = 0;
@@ -318,7 +318,21 @@ uzfs_zvol_worker(void *arg)
 	}
 	switch (hdr->opcode) {
 		case ZVOL_OPCODE_READ:
-			rc = uzfs_read_data(zinfo->main_zv,
+			read_zv = zinfo->main_zv;
+			if (rebuild_cmd_req) {
+				/*
+				 * if we are rebuilding, we have
+				 * to read the data from the snapshot
+				 */
+				if (zinfo->rebuild_zv) {
+					read_zv = zinfo->rebuild_zv;
+				} else {
+					rc = -1;
+					break;
+				}
+			}
+
+			rc = uzfs_read_data(read_zv,
 			    (char *)zio_cmd->buf,
 			    hdr->offset, hdr->len,
 			    metadata_desc);
@@ -1088,6 +1102,7 @@ uzfs_zvol_rebuild_scanner_callback(off_t offset, size_t len,
 	/* Take refcount for uzfs_zvol_worker to work on it */
 	uzfs_zinfo_take_refcnt(zinfo);
 	zio_cmd->zinfo = zinfo;
+	zinfo->rebuild_zv = zv;
 
 	/*
 	 * Any error in uzfs_zvol_worker will send FAILURE status to degraded

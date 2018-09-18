@@ -141,6 +141,82 @@ uzfs_mock_rebuild_scanner(void *arg)
 	EXPECT_EQ(hdr.status, ZVOL_OP_STATUS_OK);
 	EXPECT_EQ(hdr.len, zvol_rebuild_step_size);
 
+	/* Send snap_done opcode */
+	if ((rebuild_test_case >= 8) && (rebuild_test_case <= 12)) {
+		hdr.opcode = ZVOL_OPCODE_REBUILD_SNAP_DONE;
+		hdr.status = ZVOL_OP_STATUS_OK;
+		buf = (char *)malloc(MAX_NAME_LEN + 1);
+
+		/* Prepare snapname */
+		strncpy(buf, zinfo->name, MAXNAMELEN);
+		strncat(buf, "@test_snap", strlen("@test_snap"));
+		hdr.len = strlen(buf) + 1;
+		hdr.io_seq = 10000;
+
+		/* Send zero hdr.len for negative case */
+		if (rebuild_test_case == 8)
+			hdr.len = 0;
+	
+		/* Send zero hdr.len for negative case */
+		if (rebuild_test_case == 9)
+			hdr.len = MAX_NAME_LEN + 20;
+		
+		/* Wrong snapshot name */
+		if (rebuild_test_case == 10)
+			buf[strlen(zinfo->name)] = '\0';
+	
+		if (rebuild_test_case == 11) {
+			strncpy(buf, "hello", MAXNAMELEN);
+			strncat(buf, "@test_snap", strlen("@test_snap"));
+			hdr.len = strlen(buf) + 1;
+		}
+
+		/*
+		 * Send ZVOL_OPCODE_REBUILD_SNAP_DONE opcode
+		 * with snapshot io_seq number 10000
+		 */
+		rc = uzfs_zvol_socket_write(fd, (char *)&hdr, sizeof(hdr));
+		EXPECT_NE(rc, -1);
+		rc = uzfs_zvol_socket_write(fd, buf, hdr.len);
+		EXPECT_NE(rc, -1);
+		free(buf);
+
+		/*
+		 * Read REBUILD_STEP, checkpoint_io_seq
+		 * should be one less than snapshot io_seq
+		 */
+		rc = uzfs_zvol_socket_read(fd, (char *)&hdr, sizeof (hdr));
+		if ((rebuild_test_case >= 8) &&
+		    (rebuild_test_case <= 11)) {
+			EXPECT_EQ(rc, -1);
+			goto exit;
+		}
+
+		EXPECT_NE(rc, -1);
+		EXPECT_EQ(hdr.opcode, ZVOL_OPCODE_REBUILD_STEP);
+		EXPECT_EQ(hdr.status, ZVOL_OP_STATUS_OK);
+		EXPECT_EQ(hdr.len, zvol_rebuild_step_size);
+		EXPECT_EQ(hdr.checkpointed_io_seq, 9999);
+		goto exit;
+	}
+
+	/* Send opcode ALL_SNAP_DONE */
+	if (rebuild_test_case == 13) {
+		hdr.opcode = ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE;
+		hdr.status = ZVOL_OP_STATUS_OK;
+		rc = uzfs_zvol_socket_write(fd, (char *)&hdr, sizeof(hdr));
+		EXPECT_NE(rc, -1);
+	
+		rc = uzfs_zvol_socket_read(fd, (char *)&hdr, sizeof (hdr));
+		EXPECT_NE(rc, -1);
+		EXPECT_EQ(hdr.opcode, ZVOL_OPCODE_REBUILD_STEP);
+		EXPECT_EQ(hdr.status, ZVOL_OP_STATUS_OK);
+		EXPECT_EQ(hdr.len, zvol_rebuild_step_size);
+		EXPECT_EQ(hdr.checkpointed_io_seq, 9999);
+		EXPECT_EQ(hdr.offset, 0);
+		goto exit;
+	}
+
 	hdr.opcode = ZVOL_OPCODE_READ;
 	hdr.flags = ZVOL_OP_FLAG_REBUILD;
 	hdr.len = 512;
@@ -602,8 +678,8 @@ TEST(SnapCreate, SnapCreateFailureHigherIO) {
 	 * By default volume state is marked downgraded
 	 * so updation of ZAP attribute would fail
 	 */
-	uzfs_zvol_set_rebuild_status(zinfo->main_zv, ZVOL_REBUILDING_INIT);
-	uzfs_zvol_set_status(zinfo->main_zv, ZVOL_STATUS_DEGRADED);
+	uzfs_zvol_set_rebuild_status(zinfo->main_zv, ZVOL_REBUILDING_DONE);
+	uzfs_zvol_set_status(zinfo->main_zv, ZVOL_STATUS_HEALTHY);
 
 	zinfo->running_ionum = snapshot_io_num + 1;
 	/* Create snapshot */
@@ -611,25 +687,8 @@ TEST(SnapCreate, SnapCreateFailureHigherIO) {
 	    snapname, snapshot_io_num));
 }
 
-/* Snap create failure */
-TEST(SnapCreate, SnapCreateFailure) {
-
-	/*
-	 * By default volume state is marked downgraded
-	 * so updation of ZAP attribute would fail
-	 */
-	uzfs_zvol_set_rebuild_status(zinfo->main_zv, ZVOL_REBUILDING_INIT);
-	uzfs_zvol_set_status(zinfo->main_zv, ZVOL_STATUS_DEGRADED);
-
-	zinfo->running_ionum = snapshot_io_num -1;
-	/* Create snapshot */
-	EXPECT_EQ(-1, uzfs_zvol_create_snapshot_update_zap(zinfo,
-	    snapname, snapshot_io_num));
-}
-
 /* Snap create success */
 TEST(SnapCreate, SnapCreateSuccess) {
-
 	/*
 	 * Set volume state to healthy so that we can
 	 * update ZAP attribute and take snapshot
@@ -641,6 +700,8 @@ TEST(SnapCreate, SnapCreateSuccess) {
 	/* Create snapshot */
 	EXPECT_EQ(0, uzfs_zvol_create_snapshot_update_zap(zinfo,
 	    snapname, snapshot_io_num));
+	EXPECT_EQ(999, uzfs_zvol_get_last_committed_io_no(zinfo->main_zv,
+	    (char *)HEALTHY_IO_SEQNUM));
 }
 
 /* Retrieve Snap dataset and IO number */
@@ -695,7 +756,7 @@ TEST(uZFSRebuildStart, TestStartRebuild) {
 
 	zvol_rebuild_status_t rebuild_status[5];
 	rebuild_status[0] = ZVOL_REBUILDING_INIT;
-	rebuild_status[1] = ZVOL_REBUILDING_IN_PROGRESS;
+	rebuild_status[1] = ZVOL_REBUILDING_SNAP;
 	rebuild_status[2] = ZVOL_REBUILDING_DONE;
 	rebuild_status[3] = ZVOL_REBUILDING_ERRORED;
 	rebuild_status[4] = ZVOL_REBUILDING_FAILED;
@@ -1190,12 +1251,12 @@ TEST(uZFSRebuild, TestRebuildAbrupt) {
 
 	zvol_rebuild_step_size = (1024ULL * 1024ULL * 1024ULL) / 2 + 1000;
 	/* thread that helps rebuilding exits abruptly just after connects */
-	execute_rebuild_test_case("rebuild abrupt", 1, ZVOL_REBUILDING_IN_PROGRESS, ZVOL_REBUILDING_FAILED);
+	execute_rebuild_test_case("rebuild abrupt", 1, ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
 }
 
 TEST(uZFSRebuild, TestRebuildGrace) {
 	/* thread that helps rebuilding exits gracefully just after connects */
-	execute_rebuild_test_case("rebuild grace", 2, ZVOL_REBUILDING_IN_PROGRESS, ZVOL_REBUILDING_FAILED);
+	execute_rebuild_test_case("rebuild grace", 2, ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
 }
 
 TEST(uZFSRebuild, TestRebuildErrorState) {
@@ -1205,17 +1266,17 @@ TEST(uZFSRebuild, TestRebuildErrorState) {
 
 TEST(uZFSRebuild, TestRebuildExitAfterStep) {
 	/* thread helping rebuild will exit after reading REBUILD_STEP */
-	execute_rebuild_test_case("rebuild exit after step", 3, ZVOL_REBUILDING_IN_PROGRESS, ZVOL_REBUILDING_FAILED);
+	execute_rebuild_test_case("rebuild exit after step", 3, ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
 }
 
 TEST(uZFSRebuild, TestRebuildExitAfterInvalidWrite) {
 	/* thread helping rebuild will exit after writng invalid write IO */
-	execute_rebuild_test_case("rebuild exit after invalid write", 4, ZVOL_REBUILDING_IN_PROGRESS, ZVOL_REBUILDING_FAILED);
+	execute_rebuild_test_case("rebuild exit after invalid write", 4, ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
 }
 
 TEST(uZFSRebuild, TestRebuildExitAfterValidWrite) {
 	/* thread helping rebuild will exit after writng valid write IO */
-	execute_rebuild_test_case("rebuild exit after valid write", 5, ZVOL_REBUILDING_IN_PROGRESS, ZVOL_REBUILDING_FAILED);
+	execute_rebuild_test_case("rebuild exit after valid write", 5, ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
 }
 
 /*
@@ -1284,14 +1345,14 @@ TEST(uZFSRebuild, TestRebuildCompleteWithDataConn) {
 	uzfs_zvol_set_rebuild_status(zv, ZVOL_REBUILDING_INIT);
 	do_data_connection(data_conn_fd, "127.0.0.1", IO_SERVER_PORT, "vol1");
 	/* thread helping rebuild will exit after writing valid write IO and REBUILD_STEP_DONE, and reads REBUILD_STEP, writes REBUILD_STEP_DONE */
-	execute_rebuild_test_case("complete rebuild with data conn", 6, ZVOL_REBUILDING_IN_PROGRESS, ZVOL_REBUILDING_INIT);
+	execute_rebuild_test_case("complete rebuild with data conn", 6, ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_INIT);
 }
 
 TEST(uZFSRebuild, TestRebuildComplete) {
 	uzfs_zvol_set_rebuild_status(zv, ZVOL_REBUILDING_INIT);
 	do_data_connection(data_conn_fd, "127.0.0.1", IO_SERVER_PORT, "vol1");
 	/* thread helping rebuild will exit after writing valid write IO and REBUILD_STEP_DONE, and reads REBUILD_STEP, writes REBUILD_STEP_DONE */
-	execute_rebuild_test_case("complete rebuild", 7, ZVOL_REBUILDING_IN_PROGRESS, ZVOL_REBUILDING_DONE, 4);
+	execute_rebuild_test_case("complete rebuild", 7, ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_DONE, 4);
 	EXPECT_EQ(ZVOL_STATUS_HEALTHY, uzfs_zvol_get_status(zinfo->main_zv));
 
 	close(data_conn_fd);
@@ -1299,6 +1360,75 @@ TEST(uZFSRebuild, TestRebuildComplete) {
 		sleep(2);
 	sleep(5);
 	memset(&zinfo->main_zv->rebuild_info, 0, sizeof (zvol_rebuild_info_t));
+}
+
+TEST(uZFSRebuild, TestRebuildSnapDoneFailureZeroHdrLen) {
+	rebuild_scanner = &uzfs_mock_rebuild_scanner;
+	dw_replica_fn = &uzfs_zvol_rebuild_dw_replica;
+
+	zvol_rebuild_step_size = (1024ULL * 1024ULL * 1024ULL) / 2 + 1000;
+	/* send ZVOL_OPCODE_REBUILD_SNAP_DONE with zero hdr.len */
+	execute_rebuild_test_case("rebuild snap_done zero hdr.len", 8,
+	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
+}
+
+TEST(uZFSRebuild, TestRebuildSnapDoneFailureWrongHdrLen) {
+	rebuild_scanner = &uzfs_mock_rebuild_scanner;
+	dw_replica_fn = &uzfs_zvol_rebuild_dw_replica;
+
+	zvol_rebuild_step_size = (1024ULL * 1024ULL * 1024ULL) / 2 + 1000;
+	/*
+	 * Send ZVOL_OPCODE_REBUILD_SNAP_DONE
+	 * with hdr.len more than MAX_NAME_LEN
+	 */
+	execute_rebuild_test_case("rebuild snap_done wrong hdr.len", 9,
+	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
+}
+
+TEST(uZFSRebuild, TestRebuildSnapDoneFailureWrongSnapName) {
+	rebuild_scanner = &uzfs_mock_rebuild_scanner;
+	dw_replica_fn = &uzfs_zvol_rebuild_dw_replica;
+
+	zvol_rebuild_step_size = (1024ULL * 1024ULL * 1024ULL) / 2 + 1000;
+	/*
+	 * Send ZVOL_OPCODE_REBUILD_SNAP_DONE
+	 * with wrong snapname format
+	 */
+	execute_rebuild_test_case("rebuild snap_done wrong snapname", 10,
+	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
+}
+
+TEST(uZFSRebuild, TestRebuildSnapDoneFailureWrongVolName) {
+	rebuild_scanner = &uzfs_mock_rebuild_scanner;
+	dw_replica_fn = &uzfs_zvol_rebuild_dw_replica;
+
+	zvol_rebuild_step_size = (1024ULL * 1024ULL * 1024ULL) / 2 + 1000;
+	/*
+	 * Send ZVOL_OPCODE_REBUILD_SNAP_DONE
+	 * with wrong volname
+	 */
+	execute_rebuild_test_case("rebuild snap_done wrong volname", 11,
+	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
+}
+
+TEST(uZFSRebuild, TestRebuildSnapDoneSuccess) {
+	rebuild_scanner = &uzfs_mock_rebuild_scanner;
+	dw_replica_fn = &uzfs_zvol_rebuild_dw_replica;
+
+	zvol_rebuild_step_size = (1024ULL * 1024ULL * 1024ULL) / 2 + 1000;
+	/* send ZVOL_OPCODE_REBUILD_SNAP_DONE success case */
+	execute_rebuild_test_case("rebuild snap_done success", 12,
+	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
+}
+
+TEST(uZFSRebuild, TestRebuildSnapDoneAllSuccess) {
+	rebuild_scanner = &uzfs_mock_rebuild_scanner;
+	dw_replica_fn = &uzfs_zvol_rebuild_dw_replica;
+
+	zvol_rebuild_step_size = (1024ULL * 1024ULL * 1024ULL) / 2 + 1000;
+	/* send ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE success case */
+	execute_rebuild_test_case("rebuild all_snap_done success", 13,
+	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
 }
 
 TEST(RebuildScanner, AbruptClose) {
@@ -1309,13 +1439,13 @@ TEST(RebuildScanner, AbruptClose) {
 
 	/* Rebuild thread exits abruptly just after connect */
 	execute_rebuild_test_case("Rebuild abrupt", 1,
-	    ZVOL_REBUILDING_IN_PROGRESS, ZVOL_REBUILDING_FAILED);
+	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
 }
 
 TEST(RebuildScanner, WrongOpcode) {
 	/* Rebuild thread sending wrong opcode after connectg */
 	execute_rebuild_test_case("Wrong opcode", 2,
-	    ZVOL_REBUILDING_IN_PROGRESS, ZVOL_REBUILDING_FAILED);
+	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
 }
 
 TEST(RebuildScanner, ErrorOut) {
@@ -1327,19 +1457,19 @@ TEST(RebuildScanner, ErrorOut) {
 TEST(RebuildScanner, WrongVolname) {
 	/* Rebuild thread sending wrong vol name */
 	execute_rebuild_test_case("Wrong vol name", 4,
-	    ZVOL_REBUILDING_IN_PROGRESS, ZVOL_REBUILDING_FAILED);
+	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
 }
 
 TEST(RebuildScanner, HandshakeAgaian) {
 	/* Rebuild thread sending handshake again on same volume */
 	execute_rebuild_test_case("Send handshake again", 5,
-	    ZVOL_REBUILDING_IN_PROGRESS, ZVOL_REBUILDING_FAILED);
+	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
 }
 
 TEST(RebuildScanner, VolumeTooLargeToHandle) {
 	/* Rebuild thread sending handshake again on same volume */
 	execute_rebuild_test_case("Volume offset and len too large", 6,
-	    ZVOL_REBUILDING_IN_PROGRESS, ZVOL_REBUILDING_FAILED);
+	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
 }
 
 TEST(RebuildScanner, VolumeOffline) {
@@ -1348,7 +1478,7 @@ TEST(RebuildScanner, VolumeOffline) {
 	/* Set offline state on vol3 */
 	zinfo2->state = ZVOL_INFO_STATE_ONLINE;
 	execute_rebuild_test_case("Volume offline", 7,
-	    ZVOL_REBUILDING_IN_PROGRESS, ZVOL_REBUILDING_FAILED);
+	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
 	zinfo2->state = ZVOL_INFO_STATE_ONLINE;
 }
 
@@ -1356,7 +1486,7 @@ TEST(RebuildScanner, AckSenderCreatedFalse) {
 	/* Set io_ack_sender_created as B_FALSE */
 	zinfo2->is_io_ack_sender_created = B_TRUE;
 	execute_rebuild_test_case("Ack Sender Created False", 8,
-	    ZVOL_REBUILDING_IN_PROGRESS, ZVOL_REBUILDING_FAILED);
+	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
 	zinfo2->is_io_ack_sender_created = B_TRUE;
 }
 
@@ -1366,7 +1496,7 @@ TEST(RebuildScanner, ShutdownRebuildFd) {
 	uzfs_zvol_set_rebuild_status(zv2, ZVOL_REBUILDING_INIT);
 	do_data_connection(data_conn_fd, "127.0.0.1", IO_SERVER_PORT, "vol3");
 	execute_rebuild_test_case("Shutdown Rebuild FD", 9,
-	    ZVOL_REBUILDING_IN_PROGRESS, ZVOL_REBUILDING_FAILED);
+	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
 }
 
 TEST(RebuildScanner, RebuildSuccess) {
@@ -1376,7 +1506,7 @@ TEST(RebuildScanner, RebuildSuccess) {
 
 	/* Rebuild thread sending complete opcode */
 	execute_rebuild_test_case("complete rebuild", 10,
-	    ZVOL_REBUILDING_IN_PROGRESS, ZVOL_REBUILDING_DONE);
+	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_DONE);
 	EXPECT_EQ(ZVOL_STATUS_HEALTHY, uzfs_zvol_get_status(zinfo->main_zv));
 	memset(&zinfo->main_zv->rebuild_info, 0, sizeof (zvol_rebuild_info_t));
 }

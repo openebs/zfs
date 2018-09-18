@@ -502,10 +502,11 @@ uzfs_zvol_mgmt_do_handshake(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	hdr.len = sizeof (mgmt_ack);
 	hdr.status = ZVOL_OP_STATUS_OK;
 
-	zinfo->checkpointed_ionum = uzfs_zvol_get_last_committed_io_no(zv,
-	    HEALTHY_IO_SEQNUM);
+	zinfo->checkpointed_ionum =
+	    uzfs_zvol_get_last_committed_io_no(zv, HEALTHY_IO_SEQNUM);
 	zinfo->degraded_checkpointed_ionum =
 	    uzfs_zvol_get_last_committed_io_no(zv, DEGRADED_IO_SEQNUM);
+	zinfo->stored_healthy_ionum = zinfo->checkpointed_ionum;
 	zinfo->running_ionum = zinfo->degraded_checkpointed_ionum;
 	LOG_INFO("IO sequence number:%lu Degraded IO sequence number:%lu",
 	    zinfo->checkpointed_ionum, zinfo->degraded_checkpointed_ionum);
@@ -612,7 +613,8 @@ finish_async_tasks(void)
 }
 
 /*
- * Take a snapshot and update snapshot IO to ZAP.
+ * Checks that running io_num is not greater than snapshot_io_num
+ * Update snapshot IO to ZAP and take snapshot.
  */
 int
 uzfs_zvol_create_snapshot_update_zap(zvol_info_t *zinfo,
@@ -620,20 +622,17 @@ uzfs_zvol_create_snapshot_update_zap(zvol_info_t *zinfo,
 {
 	int ret = 0;
 
-	if (uzfs_zvol_get_status(zinfo->main_zv) != ZVOL_STATUS_HEALTHY)
+	if ((uzfs_zvol_get_status(zinfo->main_zv) == ZVOL_STATUS_HEALTHY) &&
+	    (zinfo->running_ionum > snapshot_io_num -1)) {
+		LOG_ERR("Failed to create snapshot as running_ionum %lu"
+		    " is greater than snapshot_io_num %lu",
+		    zinfo->running_ionum, snapshot_io_num);
 		return (ret = -1);
+	}
 
-	if (zinfo->running_ionum > snapshot_io_num -1)
-		return (ret = -1);
+	uzfs_zvol_store_last_committed_healthy_io_no(zinfo,
+	    snapshot_io_num - 1);
 
-	mutex_enter(&zvol_list_mutex);
-
-	uzfs_zvol_store_last_committed_io_no(zinfo->main_zv,
-	    HEALTHY_IO_SEQNUM, snapshot_io_num -1);
-	zinfo->checkpointed_ionum = snapshot_io_num -1;
-	zinfo->checkpointed_time = time(NULL);
-
-	mutex_exit(&zvol_list_mutex);
 	ret = dmu_objset_snapshot_one(zinfo->name, snapname);
 	return (ret);
 }
@@ -691,7 +690,8 @@ uzfs_zvol_execute_async_command(void *arg)
 	switch (async_task->hdr.opcode) {
 	case ZVOL_OPCODE_SNAP_CREATE:
 		snap = async_task->payload;
-		rc = dmu_objset_snapshot_one(zinfo->name, snap);
+		rc = uzfs_zvol_create_snapshot_update_zap(zinfo, snap,
+		    async_task->hdr.io_seq);
 		if (rc != 0) {
 			LOG_ERR("Failed to create %s@%s: %d",
 			    zinfo->name, snap, rc);
@@ -929,7 +929,7 @@ handle_start_rebuild_req(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 		goto end;
 	}
 	uzfs_zvol_set_rebuild_status(zinfo->main_zv,
-	    ZVOL_REBUILDING_IN_PROGRESS);
+	    ZVOL_REBUILDING_SNAP);
 	mutex_exit(&zinfo->main_zv->rebuild_mtx);
 
 	DBGCONN(conn, "Rebuild start command");
@@ -1022,7 +1022,7 @@ process_message(uzfs_mgmt_conn_t *conn)
 
 	case ZVOL_OPCODE_SNAP_CREATE:
 	case ZVOL_OPCODE_SNAP_DESTROY:
-		if (payload_size == 0 || payload_size > MAX_NAME_LEN) {
+		if (payload_size == 0 || payload_size >= MAX_NAME_LEN) {
 			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
 			    hdrp->opcode, hdrp->io_seq);
 			break;
@@ -1048,7 +1048,16 @@ process_message(uzfs_mgmt_conn_t *conn)
 		if (zinfo->mgmt_conn != conn) {
 			uzfs_zinfo_drop_refcnt(zinfo);
 			LOGERRCONN(conn, "Target used invalid connection for "
-			    "zvol %s", zvol_name);
+			    "zvol %s to take %s snapshot", zvol_name, snap);
+			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
+			    hdrp->opcode, hdrp->io_seq);
+			break;
+		}
+		if (uzfs_zvol_get_status(zinfo->main_zv) !=
+		    ZVOL_STATUS_HEALTHY) {
+			uzfs_zinfo_drop_refcnt(zinfo);
+			LOG_ERR("zvol %s is not healthy to take %s snapshot",
+			    zvol_name, snap);
 			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
 			    hdrp->opcode, hdrp->io_seq);
 			break;

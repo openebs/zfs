@@ -435,6 +435,45 @@ uzfs_zvol_remove_from_fd_list(zvol_info_t *zinfo, int fd)
 	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 }
 
+static int
+uzfs_zvol_handle_rebuild_snap_done(zvol_io_hdr_t *hdrp,
+    int sfd, zvol_info_t *zinfo)
+{
+	int rc = 0;
+	char *snap;
+	char zvol_name[MAX_NAME_LEN + 1];
+
+	if (hdrp->len == 0 || hdrp->len > MAX_NAME_LEN) {
+		LOG_ERR("Unexpected hdr.len:%ld on volume: %s",
+		    hdrp->len, zinfo->name);
+		return (rc = -1);
+	}
+
+	if ((rc = uzfs_zvol_socket_read(sfd, zvol_name, hdrp->len)) != 0)
+		return (rc);
+
+	zvol_name[hdrp->len] = '\0';
+	snap = strchr(zvol_name, '@');
+	if (snap == NULL) {
+		LOG_ERR("Invalid snapshot name: %s", zvol_name);
+		return (rc = -1);
+	}
+
+	*snap++ = '\0';
+
+	if (strcmp(zinfo->name, zvol_name) != 0) {
+		LOG_ERR("Wrong volume, Received name: %s, Expected:%s",
+		    zvol_name, zinfo->name);
+		return (rc = -1);
+	}
+
+	rc = uzfs_zvol_create_snapshot_update_zap(zinfo, snap, hdrp->io_seq);
+	if (rc != 0) {
+		LOG_ERR("Failed to create %s@%s: %d", zinfo->name, snap, rc);
+	}
+	return (rc);
+}
+
 void
 uzfs_zvol_rebuild_dw_replica(void *arg)
 {
@@ -568,6 +607,34 @@ next_step:
 			goto next_step;
 		}
 
+		/* One more snapshot has been transferred */
+		if (hdr.opcode == ZVOL_OPCODE_REBUILD_SNAP_DONE) {
+			rc = uzfs_zvol_handle_rebuild_snap_done(&hdr,
+			    sfd, zinfo);
+			if (rc != 0) {
+				LOG_ERR("Rebuild snap_done failed.. for %s",
+				    zinfo->name);
+				goto exit;
+			}
+			offset = 0;
+			checkpointed_ionum = uzfs_zvol_get_last_committed_io_no(
+			    zinfo->main_zv, HEALTHY_IO_SEQNUM);
+			goto next_step;
+		}
+
+		/* All snapshots has been transferred */
+		if (hdr.opcode == ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE) {
+			/*
+			 * Change rebuild state to mark that all
+			 * snapshots has been transferred now
+			 */
+			uzfs_zvol_set_rebuild_status(zinfo->main_zv,
+			    ZVOL_REBUILDING_AFS);
+			offset = 0;
+			checkpointed_ionum = uzfs_zvol_get_last_committed_io_no(
+			    zinfo->main_zv, HEALTHY_IO_SEQNUM);
+			goto next_step;
+		}
 		ASSERT((hdr.opcode == ZVOL_OPCODE_READ) &&
 		    (hdr.flags & ZVOL_OP_FLAG_REBUILD));
 		hdr.opcode = ZVOL_OPCODE_WRITE;
@@ -633,6 +700,12 @@ exit:
 	zk_thread_exit();
 }
 
+#define	STORE_LAST_COMMITTED_HEALTHY_IO_NO	\
+    uzfs_zvol_store_last_committed_healthy_io_no
+
+#define	STORE_LAST_COMMITTED_DEGRADED_IO_NO	\
+    uzfs_zvol_store_last_committed_degraded_io_no
+
 void
 uzfs_zvol_timer_thread(void)
 {
@@ -679,10 +752,8 @@ uzfs_zvol_timer_thread(void)
 					    "%lu on %s",
 					    zinfo->checkpointed_ionum,
 					    zinfo->name);
-					uzfs_zvol_store_last_committed_io_no(
-					    zinfo->main_zv,
-					    HEALTHY_IO_SEQNUM,
-					    zinfo->checkpointed_ionum);
+					STORE_LAST_COMMITTED_HEALTHY_IO_NO(
+					    zinfo, zinfo->checkpointed_ionum);
 					zinfo->checkpointed_ionum =
 					    zinfo->running_ionum;
 					zinfo->checkpointed_time = now;
@@ -695,7 +766,7 @@ uzfs_zvol_timer_thread(void)
 				next_check = zinfo->degraded_checkpointed_time
 				    + DEGRADED_IO_UPDATE_INTERVAL;
 				if (next_check <= now &&
-				    zinfo->degraded_checkpointed_ionum !=
+				    zinfo->degraded_checkpointed_ionum <
 				    zinfo->running_ionum) {
 					zinfo->degraded_checkpointed_ionum =
 					    zinfo->running_ionum;
@@ -703,9 +774,8 @@ uzfs_zvol_timer_thread(void)
 					    "%lu on %s for degraded mode",
 					    zinfo->degraded_checkpointed_ionum,
 					    zinfo->name);
-					uzfs_zvol_store_last_committed_io_no(
-					    zinfo->main_zv,
-					    DEGRADED_IO_SEQNUM,
+					STORE_LAST_COMMITTED_DEGRADED_IO_NO(
+					    zinfo,
 					    zinfo->degraded_checkpointed_ionum);
 					zinfo->degraded_checkpointed_time =
 					    now;

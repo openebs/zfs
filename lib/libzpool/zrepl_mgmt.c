@@ -282,9 +282,9 @@ uzfs_zinfo_lookup(const char *name)
 static void
 uzfs_zinfo_init_mutex(zvol_info_t *zinfo)
 {
-
 	(void) pthread_mutex_init(&zinfo->zinfo_mutex, NULL);
 	(void) pthread_cond_init(&zinfo->io_ack_cond, NULL);
+	(void) pthread_mutex_init(&zinfo->zinfo_ionum_mutex, NULL);
 }
 
 static void
@@ -293,6 +293,7 @@ uzfs_zinfo_destroy_mutex(zvol_info_t *zinfo)
 
 	(void) pthread_mutex_destroy(&zinfo->zinfo_mutex);
 	(void) pthread_cond_destroy(&zinfo->io_ack_cond);
+	(void) pthread_mutex_destroy(&zinfo->zinfo_ionum_mutex);
 }
 
 int
@@ -416,12 +417,16 @@ uzfs_zvol_get_last_committed_io_no(zvol_state_t *zv, char *key)
 	return (zap.value);
 }
 
-void
+static void
 uzfs_zvol_store_last_committed_io_no(zvol_state_t *zv, char *key,
     uint64_t io_seq)
 {
 	uzfs_zap_kv_t *kv_array[0];
 	uzfs_zap_kv_t zap;
+
+	if (io_seq == 0)
+		return;
+
 	zap.key = key;
 	zap.value = io_seq;
 	zap.size = sizeof (io_seq);
@@ -429,4 +434,35 @@ uzfs_zvol_store_last_committed_io_no(zvol_state_t *zv, char *key,
 	kv_array[0] = &zap;
 	VERIFY0(uzfs_update_zap_entries(zv,
 	    (const uzfs_zap_kv_t **) kv_array, 1));
+}
+
+void
+uzfs_zvol_store_last_committed_degraded_io_no(zvol_info_t *zinfo,
+    uint64_t io_seq)
+{
+	uzfs_zvol_store_last_committed_io_no(zinfo->main_zv,
+	    DEGRADED_IO_SEQNUM, io_seq);
+}
+
+/*
+ * Stores given io_seq as healthy_io_seqnum if previously committed is
+ * less than given io_seq.
+ * Updates in-memory committed io_num.
+ */
+void
+uzfs_zvol_store_last_committed_healthy_io_no(zvol_info_t *zinfo,
+    uint64_t io_seq)
+{
+	if (io_seq == 0)
+		return;
+
+	pthread_mutex_lock(&zinfo->zinfo_ionum_mutex);
+	if (zinfo->stored_healthy_ionum > io_seq) {
+		pthread_mutex_unlock(&zinfo->zinfo_ionum_mutex);
+		return;
+	}
+	zinfo->stored_healthy_ionum = io_seq;
+	uzfs_zvol_store_last_committed_io_no(zinfo->main_zv,
+	    HEALTHY_IO_SEQNUM, io_seq);
+	pthread_mutex_unlock(&zinfo->zinfo_ionum_mutex);
 }

@@ -1470,9 +1470,13 @@ TEST(Snapshot, CreateAndDestroy) {
 	Target target;
 	int rc, control_fd;
 	TestPool pool("snappool");
+	std::string vol_name = pool.getZvolName("vol");
 	std::string snap_name = pool.getZvolName("vol@snap");
 	std::string bad_snap_name = pool.getZvolName("vol");
 	std::string unknown_snap_name = pool.getZvolName("unknown@snap");
+	int ioseq;
+	std::string host;
+	uint16_t port;
 
 	zrepl.start();
 	pool.create();
@@ -1483,6 +1487,7 @@ TEST(Snapshot, CreateAndDestroy) {
 	control_fd = target.accept(-1);
 	ASSERT_GE(control_fd, 0);
 
+	do_handshake(vol_name, host, port, NULL, NULL, control_fd, ZVOL_OP_STATUS_OK);
 	// try to create snap of invalid zvol
 	hdr_out.version = REPLICA_VERSION;
 	hdr_out.opcode = ZVOL_OPCODE_SNAP_CREATE;
@@ -1510,7 +1515,20 @@ TEST(Snapshot, CreateAndDestroy) {
 	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_FAILED);
 	ASSERT_EQ(hdr_in.len, 0);
 
+	// try to create snap on degraded zvol
+	hdr_out.io_seq = 1;
+	hdr_out.len = snap_name.length() + 1;
+	rc = write(control_fd, &hdr_out, sizeof (hdr_out));
+	ASSERT_EQ(rc, sizeof (hdr_out));
+	rc = write(control_fd, snap_name.c_str(), hdr_out.len);
+	ASSERT_EQ(rc, hdr_out.len);
+	rc = read(control_fd, &hdr_in, sizeof (hdr_in));
+	ASSERT_EQ(rc, sizeof (hdr_in));
+	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_FAILED);
+	ASSERT_EQ(hdr_in.len, 0);
+
 	// create the snapshot
+	transition_zvol_to_online(ioseq, control_fd, vol_name);
 	hdr_out.io_seq = 2;
 	hdr_out.len = snap_name.length() + 1;
 	rc = write(control_fd, &hdr_out, sizeof (hdr_out));

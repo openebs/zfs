@@ -302,7 +302,7 @@ rebuild_replica_thread(void *arg)
 	    HEALTHY_IO_SEQNUM);
 	printf("io number... healthy replica:%lu degraded replica:%lu\n",
 	    latest_io, r_info->base_io_num);
-	uzfs_zvol_set_rebuild_status(to_zvol, ZVOL_REBUILDING_IN_PROGRESS);
+	uzfs_zvol_set_rebuild_status(to_zvol, ZVOL_REBUILDING_SNAP);
 
 	mutex_enter(&r_info->mtx);
 	cv_signal(&r_info->cv);

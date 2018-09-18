@@ -1014,16 +1014,7 @@ TEST_F(ZreplDataTest, RebuildFlag) {
 
 	/* read the block with rebuild flag */
 	read_data_start(m_datasock1.fd(), m_ioseq1, 0, sizeof (buf), &hdr_in, ZVOL_OP_FLAG_REBUILD);
-	ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
-	ASSERT_EQ(hdr_in.len, sizeof (read_hdr) + sizeof (buf));
-	rc = read(m_datasock1.fd(), &read_hdr, sizeof (read_hdr));
-	ASSERT_ERRNO("read", rc >= 0);
-	ASSERT_EQ(rc, sizeof (read_hdr));
-	ASSERT_EQ(read_hdr.io_num, 654);
-	ASSERT_EQ(read_hdr.len, sizeof (buf));
-	rc = read(m_datasock1.fd(), buf, sizeof (buf));
-	ASSERT_ERRNO("read", rc >= 0);
-	ASSERT_EQ(rc, sizeof (buf));
+	ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_FAILED);
 	m_datasock1.graceful_close();
 	m_datasock2.graceful_close();
 	sleep(5);

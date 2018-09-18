@@ -97,7 +97,7 @@ typedef struct zvol_state zvol_state_t;
 
 #define	ZVOL_IS_DEGRADED(zv)	(zv->zv_status == ZVOL_STATUS_DEGRADED)
 #define	ZVOL_IS_REBUILDING(zv)		\
-	(zv->rebuild_info.zv_rebuild_status == ZVOL_REBUILDING_IN_PROGRESS)
+	(zv->rebuild_info.zv_rebuild_status == ZVOL_REBUILDING_SNAP)
 #define	ZVOL_IS_REBUILDED(zv)		\
 	(zv->rebuild_info.zv_rebuild_status == ZVOL_REBUILDING_DONE)
 #define	ZVOL_IS_REBUILDING_ERRORED(zv)	\

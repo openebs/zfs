@@ -585,6 +585,7 @@ uzfs_append_snapshot_properties(nvlist_t *nv, struct json_object *robj,
 	nvlist_t	*nvlist_value;
 	uint64_t value = 0;
 	char *str_value;
+	int len;
 
 	if (nv == NULL) {
 		return;
@@ -599,9 +600,14 @@ uzfs_append_snapshot_properties(nvlist_t *nv, struct json_object *robj,
 					LOG_ERR("property name not set.. "
 					    "elem:%s val:%lu",
 					    nvpair_name(elem), value);
-			} else
+			} else {
+				len = snprintf(NULL, 0, "%lu", value) + 1;
+				str_value = kmem_zalloc(len, KM_SLEEP);
+				snprintf(str_value, len, "%lu", value);
 				json_object_object_add(robj, prop_name,
-				    json_object_new_int64(value));
+				    json_object_new_string(str_value));
+				kmem_free(str_value, len);
+			}
 			break;
 
 		case DATA_TYPE_STRING:

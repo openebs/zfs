@@ -41,6 +41,7 @@
 #include <arpa/inet.h>
 
 #include <zrepl_prot.h>
+#include <json-c/json.h>
 #include "gtest_utils.h"
 
 #define	POOL_SIZE	(100 * 1024 * 1024)
@@ -1470,8 +1471,71 @@ TEST(DiskReplaceTest, SpareReplacement) {
 	sleep(5);
 }
 
+static void verify_snapshot_details(std::string zvol_name, std::string json) {
+	struct json_object *jobj = NULL, *jarr = NULL;
+	struct json_object *jsnap, *jsnapname, *jprop;
+	int arrlen, i;
+	std::string output;
+	char jsval[32];
+	uint64_t jival;
+	jobj = json_tokener_parse(json.c_str());
+	ASSERT_NE((jobj == NULL), 1);
+
+	json_object_object_get_ex(jobj, "snapshot", &jarr);
+	ASSERT_NE((jarr == NULL), 1);
+
+	arrlen = json_object_array_length(jarr);
+	for (i = 0; i < arrlen; i++) {
+		jsnap = json_object_array_get_idx(jarr, i);
+		ASSERT_NE((jsnap == NULL), 1);
+		json_object_object_get_ex(jsnap, "name", &jsnapname);
+		ASSERT_NE((jsnapname == NULL), 1);
+		json_object_object_get_ex(jsnap, "properties", &jprop);
+		ASSERT_NE((jprop == NULL), 1);
+		json_object_object_foreach(jprop, key, val) {
+			output = execCmd("zfs", std::string("get ") + key +
+			    std::string(" -Hpo value ") + zvol_name +
+			    std::string("@") +
+			    (char *)json_object_get_string(jsnapname));
+
+			/*
+			 * We are verifying only those values which can
+			 * be obtained from ZFS command.
+			 */
+			if (!strcmp(key, "available") ||
+			    !strcmp(key, "refquota") ||
+			    !strcmp(key, "type") ||
+			    !strcmp(key, "volblocksize") ||
+			    !strcmp(key, "refreservation")) {
+				continue;
+			} else if (!strcmp(key, "refcompressratio") ||
+			    !strcmp(key, "compressratio")) {
+				jival = std::stoul(json_object_get_string(val));
+				snprintf(jsval, sizeof (jsval), "%llu.%02llux",
+				    (u_longlong_t)(jival/100), (u_longlong_t)(jival%100));
+				EXPECT_STREQ(jsval, output.c_str());
+			} else if (!strcmp(key, "logicalreferenced") ||
+			    !strcmp(key, "creation") ||
+			    !strcmp(key, "createtxg") ||
+			    !strcmp(key, "guid") ||
+			    !strcmp(key, "userrefs") ||
+			    !strcmp(key, "written") ||
+			    !strcmp(key, "logicalreferenced")) {
+				jival = std::stoul(json_object_get_string(val));
+				EXPECT_EQ(jival, std::stoul(output));
+			} else if (!strcmp(key, "defer_destroy")) {
+				jival = std::stoul(json_object_get_string(val));
+				snprintf(jsval, sizeof(jsval), "%s", (jival) ? "on" : "off");
+				EXPECT_STREQ(jsval, output.c_str());
+			} else {
+				EXPECT_STREQ(json_object_get_string(val), output.c_str());
+			}
+		}
+	}
+}
+
 /*
- * Snapshot create and destroy.
+ * Snapshot create , list and destroy.
  */
 TEST(Snapshot, CreateAndDestroy) {
 	zvol_io_hdr_t hdr_in, hdr_out = {0};
@@ -1479,6 +1543,7 @@ TEST(Snapshot, CreateAndDestroy) {
 	Target target;
 	int rc, control_fd;
 	TestPool pool("snappool");
+	char *buf;
 	std::string vol_name = pool.getZvolName("vol");
 	std::string snap_name = pool.getZvolName("vol@snap");
 	std::string bad_snap_name = pool.getZvolName("vol");
@@ -1486,6 +1551,8 @@ TEST(Snapshot, CreateAndDestroy) {
 	int ioseq;
 	std::string host;
 	uint16_t port;
+	struct zvol_snapshot_list *snaplist;
+	std::string output;
 
 	zrepl.start();
 	pool.create();
@@ -1554,9 +1621,34 @@ TEST(Snapshot, CreateAndDestroy) {
 
 	ASSERT_NO_THROW(execCmd("zfs", std::string("list ") + snap_name));
 
+	// Try to fetch snapshot list
+	hdr_out.io_seq = 3;
+	hdr_out.len = vol_name.length() + 1;
+	hdr_out.opcode = ZVOL_OPCODE_SNAP_LIST;
+	rc = write(control_fd, &hdr_out, sizeof (hdr_out));
+	ASSERT_EQ(rc, sizeof (hdr_out));
+	rc = write(control_fd, vol_name.c_str(), hdr_out.len);
+	ASSERT_EQ(rc, hdr_out.len);
+	rc = read(control_fd, &hdr_in, sizeof (hdr_in));
+	ASSERT_EQ(rc, sizeof (hdr_in));
+	EXPECT_EQ(hdr_in.version, REPLICA_VERSION);
+	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_SNAP_LIST);
+	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
+	EXPECT_EQ(hdr_in.io_seq, 3);
+	ASSERT_GE(hdr_in.len, sizeof (struct zvol_snapshot_list));
+	buf = (char *)malloc(hdr_in.len);
+	rc = read(control_fd, buf, hdr_in.len);
+	ASSERT_EQ(rc, hdr_in.len);
+	snaplist = (struct zvol_snapshot_list *) buf;
+	output = execCmd("zfs", std::string("get guid -Hpo value ") +
+	    vol_name);
+        EXPECT_EQ(snaplist->zvol_guid, std::stoul(output));
+	verify_snapshot_details(vol_name, snaplist->data);
+	ASSERT_NO_THROW(execCmd("zfs", std::string("list ") + snap_name));
+
 	// destroy the snapshot
 	hdr_out.opcode = ZVOL_OPCODE_SNAP_DESTROY;
-	hdr_out.io_seq = 3;
+	hdr_out.io_seq = 4;
 	hdr_out.len = snap_name.length() + 1;
 	rc = write(control_fd, &hdr_out, sizeof (hdr_out));
 	ASSERT_EQ(rc, sizeof (hdr_out));
@@ -1568,7 +1660,7 @@ TEST(Snapshot, CreateAndDestroy) {
 	EXPECT_EQ(hdr_in.version, REPLICA_VERSION);
 	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_SNAP_DESTROY);
 	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
-	EXPECT_EQ(hdr_in.io_seq, 3);
+	EXPECT_EQ(hdr_in.io_seq, 4);
 	ASSERT_EQ(hdr_in.len, 0);
 
 	ASSERT_THROW(execCmd("zfs", std::string("list ") + snap_name),

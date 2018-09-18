@@ -641,7 +641,7 @@ uzfs_zvol_fetch_snapshot_list(zvol_info_t *zinfo, void **buf,
     size_t *buflen)
 {
 	char *snapname;
-	boolean_t case_conflict;
+	boolean_t case_conflict, prop_error;
 	uint64_t id, pos = 0;
 	int error = 0;
 	zvol_state_t *zv = (zvol_state_t *)zinfo->main_zv;
@@ -659,6 +659,7 @@ uzfs_zvol_fetch_snapshot_list(zvol_info_t *zinfo, void **buf,
 	jarray = json_object_new_array();
 
 	while (error == 0) {
+		prop_error = TRUE;
 		dsl_pool_config_enter(dmu_objset_pool(os), FTAG);
 		error = dmu_snapshot_list_next(os,
 		    ZFS_MAX_DATASET_NAME_LEN, snapname, &id, &pos,
@@ -668,8 +669,25 @@ uzfs_zvol_fetch_snapshot_list(zvol_info_t *zinfo, void **buf,
 			goto out;
 		}
 
+		error = dsl_dataset_hold_obj(dp, id, FTAG, &ds);
+		if (error == 0) {
+			error = dmu_objset_from_ds(ds, &snap_os);
+			if (error == 0 &&
+			    !dsl_prop_get_all(snap_os, &nv)) {
+				dmu_objset_stats(snap_os, nv);
+				if (zvol_get_stats(snap_os, nv))
+					LOG_ERR("Failed to get zvol "
+					    "stats");
+				prop_error = FALSE;
+			} else
+				prop_error = TRUE;
+			dsl_dataset_rele(ds, FTAG);
+		}
+		dsl_pool_config_exit(dmu_objset_pool(os), FTAG);
+
 		if (strcmp(snapname, REBUILD_SNAPSHOT_SNAPNAME) == 0) {
-			dsl_pool_config_exit(dmu_objset_pool(os), FTAG);
+			if (!prop_error)
+				nvlist_free(nv);
 			continue;
 		}
 
@@ -677,27 +695,13 @@ uzfs_zvol_fetch_snapshot_list(zvol_info_t *zinfo, void **buf,
 		json_object_object_add(jobj, "name",
 		    json_object_new_string(snapname));
 
-		error = dsl_dataset_hold_obj(dp, id, FTAG, &ds);
-		if (error == 0) {
-			error = dmu_objset_from_ds(ds, &snap_os);
-			if (error == 0 &&
-			    !dsl_prop_get_all(snap_os, &nv)) {
-				dmu_objset_stats(snap_os, nv);
-				error = zvol_get_stats(snap_os, nv);
-				if (error)
-					LOG_ERR("Failed to get zvol "
-					    "stats err(%d)", error);
-			}
-
+		if (error == 0 && !prop_error) {
 			jprop = json_object_new_object();
 			uzfs_append_snapshot_properties(nv, jprop, NULL);
 			json_object_object_add(jobj, "properties", jprop);
-
-			dsl_dataset_rele(ds, FTAG);
+			nvlist_free(nv);
 		}
 		json_object_array_add(jarray, jobj);
-
-		dsl_pool_config_exit(dmu_objset_pool(os), FTAG);
 	}
 
 out:

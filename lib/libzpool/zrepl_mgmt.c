@@ -380,7 +380,7 @@ uzfs_zinfo_init(void *zv, const char *ds_name, nvlist_t *create_props)
 	strlcpy(zinfo->name, ds_name, MAXNAMELEN);
 	zinfo->main_zv = zv;
 	zinfo->state = ZVOL_INFO_STATE_ONLINE;
-	/* iSCSI target will overwrite this value during handshake */
+	/* iSCSI target will overwrite this value (in sec) during handshake */
 	zinfo->update_ionum_interval = 6000;
 	/* Update zvol list */
 	uzfs_insert_zinfo_list(zinfo);
@@ -409,6 +409,7 @@ uint64_t
 uzfs_zvol_get_last_committed_io_no(zvol_state_t *zv, char *key)
 {
 	uzfs_zap_kv_t zap;
+
 	zap.key = key;
 	zap.value = 0;
 	zap.size = sizeof (uint64_t);
@@ -418,7 +419,7 @@ uzfs_zvol_get_last_committed_io_no(zvol_state_t *zv, char *key)
 }
 
 static void
-uzfs_zvol_store_last_committed_io_no(zvol_state_t *zv, char *key,
+uzfs_zvol_store_kv_pair(zvol_state_t *zv, char *key,
     uint64_t io_seq)
 {
 	uzfs_zap_kv_t *kv_array[0];
@@ -440,7 +441,7 @@ void
 uzfs_zvol_store_last_committed_degraded_io_no(zvol_info_t *zinfo,
     uint64_t io_seq)
 {
-	uzfs_zvol_store_last_committed_io_no(zinfo->main_zv,
+	uzfs_zvol_store_kv_pair(zinfo->main_zv,
 	    DEGRADED_IO_SEQNUM, io_seq);
 }
 
@@ -462,7 +463,7 @@ uzfs_zvol_store_last_committed_healthy_io_no(zvol_info_t *zinfo,
 		return;
 	}
 	zinfo->stored_healthy_ionum = io_seq;
-	uzfs_zvol_store_last_committed_io_no(zinfo->main_zv,
+	uzfs_zvol_store_kv_pair(zinfo->main_zv,
 	    HEALTHY_IO_SEQNUM, io_seq);
 	pthread_mutex_unlock(&zinfo->zinfo_ionum_mutex);
 }

@@ -689,6 +689,9 @@ TEST(SnapCreate, SnapCreateFailureHigherIO) {
 
 /* Snap create success */
 TEST(SnapCreate, SnapCreateSuccess) {
+	char *snapname1 = (char *)"snapa";
+	char *snapname2 = (char *)"snapb";
+	char *snapname3 = (char *)"snapc";
 	/*
 	 * Set volume state to healthy so that we can
 	 * update ZAP attribute and take snapshot
@@ -697,11 +700,55 @@ TEST(SnapCreate, SnapCreateSuccess) {
 	uzfs_zvol_set_status(zinfo->main_zv, ZVOL_STATUS_HEALTHY);
 
 	zinfo->running_ionum = snapshot_io_num -1;
+
 	/* Create snapshot */
 	EXPECT_EQ(0, uzfs_zvol_create_snapshot_update_zap(zinfo,
 	    snapname, snapshot_io_num));
 	EXPECT_EQ(999, uzfs_zvol_get_last_committed_io_no(zinfo->main_zv,
 	    (char *)HEALTHY_IO_SEQNUM));
+
+	EXPECT_EQ(0, uzfs_zvol_create_snapshot_update_zap(zinfo,
+	    snapname1, 2000));
+	EXPECT_EQ(1999, uzfs_zvol_get_last_committed_io_no(zinfo->main_zv,
+	    (char *)HEALTHY_IO_SEQNUM));
+
+	EXPECT_EQ(0, uzfs_zvol_create_snapshot_update_zap(zinfo,
+	    snapname2, 3000));
+	EXPECT_EQ(2999, uzfs_zvol_get_last_committed_io_no(zinfo->main_zv,
+	    (char *)HEALTHY_IO_SEQNUM));
+
+	EXPECT_EQ(0, uzfs_zvol_create_snapshot_update_zap(zinfo,
+	    snapname3, 4000));
+	EXPECT_EQ(3999, uzfs_zvol_get_last_committed_io_no(zinfo->main_zv,
+	    (char *)HEALTHY_IO_SEQNUM));
+}
+
+TEST(GetSnapFromIO, GetDestroySnap) {
+	zvol_state_t *zv;
+	int ret;
+
+	zv = uzfs_get_snap_zv_ionum(zinfo, 1998);
+	ret = strcmp(zv->zv_name, "pool1/vol1@snapa");
+	EXPECT_EQ(ret, 0);
+	uzfs_close_dataset(zv);
+
+	zv = uzfs_get_snap_zv_ionum(zinfo, 1999);
+	ret = strcmp(zv->zv_name, "pool1/vol1@snapb");
+	EXPECT_EQ(ret, 0);
+	uzfs_close_dataset(zv);
+
+	zv = uzfs_get_snap_zv_ionum(zinfo, 3000);
+	ret = strcmp(zv->zv_name, "pool1/vol1@snapc");
+	EXPECT_EQ(ret, 0);
+	uzfs_close_dataset(zv);
+
+	zv = uzfs_get_snap_zv_ionum(zinfo, 3999);
+	ret = (zv == NULL) ? 0 : 1;
+	EXPECT_EQ(ret, 0);
+
+	EXPECT_EQ(0, dsl_destroy_snapshot("pool1/vol1@snapb", B_FALSE));
+	EXPECT_EQ(0, dsl_destroy_snapshot("pool1/vol1@snapa", B_FALSE));
+	EXPECT_EQ(0, dsl_destroy_snapshot("pool1/vol1@snapc", B_FALSE));
 }
 
 /* Retrieve Snap dataset and IO number */

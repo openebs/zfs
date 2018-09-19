@@ -1523,6 +1523,7 @@ static void verify_snapshot_details(std::string zvol_name, std::string json) {
 			}
 		}
 	}
+	json_object_put(jobj);
 }
 
 /*

@@ -654,6 +654,7 @@ uzfs_zvol_fetch_snapshot_list(zvol_info_t *zinfo, void **buf,
 	struct json_object *jobj, *jarray, *jprop;
 	const char *json_string;
 	uint64_t total_len;
+	char err_msg[128];
 
 	snapname = kmem_alloc(ZFS_MAX_DATASET_NAME_LEN, KM_SLEEP);
 	jarray = json_object_new_array();
@@ -685,7 +686,9 @@ uzfs_zvol_fetch_snapshot_list(zvol_info_t *zinfo, void **buf,
 		}
 		dsl_pool_config_exit(dmu_objset_pool(os), FTAG);
 
-		if (strcmp(snapname, REBUILD_SNAPSHOT_SNAPNAME) == 0) {
+		if (strcmp(snapname, REBUILD_SNAPSHOT_SNAPNAME) == 0 ||
+		    strncmp(snapname, IO_DIFF_SNAPNAME,
+		    sizeof (IO_DIFF_SNAPNAME)) == 0) {
 			if (!prop_error)
 				nvlist_free(nv);
 			continue;
@@ -695,12 +698,18 @@ uzfs_zvol_fetch_snapshot_list(zvol_info_t *zinfo, void **buf,
 		json_object_object_add(jobj, "name",
 		    json_object_new_string(snapname));
 
+		jprop = json_object_new_object();
 		if (error == 0 && !prop_error) {
-			jprop = json_object_new_object();
 			uzfs_append_snapshot_properties(nv, jprop, NULL);
-			json_object_object_add(jobj, "properties", jprop);
 			nvlist_free(nv);
+		} else {
+			snprintf(err_msg, sizeof (err_msg),
+			    "Failed to fetch snapshot details.. err(%d)",
+			    error);
+			json_object_object_add(jprop, "error",
+			    json_object_new_string(err_msg));
 		}
+		json_object_object_add(jobj, "properties", jprop);
 		json_object_array_add(jarray, jobj);
 	}
 
@@ -716,6 +725,8 @@ out:
 	snap_list = malloc(total_len + sizeof (*snap_list));
 	memset(snap_list, 0, total_len + sizeof (*snap_list));
 	snap_list->zvol_guid = zinfo->zvol_guid;
+	snap_list->error = (error == ENOENT) ? 0 : error;
+	snap_list->data_len = total_len;
 	strncpy(snap_list->data, json_string, total_len);
 	json_object_put(jobj);
 
@@ -732,8 +743,8 @@ free_async_task(async_task_t *async_task)
 	uzfs_zinfo_drop_refcnt(async_task->zinfo);
 	if (async_task->payload)
 		kmem_free(async_task->payload, async_task->payload_length);
-	if (async_task->output)
-		kmem_free(async_task->output, async_task->output_length);
+	if (async_task->response)
+		kmem_free(async_task->response, async_task->response_length);
 	kmem_free(async_task, sizeof (*async_task));
 }
 
@@ -755,12 +766,13 @@ finish_async_tasks(void)
 			continue;
 		/* connection could have been closed in the meantime */
 		if (!async_task->conn_closed) {
-			if (async_task->output) {
+			if (async_task->response) {
 				async_task->hdr.status = async_task->status;
-				async_task->hdr.len = async_task->output_length;
+				async_task->hdr.len =
+				    async_task->response_length;
 				rc = reply_data(async_task->conn,
-				    &async_task->hdr, async_task->output,
-				    async_task->output_length);
+				    &async_task->hdr, async_task->response,
+				    async_task->response_length);
 			} else
 				rc = reply_nodata(async_task->conn,
 				    async_task->status, async_task->hdr.opcode,
@@ -894,8 +906,8 @@ uzfs_zvol_execute_async_command(void *arg)
 		}
 		break;
 	case ZVOL_OPCODE_SNAP_LIST:
-		rc = uzfs_zvol_fetch_snapshot_list(zinfo, &async_task->output,
-		    (size_t *)&async_task->output_length);
+		rc = uzfs_zvol_fetch_snapshot_list(zinfo, &async_task->response,
+		    (size_t *)&async_task->response_length);
 		if (rc != 0) {
 			LOG_ERR("Failed to fetch snapshot list for zvol %s\n",
 			    zinfo->name);
@@ -939,9 +951,11 @@ uzfs_zvol_dispatch_command(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	arg->conn = conn;
 	arg->zinfo = zinfo;
 	arg->hdr = *hdrp;
-	arg->payload_length = length;
-	arg->payload = kmem_zalloc(arg->payload_length, KM_SLEEP);
-	memcpy(arg->payload, payload, arg->payload_length);
+	if (length) {
+		arg->payload_length = length;
+		arg->payload = kmem_zalloc(arg->payload_length, KM_SLEEP);
+		memcpy(arg->payload, payload, arg->payload_length);
+	}
 
 	mutex_enter(&async_tasks_mtx);
 	SLIST_INSERT_HEAD(&async_tasks, arg, task_next);

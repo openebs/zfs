@@ -202,9 +202,15 @@ struct zvol_io_rw_hdr {
 } __attribute__((packed));
 
 struct zvol_snapshot_list {
-	uint64_t zvol_guid;
-	uint64_t data_len;
-	char data[0];
+	uint64_t zvol_guid;	/* Replica identity */
+	uint64_t data_len;	/* SNAP_LIST response data length */
+
+	/*
+	 * Error code, if any error happened while
+	 * executing SNAP_LIST opcode at replica
+	 */
+	int error;
+	char data[0];		/* SNAP_LIST response data */
 };
 
 #define	SLIST_FOREACH_SAFE(var, head, field, tvar)			\

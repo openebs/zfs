@@ -20,6 +20,7 @@
  */
 
 #include <sys/dmu_objset.h>
+#include <sys/dsl_destroy.h>
 #include <sys/zap.h>
 #include <sys/dsl_prop.h>
 #include <sys/uzfs_zvol.h>
@@ -553,6 +554,61 @@ uzfs_zvol_create_minors(spa_t *spa, const char *name)
 	strncpy(pool_name, name, MAXNAMELEN);
 	dmu_objset_find(pool_name, uzfs_zvol_create_cb, NULL, DS_FIND_CHILDREN);
 	kmem_free(pool_name, MAXNAMELEN);
+}
+
+int
+get_snapshot_zv(zvol_state_t *zv, char *snap_name, zvol_state_t **snap_zv)
+{
+	char *dataset;
+	int ret = 0;
+
+	dataset = kmem_asprintf("%s@%s", strchr(zv->zv_name, '/') + 1,
+	    snap_name);
+
+	ret = uzfs_open_dataset(zv->zv_spa, dataset, snap_zv);
+	if (ret == ENOENT) {
+		ret = dmu_objset_snapshot_one(zv->zv_name, snap_name);
+		if (ret) {
+			LOG_ERR("Failed to create snapshot %s@%s: %d",
+			    zv->zv_name, snap_name, ret);
+			strfree(dataset);
+			return (ret);
+		}
+
+		ret = uzfs_open_dataset(zv->zv_spa, dataset, snap_zv);
+		if (ret == 0) {
+			ret = uzfs_hold_dataset(*snap_zv);
+			if (ret != 0) {
+				LOG_ERR("Failed to hold snapshot: %d", ret);
+				uzfs_close_dataset(*snap_zv);
+			}
+		}
+		else
+			LOG_ERR("Failed to open snapshot: %d", ret);
+	} else if (ret == 0) {
+		LOG_INFO("holding already available snapshot %s@%s",
+		    zv->zv_name, snap_name);
+		ret = uzfs_hold_dataset(*snap_zv);
+		if (ret != 0) {
+			LOG_ERR("Failed to hold already existing snapshot: %d",
+			    ret);
+			uzfs_close_dataset(*snap_zv);
+		}
+	} else
+		LOG_ERR("Failed to open snapshot: %d", ret);
+
+	strfree(dataset);
+	return (ret);
+}
+
+void
+destroy_snapshot_zv(zvol_state_t *zv, char *snap_name)
+{
+	char *dataset;
+
+	dataset = kmem_asprintf("%s@%s", zv->zv_name, snap_name);
+	(void) dsl_destroy_snapshot(dataset, B_FALSE);
+	strfree(dataset);
 }
 
 /* uZFS Zvol destroy call back function */

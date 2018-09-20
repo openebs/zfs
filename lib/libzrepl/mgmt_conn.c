@@ -646,6 +646,57 @@ out:
 }
 
 /*
+ * Returns zv of snap that is just higher than given ionum
+ * If no such snap exists, it returns NULL
+ * Note: caller should do uzfs_close_dataset of zv, and,
+ * caller need to take care of any ongoing snap requests
+ */
+zvol_state_t *
+uzfs_get_snap_zv_ionum(zvol_info_t *zinfo, uint64_t ionum)
+{
+	if ((zinfo == NULL) || (zinfo->main_zv == NULL) ||
+	    (zinfo->main_zv->zv_objset == NULL))
+		return (NULL);
+
+	uint64_t obj = 0, cookie = 0;
+	zvol_state_t *zv = zinfo->main_zv;
+	zvol_state_t *snap_zv = NULL;
+	zvol_state_t *smallest_higher_snapzv = NULL;
+	objset_t *os = zv->zv_objset;
+	char snapname[MAXNAMELEN];
+	uint64_t healthy_ionum, smallest_higher_ionum = 0;
+	int error;
+
+	while (1) {
+		dsl_pool_config_enter(spa_get_dsl(zv->zv_spa), FTAG);
+		error = dmu_snapshot_list_next(os, sizeof (snapname) - 1,
+		    snapname, &obj, &cookie, NULL);
+		dsl_pool_config_exit(spa_get_dsl(zv->zv_spa), FTAG);
+
+		if (error) {
+			if (error == ENOENT)
+				error = 0;
+			break;
+		}
+		error = get_snapshot_zv(zv, snapname, &snap_zv);
+		if (error)
+			break;
+		healthy_ionum = uzfs_zvol_get_last_committed_io_no(snap_zv,
+		    HEALTHY_IO_SEQNUM);
+		if ((healthy_ionum > ionum) &&
+		    ((smallest_higher_snapzv == NULL) ||
+		    (smallest_higher_ionum > healthy_ionum))) {
+			smallest_higher_ionum = healthy_ionum;
+			if (smallest_higher_snapzv != NULL)
+				uzfs_close_dataset(smallest_higher_snapzv);
+			smallest_higher_snapzv = snap_zv;
+		} else
+			uzfs_close_dataset(snap_zv);
+	}
+	return (smallest_higher_snapzv);
+}
+
+/*
  * For a given snap name, get snap dataset and IO number stored in ZAP
  * Input: zinfo, snap
  * Output: snapshot_io_num, snap_zv

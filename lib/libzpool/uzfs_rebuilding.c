@@ -71,7 +71,7 @@ iszero(blk_metadata_t *md)
 		} while (0)
 
 int
-uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *low,
+uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *low, zvol_state_t **snap,
     uzfs_get_io_diff_cb_t *func, off_t lun_offset, size_t lun_len, void *arg)
 {
 	uint64_t blocksize = zv->zv_volmetablocksize;
@@ -79,7 +79,7 @@ uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *low,
 	uint64_t metaobjectsize = (zv->zv_volsize / zv->zv_metavolblocksize) *
 	    zv->zv_volmetadatasize;
 	uint64_t metadatasize = zv->zv_volmetadatasize;
-	char *buf, *snap_name;
+	char *buf, *snap_name = NULL;
 	uint64_t i, read;
 	uint64_t offset, len, end;
 	int ret = 0;
@@ -98,15 +98,18 @@ uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *low,
 
 	if (end > metaobjectsize)
 		end = metaobjectsize;
-
-	snap_name = kmem_asprintf("%s%llu", IO_DIFF_SNAPNAME, low->io_num);
-
-	ret = get_snapshot_zv(zv, snap_name, &snap_zv);
-	if (ret != 0) {
-		LOG_ERR("Failed to get info about %s@%s io_num %lu",
-		    zv->zv_name, snap_name, low->io_num);
-		strfree(snap_name);
-		return (ret);
+	if (*snap == NULL) {
+		snap_name = kmem_asprintf("%s%llu", IO_DIFF_SNAPNAME,
+		    low->io_num);
+		ret = get_snapshot_zv(zv, snap_name, &snap_zv);
+		if (ret != 0) {
+			LOG_ERR("Failed to get info about %s@%s io_num %lu",
+			    zv->zv_name, snap_name, low->io_num);
+			strfree(snap_name);
+			return (ret);
+		}
+	} else {
+		snap_zv = *snap;
 	}
 
 	metadata_read_chunk_size = (metadata_read_chunk_size / metadatasize) *
@@ -185,17 +188,19 @@ uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *low,
 		}
 	}
 
-	uzfs_close_dataset(snap_zv);
+	if (*snap == NULL) {
+		uzfs_close_dataset(snap_zv);
 
-	/*
-	 * TODO: if we failed to destroy snapshot here then
-	 * this should be handled separately from application.
-	 */
-	if (end == metaobjectsize)
-		destroy_snapshot_zv(zv, snap_name);
+		/*
+		 * TODO: if we failed to destroy snapshot here then
+		 * this should be handled separately from application.
+		 */
+		if (end == metaobjectsize)
+			destroy_snapshot_zv(zv, snap_name);
 
+		strfree(snap_name);
+	}
 	umem_free(buf, metadata_read_chunk_size);
-	strfree(snap_name);
 	return (ret);
 }
 

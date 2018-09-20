@@ -1122,6 +1122,7 @@ uzfs_zvol_rebuild_scanner(void *arg)
 {
 	int		fd = (uintptr_t)arg;
 	zvol_info_t	*zinfo = NULL;
+	zvol_state_t	*snap_zv = NULL;
 	zvol_io_hdr_t	hdr;
 	int 		rc = 0;
 	zvol_rebuild_t	warg;
@@ -1213,7 +1214,7 @@ read_socket:
 				sleep(5);
 #endif
 			rc = uzfs_get_io_diff(zinfo->main_zv, &metadata,
-			    uzfs_zvol_rebuild_scanner_callback,
+			    &snap_zv, uzfs_zvol_rebuild_scanner_callback,
 			    rebuild_req_offset, rebuild_req_len, &warg);
 			if (rc != 0) {
 				LOG_ERR("Rebuild scanning failed on zvol %s ",

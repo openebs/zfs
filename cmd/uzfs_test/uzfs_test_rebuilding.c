@@ -238,6 +238,7 @@ fetch_modified_data(void *arg)
 	int err;
 	blk_metadata_t md;
 	off_t offset, end;
+	zvol_state_t *snap_zv = NULL;
 	size_t len;
 	int max_count = 4;
 
@@ -251,7 +252,7 @@ fetch_modified_data(void *arg)
 		if (end > r_data->zvol->zv_volsize)
 			len = r_data->zvol->zv_volsize - offset;
 
-		err = uzfs_get_io_diff(repl_data->zvol, &md,
+		err = uzfs_get_io_diff(repl_data->zvol, &md, &snap_zv,
 		    uzfs_test_meta_diff_traverse_cb, offset, len,
 		    r_data);
 		if (err)

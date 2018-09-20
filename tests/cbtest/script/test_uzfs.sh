@@ -902,6 +902,10 @@ run_zrepl_rebuild_uzfs_test()
 {
 	export_pool $UZFS_TEST_POOL
 
+	stop_zrepl
+	export DEGRADED_SNAP=1
+	start_zrepl
+
 	if [ "$1" == "log" ]; then
 		log_must setup_uzfs_test log $2 $UZFS_TEST_VOLSIZE $3 $UZFS_TEST_POOL \
 		    $UZFS_TEST_VOL uzfs_zrepl_rebuild_vdev1 uzfs_zrepl_rebuild_log1
@@ -935,6 +939,10 @@ run_zrepl_rebuild_uzfs_test()
 	else
 		cleanup_uzfs_test $UZFS_TEST_POOL uzfs_zrepl_rebuild_vdev1
 	fi
+
+	stop_zrepl
+	unset DEGRADED_SNAP
+	start_zrepl
 
 	return 0
 }

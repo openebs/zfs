@@ -87,7 +87,7 @@ r_unmap_thread(void *arg)
 		rl = zfs_range_lock(&zv1_range_lock, offset,
 		    (idx + 1) * block_size, RL_WRITER);
 		err = uzfs_unmap_data(zv, offset, (idx + 1) * block_size,
-		    (blk_metadata_t *)&io_num);
+		    (blk_metadata_t *)&io_num, FALSE);
 		if (err != 0) {
 			printf("UNMAP error at offset: %lu len: %lu, err:%d\n",
 			    offset, (idx + 1) * block_size, err);

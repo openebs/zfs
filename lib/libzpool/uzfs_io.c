@@ -61,9 +61,6 @@ inject_error_t	inject_error;
 		    mdata, tx);					\
 	} while (0)
 
-static int uzfs_dmu_read(objset_t *os, uint64_t object, uint64_t offset,
-    uint64_t size, void *buf, uint32_t flags);
-
 /* Writes data 'buf' to dataset 'zv' at 'offset' for 'len' */
 int
 uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
@@ -317,8 +314,8 @@ uzfs_read_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 		if (bytes > (volsize - offset))
 			bytes = volsize - offset;
 
-		error = uzfs_dmu_read(os, ZVOL_OBJ, offset, bytes,
-		    buf + read, 0);
+		error = dmu_read(os, ZVOL_OBJ, offset, bytes,
+		    buf + read, DMU_READ_CHECK_HOLE);
 		if (error != 0) {
 			if (data_err) {
 				*data_err = error;
@@ -332,8 +329,9 @@ uzfs_read_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 			    bytes);
 
 			metadata = kmem_alloc(metablk.m_len, KM_SLEEP);
-			error = uzfs_dmu_read(os, ZVOL_META_OBJ,
-			    metablk.m_offset, metablk.m_len, metadata, 0);
+			error = dmu_read(os, ZVOL_META_OBJ,
+			    metablk.m_offset, metablk.m_len, metadata,
+			    DMU_READ_CHECK_HOLE);
 			if (error != 0) {
 				if (md_err) {
 					*md_err = error;
@@ -536,7 +534,7 @@ uzfs_update_metadata_granularity(zvol_state_t *zv, uint64_t tgt_block_size)
 
 int
 uzfs_unmap_data(zvol_state_t *zv, uint64_t offset, uint64_t len,
-    blk_metadata_t *metadata)
+    blk_metadata_t *metadata, boolean_t is_rebuild)
 {
 	int error, ret = 0, i;
 	dmu_tx_t *tx;
@@ -546,6 +544,13 @@ uzfs_unmap_data(zvol_state_t *zv, uint64_t offset, uint64_t len,
 	uint8_t *buf;
 	uint64_t moff, mend, mchunk, mwlen;
 	rl_t *rl;
+	uint32_t count = 0;
+	list_t *chunk_io = NULL;
+	uint64_t orig_offset = offset;
+	uint64_t end = len + offset;
+	uint64_t wrote = 0;
+	uint64_t blocksize = zv->zv_volblocksize;
+	uint64_t len_in_first_aligned_block = 0;
 
 	/*
 	 * If trying IO on fresh zvol before metadata granularity is set return
@@ -567,11 +572,35 @@ uzfs_unmap_data(zvol_state_t *zv, uint64_t offset, uint64_t len,
 
 	rl = zfs_range_lock(&zv->zv_range_lock, offset, len, RL_WRITER);
 
-	get_zv_metaobj_block_details(&metablk, zv, offset, len);
+	if (is_rebuild) {
+		VERIFY(ZVOL_IS_DEGRADED(zv) && (ZVOL_IS_REBUILDING(zv) ||
+		    ZVOL_IS_REBUILDING_ERRORED(zv)));
+		count = uzfs_get_nonoverlapping_ondisk_blks(zv, offset,
+		    len, metadata, (void **)&chunk_io);
+		if (!count)
+			goto out;
+chunk_io:
+			GET_NEXT_CHUNK(chunk_io, offset, len, end);
+			wrote = offset - orig_offset;
+			CHECK_FIRST_ALIGNED_BLOCK(
+			    len_in_first_aligned_block, offset, len,
+			    blocksize);
+
+			zv->rebuild_info.rebuild_bytes += len;
+			count--;
+	}
+
+	error = dmu_free_long_range(zv->zv_objset, ZVOL_OBJ, offset, len);
+	if (error) {
+		/*
+		 * Ingore error as we are also writing free op in zil
+		 */
+		LOG_ERR("Failed to free range %lu+%lu err:%d\n",
+		    offset, len, error);
+	}
 
 	tx = dmu_tx_create(zv->zv_objset);
-	dmu_tx_hold_free(tx, ZVOL_OBJ, offset, len);
-
+	get_zv_metaobj_block_details(&metablk, zv, offset, len);
 	dmu_tx_hold_write(tx, ZVOL_META_OBJ, metablk.m_offset, metablk.m_len);
 
 	error = dmu_tx_assign(tx, TXG_WAIT);
@@ -581,28 +610,16 @@ uzfs_unmap_data(zvol_state_t *zv, uint64_t offset, uint64_t len,
 		goto out;
 	}
 
-	if (zil_replaying(zv->zv_zilog, tx)) {
-		dmu_tx_abort(tx);
-		ret = UZFS_IO_UNMAP_FAIL;
-		goto out;
+	if (!zil_replaying(zv->zv_zilog, tx)) {
+		itx = zil_itx_create(TX_TRUNCATE, sizeof (*lr));
+		lr = (lr_truncate_t *)&itx->itx_lr;
+		lr->lr_foid = ZVOL_OBJ;
+		lr->lr_offset = offset;
+		lr->lr_length = len;
+		itx->itx_sync = FALSE;
+
+		zil_itx_assign(zv->zv_zilog, itx, tx);
 	}
-
-	itx = zil_itx_create(TX_TRUNCATE, sizeof (*lr));
-	lr = (lr_truncate_t *)&itx->itx_lr;
-	lr->lr_foid = ZVOL_OBJ;
-	lr->lr_offset = offset;
-	lr->lr_length = len;
-	itx->itx_sync = FALSE;
-
-	error = dmu_free_range(zv->zv_objset, ZVOL_OBJ, offset, len, tx);
-	if (error) {
-		dmu_tx_abort(tx);
-		ret = UZFS_IO_UNMAP_FAIL;
-		zil_itx_destroy(itx);
-		goto out;
-	}
-
-	zil_itx_assign(zv->zv_zilog, itx, tx);
 
 	moff = metablk.m_offset;
 	mend = moff + metablk.m_len;
@@ -621,172 +638,15 @@ uzfs_unmap_data(zvol_state_t *zv, uint64_t offset, uint64_t len,
 	dmu_tx_commit(tx);
 
 out:
+	if (is_rebuild && count && !ret &&
+	    ZVOL_IS_DEGRADED(zv) && ZVOL_IS_REBUILDING(zv))
+		goto chunk_io;
+
+	if (chunk_io) {
+		list_destroy(chunk_io);
+		umem_free(chunk_io, sizeof (*chunk_io));
+	}
+
 	zfs_range_unlock(rl);
 	return (ret);
-}
-
-/*
- * Following functions supporting to dmu read are handling HOLE related errors
- */
-static int
-uzfs_dmu_buf_hold_array_by_dnode(dnode_t *dn, uint64_t offset, uint64_t length,
-    boolean_t read, void *tag, int *numbufsp, dmu_buf_t ***dbpp, uint32_t flags)
-{
-	dmu_buf_t **dbp;
-	uint64_t blkid, nblks, i;
-	uint32_t dbuf_flags;
-	int err;
-	zio_t *zio;
-
-	ASSERT(length <= DMU_MAX_ACCESS);
-
-	/*
-	 * Note: We directly notify the prefetch code of this read, so that
-	 * we can tell it about the multi-block read.  dbuf_read() only knows
-	 * about the one block it is accessing.
-	 */
-	dbuf_flags = DB_RF_CANFAIL | DB_RF_NEVERWAIT | DB_RF_HAVESTRUCT |
-	    DB_RF_NOPREFETCH;
-
-	rw_enter(&dn->dn_struct_rwlock, RW_READER);
-	if (dn->dn_datablkshift) {
-		int blkshift = dn->dn_datablkshift;
-		nblks = (P2ROUNDUP(offset + length, 1ULL << blkshift) -
-		    P2ALIGN(offset, 1ULL << blkshift)) >> blkshift;
-	} else {
-		if (offset + length > dn->dn_datablksz) {
-			zfs_panic_recover("zfs: accessing past end of object "
-			    "%llx/%llx (size=%u access=%llu%llu)",
-			    (longlong_t)dn->dn_objset->
-			    os_dsl_dataset->ds_object,
-			    (longlong_t)dn->dn_object, dn->dn_datablksz,
-			    (longlong_t)offset, (longlong_t)length);
-			rw_exit(&dn->dn_struct_rwlock);
-			return (SET_ERROR(EIO));
-		}
-		nblks = 1;
-	}
-	dbp = kmem_zalloc(sizeof (dmu_buf_t *) * nblks, KM_SLEEP);
-
-	zio = zio_root(dn->dn_objset->os_spa, NULL, NULL, ZIO_FLAG_CANFAIL);
-	blkid = dbuf_whichblock(dn, 0, offset);
-	for (i = 0; i < nblks; i++) {
-		dmu_buf_impl_t *db = NULL;
-		if (dbuf_hold_impl(dn, 0, blkid, TRUE, FALSE, tag, &db))
-			if (db == NULL) {
-				rw_exit(&dn->dn_struct_rwlock);
-				dmu_buf_rele_array(dbp, nblks, tag);
-				zio_nowait(zio);
-				return (SET_ERROR(EIO));
-			}
-		/* initiate async i/o */
-		if (read)
-			(void) dbuf_read(db, zio, dbuf_flags);
-		dbp[i] = &db->db;
-	}
-
-	if ((flags & DMU_READ_NO_PREFETCH) == 0 &&
-	    DNODE_META_IS_CACHEABLE(dn) && length <= zfetch_array_rd_sz) {
-		dmu_zfetch(&dn->dn_zfetch, blkid, nblks,
-		    read && DNODE_IS_CACHEABLE(dn));
-	}
-	rw_exit(&dn->dn_struct_rwlock);
-
-	/* wait for async i/o */
-	err = zio_wait(zio);
-	if (err) {
-		dmu_buf_rele_array(dbp, nblks, tag);
-		return (err);
-	}
-
-	/* wait for other io to complete */
-	if (read) {
-		for (i = 0; i < nblks; i++) {
-			dmu_buf_impl_t *db = (dmu_buf_impl_t *)dbp[i];
-			mutex_enter(&db->db_mtx);
-			while (db->db_state == DB_READ ||
-			    db->db_state == DB_FILL)
-				cv_wait(&db->db_changed, &db->db_mtx);
-			if (db->db_state == DB_UNCACHED)
-				err = SET_ERROR(EIO);
-			mutex_exit(&db->db_mtx);
-			if (err) {
-				dmu_buf_rele_array(dbp, nblks, tag);
-				return (err);
-			}
-		}
-	}
-
-	*numbufsp = nblks;
-	*dbpp = dbp;
-	return (0);
-}
-
-static int
-uzfs_dmu_read_impl(dnode_t *dn, uint64_t offset, uint64_t size,
-    void *buf, uint32_t flags)
-{
-	dmu_buf_t **dbp;
-	int numbufs, err = 0;
-
-	/*
-	 * Deal with odd block sizes, where there can't be data past the first
-	 * block.  If we ever do the tail block optimization, we will need to
-	 * handle that here as well.
-	 */
-	if (dn->dn_maxblkid == 0) {
-		uint64_t newsz = offset > dn->dn_datablksz ? 0 :
-		    MIN(size, dn->dn_datablksz - offset);
-		bzero((char *)buf + newsz, size - newsz);
-		size = newsz;
-	}
-
-	while (size > 0) {
-		uint64_t mylen = MIN(size, DMU_MAX_ACCESS / 2);
-		int i;
-
-		/*
-		 * NB: we could do this block-at-a-time, but it's nice
-		 * to be reading in parallel.
-		 */
-		err = uzfs_dmu_buf_hold_array_by_dnode(dn, offset, mylen,
-		    TRUE, FTAG, &numbufs, &dbp, flags);
-		if (err)
-			break;
-
-		for (i = 0; i < numbufs; i++) {
-			uint64_t tocpy;
-			int64_t bufoff;
-			dmu_buf_t *db = dbp[i];
-
-			ASSERT(size > 0);
-
-			bufoff = offset - db->db_offset;
-			tocpy = MIN(db->db_size - bufoff, size);
-
-			(void) memcpy(buf, (char *)db->db_data + bufoff, tocpy);
-
-			offset += tocpy;
-			size -= tocpy;
-			buf = (char *)buf + tocpy;
-		}
-		dmu_buf_rele_array(dbp, numbufs, FTAG);
-	}
-	return (err);
-}
-
-static int
-uzfs_dmu_read(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
-    void *buf, uint32_t flags)
-{
-	dnode_t *dn;
-	int err;
-
-	err = dnode_hold(os, object, FTAG, &dn);
-	if (err != 0)
-		return (err);
-
-	err = uzfs_dmu_read_impl(dn, offset, size, buf, flags);
-	dnode_rele(dn, FTAG);
-	return (err);
 }

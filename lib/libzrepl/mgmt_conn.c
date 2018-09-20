@@ -622,6 +622,11 @@ uzfs_zvol_create_snapshot_update_zap(zvol_info_t *zinfo,
 {
 	int ret = 0;
 
+#ifdef	DEBUG
+	if (getenv("DEGRADED_SNAP"))
+		goto out;
+#endif
+
 	if ((uzfs_zvol_get_status(zinfo->main_zv) == ZVOL_STATUS_HEALTHY) &&
 	    (zinfo->running_ionum > snapshot_io_num -1)) {
 		LOG_ERR("Failed to create snapshot as running_ionum %lu"
@@ -633,6 +638,9 @@ uzfs_zvol_create_snapshot_update_zap(zvol_info_t *zinfo,
 	uzfs_zvol_store_last_committed_healthy_io_no(zinfo,
 	    snapshot_io_num - 1);
 
+#ifdef	DEBUG
+out:
+#endif
 	ret = dmu_objset_snapshot_one(zinfo->name, snapname);
 	return (ret);
 }
@@ -1053,6 +1061,10 @@ process_message(uzfs_mgmt_conn_t *conn)
 			    hdrp->opcode, hdrp->io_seq);
 			break;
 		}
+#ifdef	DEBUG
+		if (getenv("DEGRADED_SNAP"))
+			goto avoid_snap_check;
+#endif
 		if (uzfs_zvol_get_status(zinfo->main_zv) !=
 		    ZVOL_STATUS_HEALTHY) {
 			uzfs_zinfo_drop_refcnt(zinfo);
@@ -1069,6 +1081,9 @@ process_message(uzfs_mgmt_conn_t *conn)
 			LOGCONN(conn, "Destroy snapshot command for %s@%s",
 			    zinfo->name, snap);
 		}
+#ifdef	DEBUG
+avoid_snap_check:
+#endif
 		rc = uzfs_zvol_dispatch_command(conn, hdrp, snap,
 		    strlen(snap) + 1, zinfo);
 		break;

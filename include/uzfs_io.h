@@ -66,7 +66,7 @@ int uzfs_read_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
  */
 int
 uzfs_unmap_data(zvol_state_t *zv, uint64_t offset, uint64_t len,
-    blk_metadata_t *metadata);
+    blk_metadata_t *metadata, boolean_t is_rebuild);
 
 extern void uzfs_flush_data(zvol_state_t *zv);
 

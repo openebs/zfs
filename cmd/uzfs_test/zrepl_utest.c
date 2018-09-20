@@ -13,6 +13,7 @@
 #include <uzfs_test.h>
 #include <uzfs_mgmt.h>
 #include <zrepl_mgmt.h>
+#include <uzfs_rebuilding.h>
 
 char *tgt_port = "6060";
 char *tgt_port1 = "99159";
@@ -22,6 +23,12 @@ char *ds1 = "ds1";
 char *ds2 = "ds2";
 char *ds3 = "ds3";
 static uint64_t last_io_seq_sent;
+static uint64_t unmap_region[50][0];
+static uint64_t unmap_idx;
+boolean_t create_snapshot = FALSE;
+
+static void uzfs_test_create_snapshot(int sfd, char *zv_name,
+    char *snapname, uint64_t ioseq);
 
 struct data_io {
 	zvol_io_hdr_t hdr;
@@ -39,11 +46,31 @@ populate(char *p, int size)
 	}
 }
 
-int
-zrepl_verify_data(char *p, int size)
+static boolean_t
+check_if_unmapped(uint64_t offset, uint64_t len)
+{
+	int i = 0;
+
+	ASSERT(unmap_idx);
+
+	for (i = 0; i < unmap_idx; i++) {
+		if (unmap_region[i][0] <= offset &&
+		    ((offset + len) >=
+		    (unmap_region[i][0] + unmap_region[i][1]))) {
+			return (TRUE);
+		}
+	}
+	return (FALSE);
+}
+
+static int
+zrepl_verify_data(char *p, uint64_t offset, uint64_t size)
 {
 
 	int i;
+
+	if (check_if_unmapped(offset, size))
+		return (0);
 
 	for (i = 0; i < size; i++) {
 		if (p[i] != 'C') {
@@ -299,7 +326,6 @@ zrepl_utest_replica_rebuild_start(int fd, mgmt_ack_t *mgmt_ack,
 static void
 reader_thread(void *arg)
 {
-
 	char *buf;
 	int sfd, count;
 	kmutex_t *mtx;
@@ -311,6 +337,8 @@ reader_thread(void *arg)
 	zvol_io_hdr_t *hdr;
 	struct zvol_io_rw_hdr read_hdr;
 	worker_args_t *warg = (worker_args_t *)arg;
+	boolean_t snapcreate = FALSE;
+	int check = 0;
 
 	mtx = warg->mtx;
 	cv = warg->cv;
@@ -326,19 +354,64 @@ reader_thread(void *arg)
 		    sync_ack_cnt) {
 			break;
 		}
-		count = read(sfd, (void *)hdr, sizeof (zvol_io_hdr_t));
-		if (count == -1) {
-			printf("Read error reader_thread\n");
-			break;
+
+		if (!create_snapshot &&
+		    !warg->rebuild_test && (warg->zv != NULL)) {
+			switch (warg->max_iops - write_ack_cnt) {
+				case 3:
+					if (!check) {
+						check = 1;
+						create_snapshot = TRUE;
+					}
+					break;
+				case 2:
+					if (check == 1) {
+						uzfs_test_create_snapshot(
+						    warg->sfd[1],
+						    (char *)warg->zv,
+						    IO_DIFF_SNAPNAME, 0);
+						write_ack_cnt -= 4;
+						snapcreate = TRUE;
+						check = 2;
+					}
+					break;
+				case 1:
+					create_snapshot = TRUE;
+					break;
+			}
+		}
+
+		if (snapcreate) {
+			count = read(warg->sfd[1], (void *)hdr,
+			    sizeof (zvol_io_hdr_t));
+			if (count == -1) {
+				printf("Read error reader_thread\n");
+				break;
+			}
+		} else {
+			count = read(sfd, (void *)hdr, sizeof (zvol_io_hdr_t));
+			if (count == -1) {
+				printf("Read error reader_thread\n");
+				break;
+			}
+		}
+
+		if (hdr->opcode == ZVOL_OPCODE_SNAP_CREATE) {
+			write_ack_cnt += 4;
+			create_snapshot = TRUE;
+			snapcreate = FALSE;
+			continue;
 		}
 
 		if (hdr->opcode == ZVOL_OPCODE_SYNC) {
+			printf("sync ack\n");
 			sync_ack_cnt++;
 			continue;
 		}
 
 		if (hdr->opcode == ZVOL_OPCODE_WRITE) {
-			write_ack_cnt++;
+			if (hdr->io_seq <= warg->max_iops)
+				write_ack_cnt++;
 			bzero(hdr, sizeof (zvol_io_hdr_t));
 			continue;
 		}
@@ -366,10 +439,10 @@ reader_thread(void *arg)
 				nbytes -= count;
 			}
 
-			if (zrepl_verify_data(buf, warg->io_block_size) == -1) {
-				printf("Read :%d bytes data\n", count);
-				printf("Data mismatch\n");
-			}
+			if (zrepl_verify_data(buf, hdr->offset,
+			    warg->io_block_size) == -1)
+				printf("data mismatch bytes(%d) data at "
+				    "offset:%lu\n", count, hdr->offset);
 		}
 
 		bzero(hdr, sizeof (zvol_io_hdr_t));
@@ -386,6 +459,180 @@ reader_thread(void *arg)
 	cv_signal(cv);
 	mutex_exit(mtx);
 	zk_thread_exit();
+}
+
+static void
+uzfs_test_create_snapshot(int sfd, char *zv_name, char *snapname,
+    uint64_t ioseq)
+{
+	char *snap, *p;
+	zvol_io_hdr_t hdr;
+	uint64_t len;
+	int bytes, count;
+
+	snap = kmem_asprintf("%s@%s%lu", zv_name, snapname, ioseq);
+	len = strlen(snap) + 1;
+
+	hdr.version = REPLICA_VERSION;
+	hdr.opcode = ZVOL_OPCODE_SNAP_CREATE;
+	hdr.io_seq = ioseq;
+	hdr.len = len;
+
+	bytes = sizeof (zvol_io_hdr_t);
+	p = (char *)&hdr;
+	while (bytes) {
+		count = write(sfd, (void *)p, bytes);
+		if (count == -1) {
+			printf("Write error\n");
+			break;
+		}
+		bytes -= count;
+		p += count;
+	}
+
+	bytes = len;
+	p = snap;
+	while (bytes) {
+		count = write(sfd, (void *)p, bytes);
+		if (count == -1) {
+			printf("Write error\n");
+			break;
+		}
+		bytes -= count;
+		p += count;
+	}
+	strfree(snap);
+}
+
+static void
+uzfs_send_random_writes(int fd1, int fd2, uint64_t running_ioseq,
+    uint64_t block_size, uint64_t start_block, uint64_t last_block)
+{
+	uint64_t w_count, ioseq, bytes;
+	int32_t write_blk;
+	ssize_t count;
+	char *p;
+	struct data_io *io;
+
+	w_count = (last_block - start_block) / 4;
+	ASSERT(w_count > 2);
+	ASSERT(running_ioseq > (w_count / 2));
+
+	ioseq = running_ioseq;
+
+	while (w_count && (start_block < last_block)) {
+		if (ioseq % 2) {
+			write_blk = 1;
+		} else {
+			write_blk = 2 + uzfs_random(2);
+		}
+
+		if ((start_block + write_blk) > last_block)
+			break;
+
+		ioseq++;
+
+		if (!(ioseq % 2)) {
+			start_block += write_blk;
+			continue;
+		}
+
+		io = kmem_zalloc((sizeof (struct data_io) +
+		    block_size * write_blk), KM_SLEEP);
+		populate(io->buf, block_size * write_blk);
+		io->hdr.version = REPLICA_VERSION;
+		io->hdr.opcode = ZVOL_OPCODE_WRITE;
+		io->hdr.io_seq = ioseq;
+		io->hdr.len = sizeof (struct zvol_io_rw_hdr) +
+		    block_size * write_blk;
+		io->hdr.offset = start_block * block_size;
+		io->rw_hdr.len = block_size * write_blk;
+		io->rw_hdr.io_num = ioseq;
+
+		bytes = sizeof (struct data_io) + block_size * write_blk;
+		p = (char *)io;
+		while (bytes) {
+			count = write(fd1, (void *)p, bytes);
+			if (count == -1) {
+				printf("Write error\n");
+				break;
+			}
+			bytes -= count;
+			p += count;
+		}
+		bytes = sizeof (struct data_io) + block_size * write_blk;
+		p = (char *)io;
+		while (bytes) {
+			count = write(fd2, (void *)p, bytes);
+			if (count == -1) {
+				printf("Write error\n");
+				break;
+			}
+			bytes -= count;
+			p += count;
+		}
+
+		start_block += write_blk;
+		kmem_free(io, sizeof (struct data_io) + block_size * write_blk);
+		w_count--;
+	}
+}
+
+static void
+uzfs_send_unmap_req(int sfd, zvol_io_hdr_t *hdr, uint64_t running_ioseq,
+    uint64_t block_size, uint64_t start_block, uint64_t last_block)
+{
+	uint64_t unmap_count, ioseq, bytes;
+	int32_t write_blk;
+	ssize_t count;
+	char *p;
+
+	unmap_count = (last_block - start_block) / 4;
+	ASSERT(unmap_count > 2);
+	ASSERT(running_ioseq > (unmap_count / 2));
+
+	ioseq = running_ioseq;
+
+	hdr->opcode = ZVOL_OPCODE_UNMAP;
+
+	while (unmap_count && (start_block < last_block)) {
+		if (ioseq % 2)
+			write_blk = uzfs_random(4) + 1;
+		else
+			write_blk = 8;
+
+		if ((start_block + write_blk) > last_block)
+			break;
+
+		ioseq++;
+
+		if (!(ioseq % 2)) {
+			start_block += write_blk;
+			continue;
+		}
+
+		hdr->offset = start_block * block_size;
+		hdr->io_seq = ioseq;
+		hdr->len = write_blk * block_size;
+
+		bytes = sizeof (zvol_io_hdr_t);
+		p = (char *)hdr;
+		while (bytes) {
+			count = write(sfd, (void *)p, bytes);
+			if (count == -1) {
+				printf("Write error\n");
+				break;
+			}
+			bytes -= count;
+			p += count;
+		}
+		start_block += write_blk;
+
+		unmap_region[unmap_idx][0] = hdr->offset;
+		unmap_region[unmap_idx][1] = hdr->len;
+		unmap_idx++;
+		unmap_count--;
+	}
 }
 
 static void
@@ -418,14 +665,15 @@ writer_thread(void *arg)
 	while (i < warg->max_iops) {
 		io->hdr.version = REPLICA_VERSION;
 		io->hdr.opcode = ZVOL_OPCODE_WRITE;
-		io->hdr.checkpointed_io_seq = io->hdr.io_seq = i + 1;
+		io->hdr.checkpointed_io_seq = io->hdr.io_seq =
+		    (i > (warg->max_iops - 3)) ? 0 : i + 1;
 		io->hdr.len = sizeof (struct zvol_io_rw_hdr) +
 		    warg->io_block_size;
 		io->hdr.status = 0;
 		io->hdr.flags = 0;
-		io->hdr.offset = nbytes;
+		io->hdr.offset = (i > (warg->max_iops - 3)) ? 0 : nbytes;
 		io->rw_hdr.len = warg->io_block_size;
-		io->rw_hdr.io_num = i + 1;
+		io->rw_hdr.io_num = (i > (warg->max_iops - 3)) ? 0 : i + 1;
 
 		int bytes = sizeof (struct data_io) + warg->io_block_size;
 		char *p = (char *)io;
@@ -456,8 +704,39 @@ writer_thread(void *arg)
 		nbytes += warg->io_block_size;
 		i++;
 		last_io_seq_sent = io->hdr.checkpointed_io_seq;
-	}
 
+		if (warg->rebuild_test && (i == (warg->max_iops - 3))) {
+			/*
+			 * we are writing (warg->max_iops / 2) blocks in
+			 * both dataset. so we will try to trim data from
+			 * (warg->max_iops / (1/4)) block to
+			 * (warg->max_iops * (3/4)) block.
+			 */
+			while (!create_snapshot)
+				sleep(1);
+
+			uzfs_send_unmap_req(sfd, &io->hdr,
+			    warg->max_iops + 10000, warg->io_block_size,
+			    warg->max_iops/4, (3*warg->max_iops)/4);
+			create_snapshot = FALSE;
+		}
+
+		if (warg->rebuild_test && (i == (warg->max_iops - 2))) {
+			while (!create_snapshot)
+				sleep(1);
+
+			uzfs_send_random_writes(sfd, sfd1,
+			    warg->max_iops + unmap_idx + 1000000,
+			    warg->io_block_size, warg->max_iops/4,
+			    (3*warg->max_iops)/4);
+			create_snapshot = FALSE;
+		}
+
+		if (warg->rebuild_test && (i == (warg->max_iops - 1))) {
+			while (!create_snapshot)
+				sleep(1);
+		}
+	}
 	io->hdr.version = REPLICA_VERSION;
 	io->hdr.opcode = ZVOL_OPCODE_SYNC;
 	io->hdr.len = 0;
@@ -519,7 +798,6 @@ exit:
 static void
 replica_data_verify_thread(void *arg)
 {
-
 	int i = 0;
 	char *p;
 	char *buf1;
@@ -856,7 +1134,8 @@ zrepl_rebuild_test(void *arg)
 	mgmt_ack_t *mgmt_ack_ds2 = NULL;
 	mgmt_ack_t *mgmt_ack_ds3 = NULL;
 	zrepl_status_ack_t status_ack;
-	worker_args_t writer_args, reader_args[2];
+	worker_args_t writer_args, reader_args[2] = { {0}, {0}};
+	char dspath[256];
 
 	io_block_size = 4096;
 	active_size = 0;
@@ -872,9 +1151,11 @@ zrepl_rebuild_test(void *arg)
 	mutex_init(&mtx, NULL, MUTEX_DEFAULT, NULL);
 	cv_init(&cv, NULL, CV_DEFAULT, NULL);
 
+	snprintf(dspath, sizeof (dspath), "%s/%s", pool, ds);
 	writer_args.threads_done = &threads_done;
 	writer_args.mtx = &mtx;
 	writer_args.cv = &cv;
+	writer_args.zv = dspath;
 	writer_args.io_block_size = io_block_size;
 	writer_args.active_size = active_size;
 	writer_args.max_iops = max_iops;
@@ -883,6 +1164,7 @@ zrepl_rebuild_test(void *arg)
 	reader_args[0].threads_done = &threads_done;
 	reader_args[0].mtx = &mtx;
 	reader_args[0].cv = &cv;
+	reader_args[0].zv = dspath;
 	reader_args[0].io_block_size = io_block_size;
 	reader_args[0].active_size = active_size;
 	reader_args[0].max_iops = max_iops;
@@ -927,6 +1209,7 @@ zrepl_rebuild_test(void *arg)
 	}
 
 	writer_args.sfd[0] = reader_args[0].sfd[0] = ds0_io_sfd;
+	reader_args[0].sfd[1] = ds0_mgmt_fd;
 
 	/* Mgmt Handshake and IO-conn for replica ds1 */
 	ds1_io_sfd = zrepl_utest_mgmt_hs_io_conn(ds1, ds1_mgmt_fd);
@@ -1002,7 +1285,6 @@ check_status:
 		cv_wait(&cv, &mtx);
 	mutex_exit(&mtx);
 	num_threads = threads_done = 0;
-
 	/* Start rebuilding operation on ds1 from ds0 */
 
 	/*

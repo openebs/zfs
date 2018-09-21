@@ -83,8 +83,10 @@ typedef struct async_task {
 	boolean_t finished;	// async cmd has finished
 	zvol_info_t *zinfo;
 	zvol_io_hdr_t hdr;	// header of the incoming request
-	void *payload; // snapshot name
+	void *payload;		// snapshot name
+	void *response;		// response of async task
 	int payload_length;	// length of payload in bytes
+	int response_length;	// length of response data in bytes
 	int status;		// status which should be sent back
 } async_task_t;
 

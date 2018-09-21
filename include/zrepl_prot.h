@@ -73,6 +73,7 @@ enum zvol_op_code {
 	ZVOL_OPCODE_REBUILD_COMPLETE,
 	ZVOL_OPCODE_SNAP_CREATE,
 	ZVOL_OPCODE_SNAP_DESTROY,
+	ZVOL_OPCODE_SNAP_LIST,
 	ZVOL_OPCODE_RESIZE,
 	ZVOL_OPCODE_STATS,
 } __attribute__((packed));
@@ -199,6 +200,18 @@ struct zvol_io_rw_hdr {
 	uint64_t	io_num;
 	uint64_t	len;
 } __attribute__((packed));
+
+struct zvol_snapshot_list {
+	uint64_t zvol_guid;	/* Replica identity */
+	uint64_t data_len;	/* SNAP_LIST response data length */
+
+	/*
+	 * Error code, if any error happened while
+	 * executing SNAP_LIST opcode at replica
+	 */
+	int error;
+	char data[0];		/* SNAP_LIST response data */
+};
 
 #define	SLIST_FOREACH_SAFE(var, head, field, tvar)			\
 	for ((var) = SLIST_FIRST((head));				\

@@ -1214,7 +1214,7 @@ read_socket:
 				sleep(5);
 #endif
 			rc = uzfs_get_io_diff(zinfo->main_zv, &metadata,
-			    &snap_zv, uzfs_zvol_rebuild_scanner_callback,
+			    snap_zv, uzfs_zvol_rebuild_scanner_callback,
 			    rebuild_req_offset, rebuild_req_len, &warg);
 			if (rc != 0) {
 				LOG_ERR("Rebuild scanning failed on zvol %s ",

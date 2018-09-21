@@ -71,7 +71,7 @@ iszero(blk_metadata_t *md)
 		} while (0)
 
 int
-uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *low, zvol_state_t **snap,
+uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *low, zvol_state_t *snap,
     uzfs_get_io_diff_cb_t *func, off_t lun_offset, size_t lun_len, void *arg)
 {
 	uint64_t blocksize = zv->zv_volmetablocksize;
@@ -98,7 +98,7 @@ uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *low, zvol_state_t **snap,
 
 	if (end > metaobjectsize)
 		end = metaobjectsize;
-	if (*snap == NULL) {
+	if (snap == NULL) {
 		snap_name = kmem_asprintf("%s%llu", IO_DIFF_SNAPNAME,
 		    low->io_num);
 		ret = get_snapshot_zv(zv, snap_name, &snap_zv);
@@ -109,7 +109,7 @@ uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *low, zvol_state_t **snap,
 			return (ret);
 		}
 	} else {
-		snap_zv = *snap;
+		snap_zv = snap;
 	}
 
 	metadata_read_chunk_size = (metadata_read_chunk_size / metadatasize) *
@@ -188,7 +188,7 @@ uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *low, zvol_state_t **snap,
 		}
 	}
 
-	if (*snap == NULL) {
+	if (snap == NULL) {
 		uzfs_close_dataset(snap_zv);
 
 		/*

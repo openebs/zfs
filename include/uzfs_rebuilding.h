@@ -42,7 +42,7 @@ int compare_blk_metadata(blk_metadata_t *first_md, blk_metadata_t *second_md);
  * API to access data whose metadata is higer than base_metadata
  */
 int uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *base_metadata,
-    zvol_state_t **snap_zv, uzfs_get_io_diff_cb_t *cb_func,
+    zvol_state_t *snap_zv, uzfs_get_io_diff_cb_t *cb_func,
     off_t offset, size_t len, void *arg);
 
 /*

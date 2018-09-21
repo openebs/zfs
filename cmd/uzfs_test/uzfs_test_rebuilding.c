@@ -252,7 +252,7 @@ fetch_modified_data(void *arg)
 		if (end > r_data->zvol->zv_volsize)
 			len = r_data->zvol->zv_volsize - offset;
 
-		err = uzfs_get_io_diff(repl_data->zvol, &md, &snap_zv,
+		err = uzfs_get_io_diff(repl_data->zvol, &md, snap_zv,
 		    uzfs_test_meta_diff_traverse_cb, offset, len,
 		    r_data);
 		if (err)

@@ -143,6 +143,19 @@ uzfs_mock_rebuild_scanner_read_rebuild_step(int fd, zvol_io_hdr_t *hdrp)
 }
 
 void
+uzfs_mock_rebuild_scanner_write_snap_done(int fd, zvol_io_hdr_t *hdrp)
+{
+	int rc = 0;
+	hdrp->opcode = ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE;
+	hdrp->status = ZVOL_OP_STATUS_OK;
+	hdrp->version = REPLICA_VERSION;
+
+	/* Write ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE */
+	rc = uzfs_zvol_socket_write(fd, (char *)hdrp, sizeof (*hdrp));
+	EXPECT_NE(rc, -1);
+}
+
+void
 uzfs_mock_rebuild_scanner_abrupt_conn_close(void *arg)
 {
 	int fd = (int)(uintptr_t)arg;
@@ -282,6 +295,20 @@ uzfs_mock_rebuild_scanner_rebuild_comp(void *arg)
 	/* Read ZVOL_OPCODE_REBUILD_STEP */
 	uzfs_mock_rebuild_scanner_read_rebuild_step(fd, &hdr);
 
+	/* Write ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE */
+	uzfs_mock_rebuild_scanner_write_snap_done(fd, &hdr);
+
+	/* Read ZVOL_OPCODE_REBUILD_STEP */
+	uzfs_mock_rebuild_scanner_read_rebuild_step(fd, &hdr);
+
+	while (1) {
+		if (ZVOL_REBUILDING_AFS !=
+		    uzfs_zvol_get_rebuild_status(zinfo->main_zv))
+			sleep(1);
+		else
+			break;
+	}
+
 	hdr.opcode = ZVOL_OPCODE_READ;
 	hdr.flags = ZVOL_OP_FLAG_REBUILD;
 	hdr.status = ZVOL_OP_STATUS_OK;
@@ -300,14 +327,9 @@ uzfs_mock_rebuild_scanner_rebuild_comp(void *arg)
 	io_hdr->io_num = 1000;
 	io_hdr->len = 512;
 
-	rc = uzfs_zvol_socket_write(fd, (char *)buf, 100);
+	rc = uzfs_zvol_socket_write(fd, (char *)buf, hdr.len);
 	EXPECT_NE(rc, -1);
 
-	rc = uzfs_zvol_socket_write(fd, (char *)buf + 100, 100);
-	EXPECT_NE(rc, -1);
-
-	rc = uzfs_zvol_socket_write(fd, (char *)buf + 200, hdr.len - 200);
-	EXPECT_NE(rc, -1);
 	/* check for write cnt */
 	while (1) {
 		if (zinfo->write_req_received_cnt != (cnt + 1))

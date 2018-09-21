@@ -145,6 +145,8 @@ main(int argc, char **argv)
 	io_receiver = uzfs_zvol_io_receiver;
 	rebuild_scanner = uzfs_zvol_rebuild_scanner;
 
+	SLIST_INIT(&uzfs_mgmt_conns);
+
 	rc = uzfs_init();
 	if (rc != 0) {
 		LOG_ERR("initialization errored: %d", rc);

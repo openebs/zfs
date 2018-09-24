@@ -51,7 +51,8 @@ check_if_unmapped(uint64_t offset, uint64_t len)
 {
 	int i = 0;
 
-	ASSERT(unmap_idx);
+	if (!unmap_idx)
+		return (FALSE);
 
 	for (i = 0; i < unmap_idx; i++) {
 		if (unmap_region[i][0] <= offset &&

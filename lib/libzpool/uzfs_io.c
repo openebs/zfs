@@ -271,6 +271,7 @@ uzfs_read_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 	metadata_desc_t *md_ent = NULL;
 	blk_metadata_t *metadata;
 	int nmetas;
+	int dmu_read_flag = 0;
 
 	/*
 	 * If trying IO on fresh zvol before metadata granularity is set return
@@ -301,6 +302,10 @@ uzfs_read_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 	if (len_in_first_aligned_block > len)
 		len_in_first_aligned_block = len;
 
+#ifdef	_UZFS
+	dmu_read_flag = DMU_READ_CHECK_HOLE;
+#endif
+
 	rl = zfs_range_lock(&zv->zv_range_lock, offset, len, RL_READER);
 
 	while ((offset < end) && (offset < volsize)) {
@@ -315,7 +320,7 @@ uzfs_read_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 			bytes = volsize - offset;
 
 		error = dmu_read(os, ZVOL_OBJ, offset, bytes,
-		    buf + read, DMU_READ_CHECK_HOLE);
+		    buf + read, dmu_read_flag);
 		if (error != 0) {
 			if (data_err) {
 				*data_err = error;
@@ -331,7 +336,7 @@ uzfs_read_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 			metadata = kmem_alloc(metablk.m_len, KM_SLEEP);
 			error = dmu_read(os, ZVOL_META_OBJ,
 			    metablk.m_offset, metablk.m_len, metadata,
-			    DMU_READ_CHECK_HOLE);
+			    dmu_read_flag);
 			if (error != 0) {
 				if (md_err) {
 					*md_err = error;

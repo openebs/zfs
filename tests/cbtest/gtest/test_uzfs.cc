@@ -297,10 +297,6 @@ uzfs_mock_rebuild_scanner_rebuild_comp(void *arg)
 
 	/* Write ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE */
 	uzfs_mock_rebuild_scanner_write_snap_done(fd, &hdr);
-
-	/* Read ZVOL_OPCODE_REBUILD_STEP */
-	uzfs_mock_rebuild_scanner_read_rebuild_step(fd, &hdr);
-
 	while (1) {
 		if (ZVOL_REBUILDING_AFS !=
 		    uzfs_zvol_get_rebuild_status(zinfo->main_zv))
@@ -466,18 +462,14 @@ uzfs_mock_rebuild_scanner_snap_rebuild_related(void *arg)
 
 	/* Send opcode ALL_SNAP_DONE */
 	if (rebuild_test_case == 13) {
-		hdr.opcode = ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE;
-		hdr.status = ZVOL_OP_STATUS_OK;
-		rc = uzfs_zvol_socket_write(fd, (char *)&hdr, sizeof(hdr));
-		EXPECT_NE(rc, -1);
-	
-		rc = uzfs_zvol_socket_read(fd, (char *)&hdr, sizeof (hdr));
-		EXPECT_NE(rc, -1);
-		EXPECT_EQ(hdr.opcode, ZVOL_OPCODE_REBUILD_STEP);
-		EXPECT_EQ(hdr.status, ZVOL_OP_STATUS_OK);
-		EXPECT_EQ(hdr.len, zvol_rebuild_step_size);
-		EXPECT_EQ(hdr.io_seq, 9999);
-		EXPECT_EQ(hdr.offset, 0);
+		uzfs_mock_rebuild_scanner_write_snap_done(fd, &hdr);
+		while (1) {
+			if (ZVOL_REBUILDING_AFS !=
+			    uzfs_zvol_get_rebuild_status(zinfo->main_zv))
+				sleep(1);
+			else
+				break;
+		}
 	}
 
 exit:
@@ -1322,12 +1314,8 @@ next_step:
 			goto exit;
 		}
 	} else if ((rebuild_test_case == 7) || (rebuild_test_case == 8) || (rebuild_test_case == 9)) {
-		/*
-		 * Set offline state on vol3
-		 */
 #if DEBUG
-		if ((rebuild_test_case == 7) || (rebuild_test_case == 8))
-			inject_error.delay.helping_replica_rebuild_step = 1;
+		inject_error.delay.helping_replica_rebuild_step = 1;
 #endif
 		rc = uzfs_zvol_socket_write(sfd, (char *)&hdr, sizeof (hdr));
 		if (rc != 0) {
@@ -1352,7 +1340,9 @@ next_step:
 
 		if ((rebuild_test_case == 7) || (rebuild_test_case == 8) || (rebuild_test_case == 9))
 		{
-			sleep(1);
+			/*
+			 * Set offline state on vol3
+			 */
 			if (rebuild_test_case == 7)
 				zinfo2->state = ZVOL_INFO_STATE_OFFLINE;
 			else if (rebuild_test_case == 8)

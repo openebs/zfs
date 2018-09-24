@@ -571,18 +571,6 @@ next_step:
 		offset = 0;
 		checkpointed_ionum = uzfs_zvol_get_last_committed_io_no(
 		    zinfo->main_zv, HEALTHY_IO_SEQNUM);
-	} else if (hdr.opcode == ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE) {
-		/* All snapshots has been transferred */
-		all_snap_done = B_TRUE;
-		/*
-		 * Change rebuild state to mark that all
-		 * snapshots has been transferred now
-		 */
-		uzfs_zvol_set_rebuild_status(zinfo->main_zv,
-		    ZVOL_REBUILDING_AFS);
-		offset = 0;
-		checkpointed_ionum = uzfs_zvol_get_last_committed_io_no(
-		    zinfo->main_zv, HEALTHY_IO_SEQNUM);
 	}
 
 	if (offset >= ZVOL_VOLUME_SIZE(zvol_state)) {
@@ -643,9 +631,20 @@ next_step:
 			goto next_step;
 		}
 
-		if ((hdr.opcode == ZVOL_OPCODE_REBUILD_SNAP_DONE) ||
-		    (hdr.opcode == ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE))
+		if (hdr.opcode == ZVOL_OPCODE_REBUILD_SNAP_DONE)
 			goto next_step;
+
+		if (hdr.opcode == ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE) {
+			/* All snapshots has been transferred */
+			all_snap_done = B_TRUE;
+			/*
+			 * Change rebuild state to mark that all
+			 * snapshots has been transferred now
+			 */
+			uzfs_zvol_set_rebuild_status(zinfo->main_zv,
+			    ZVOL_REBUILDING_AFS);
+			continue;
+		}
 		ASSERT((hdr.opcode == ZVOL_OPCODE_READ) &&
 		    (hdr.flags & ZVOL_OP_FLAG_REBUILD));
 		hdr.opcode = ZVOL_OPCODE_WRITE;
@@ -1259,7 +1258,6 @@ read_socket:
 				    ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE,
 				    fd, NULL, 0, checkpointed_io_seq);
 				all_snap_done = B_TRUE;
-				goto read_socket;
 			}
 
 			rc = uzfs_get_io_diff(zinfo->main_zv, &metadata,

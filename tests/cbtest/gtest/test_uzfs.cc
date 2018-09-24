@@ -417,13 +417,15 @@ uzfs_mock_rebuild_scanner_snap_rebuild_related(void *arg)
 		if (rebuild_test_case == 8)
 			hdr.len = 0;
 	
-		/* Send zero hdr.len for negative case */
+		/* Send hdr.len more than expected */
 		if (rebuild_test_case == 9)
 			hdr.len = MAX_NAME_LEN + 20;
 		
 		/* Wrong snapshot name */
-		if (rebuild_test_case == 10)
+		if (rebuild_test_case == 10) {
 			buf[strlen(zinfo->name)] = '\0';
+			hdr.len = strlen(buf) + 1;
+		}
 	
 		if (rebuild_test_case == 11) {
 			strncpy(buf, "hello", MAXNAMELEN);
@@ -437,6 +439,17 @@ uzfs_mock_rebuild_scanner_snap_rebuild_related(void *arg)
 		 */
 		rc = uzfs_zvol_socket_write(fd, (char *)&hdr, sizeof(hdr));
 		EXPECT_NE(rc, -1);
+		if ((rebuild_test_case == 8) ||
+		    (rebuild_test_case == 9)) {
+			free(buf);
+			while (1) {
+				if (ZVOL_REBUILDING_FAILED !=
+				    uzfs_zvol_get_rebuild_status(zinfo->main_zv))
+					sleep(1);
+				else
+					goto exit;
+			}
+		}
 		rc = uzfs_zvol_socket_write(fd, buf, hdr.len);
 		EXPECT_NE(rc, -1);
 		free(buf);
@@ -446,8 +459,7 @@ uzfs_mock_rebuild_scanner_snap_rebuild_related(void *arg)
 		 * should be one less than snapshot io_seq
 		 */
 		rc = uzfs_zvol_socket_read(fd, (char *)&hdr, sizeof (hdr));
-		if ((rebuild_test_case >= 8) &&
-		    (rebuild_test_case <= 11)) {
+		if ((rebuild_test_case == 10) || (rebuild_test_case == 11)) {
 			EXPECT_EQ(rc, -1);
 			goto exit;
 		}

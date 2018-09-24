@@ -658,10 +658,15 @@ next_step:
 				rc = -1;
 				goto exit;
 			}
-			ASSERT(uzfs_zvol_get_rebuild_status(zinfo->main_zv) ==
-			    ZVOL_REBUILDING_SNAP);
-			uzfs_zvol_set_rebuild_status(zinfo->main_zv,
-			    ZVOL_REBUILDING_AFS);
+
+			/*
+			 * Multiple rebuild ops going on in parallel,
+			 * one of them might have changed rebuild state
+			 */
+			if (uzfs_zvol_get_rebuild_status(zinfo->main_zv) !=
+			    ZVOL_REBUILDING_AFS)
+				uzfs_zvol_set_rebuild_status(zinfo->main_zv,
+				    ZVOL_REBUILDING_AFS);
 			mutex_exit(&zinfo->main_zv->rebuild_mtx);
 			continue;
 		}

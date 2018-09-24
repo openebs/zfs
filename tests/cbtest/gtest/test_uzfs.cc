@@ -403,6 +403,9 @@ uzfs_mock_rebuild_scanner_snap_rebuild_related(void *arg)
 
 	/* Send snap_done opcode */
 	if ((rebuild_test_case >= 8) && (rebuild_test_case <= 12)) {
+#ifdef DEBUG
+		inject_error.delay.downgraded_replica_rebuild_size_set = 1;
+#endif
 		hdr.opcode = ZVOL_OPCODE_REBUILD_SNAP_DONE;
 		hdr.status = ZVOL_OP_STATUS_OK;
 		buf = (char *)malloc(MAX_NAME_LEN + 1);
@@ -453,7 +456,6 @@ uzfs_mock_rebuild_scanner_snap_rebuild_related(void *arg)
 		rc = uzfs_zvol_socket_write(fd, buf, hdr.len);
 		EXPECT_NE(rc, -1);
 		free(buf);
-
 		/*
 		 * Read REBUILD_STEP, checkpoint_io_seq
 		 * should be one less than snapshot io_seq
@@ -483,6 +485,9 @@ uzfs_mock_rebuild_scanner_snap_rebuild_related(void *arg)
 				break;
 		}
 	}
+#ifdef DEBUG
+	inject_error.delay.downgraded_replica_rebuild_size_set = 0;
+#endif
 
 exit:
 	shutdown(fd, SHUT_RDWR);

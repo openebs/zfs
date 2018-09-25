@@ -696,6 +696,11 @@ uzfs_zvol_fetch_snapshot_list(zvol_info_t *zinfo, void **buf,
 			goto out;
 		}
 
+		if (internal_snapshot(snapname)) {
+			dsl_pool_config_exit(dmu_objset_pool(os), FTAG);
+			continue;
+		}
+
 		error = dsl_dataset_hold_obj(dp, id, FTAG, &ds);
 		if (error == 0) {
 			error = dmu_objset_from_ds(ds, &snap_os);
@@ -711,14 +716,6 @@ uzfs_zvol_fetch_snapshot_list(zvol_info_t *zinfo, void **buf,
 			dsl_dataset_rele(ds, FTAG);
 		}
 		dsl_pool_config_exit(dmu_objset_pool(os), FTAG);
-
-		if (strcmp(snapname, REBUILD_SNAPSHOT_SNAPNAME) == 0 ||
-		    strncmp(snapname, IO_DIFF_SNAPNAME,
-		    sizeof (IO_DIFF_SNAPNAME)) == 0) {
-			if (!prop_error)
-				nvlist_free(nv);
-			continue;
-		}
 
 		jobj = json_object_new_object();
 		json_object_object_add(jobj, "name",
@@ -872,10 +869,8 @@ uzfs_get_snap_zv_ionum(zvol_info_t *zinfo, uint64_t ionum,
 				error = 0;
 			break;
 		}
-
 		if (internal_snapshot(snapname))
 			continue;
-
 		error = get_snapshot_zv(zv, snapname, &snap_zv);
 		if (error)
 			break;

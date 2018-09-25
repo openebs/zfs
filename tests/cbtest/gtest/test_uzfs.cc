@@ -887,10 +887,22 @@ TEST(SnapCreate, SnapCreateSuccess) {
 	EXPECT_EQ(999, ionum);
 
 	EXPECT_EQ(0, uzfs_zvol_create_snapshot_update_zap(zinfo,
+	    (char *)REBUILD_SNAPSHOT_SNAPNAME, 1800));
+	EXPECT_EQ(0, uzfs_zvol_get_last_committed_io_no(zinfo->main_zv,
+	    (char *)HEALTHY_IO_SEQNUM, &ionum));
+	EXPECT_EQ(1799, ionum);
+
+	EXPECT_EQ(0, uzfs_zvol_create_snapshot_update_zap(zinfo,
 	    snapname1, 2000));
 	EXPECT_EQ(0, uzfs_zvol_get_last_committed_io_no(zinfo->main_zv,
 	    (char *)HEALTHY_IO_SEQNUM, &ionum));
 	EXPECT_EQ(1999, ionum);
+
+	EXPECT_EQ(0, uzfs_zvol_create_snapshot_update_zap(zinfo,
+	    (char *)".io_snap100", 2800));
+	EXPECT_EQ(0, uzfs_zvol_get_last_committed_io_no(zinfo->main_zv,
+	    (char *)HEALTHY_IO_SEQNUM, &ionum));
+	EXPECT_EQ(2799, ionum);
 
 	EXPECT_EQ(0, uzfs_zvol_create_snapshot_update_zap(zinfo,
 	    snapname2, 3000));
@@ -908,6 +920,11 @@ TEST(SnapCreate, SnapCreateSuccess) {
 TEST(GetSnapFromIO, GetDestroySnap) {
 	zvol_state_t *zv;
 	int ret;
+
+	EXPECT_EQ(0, uzfs_get_snap_zv_ionum(zinfo, 1698, &zv));
+	ret = strcmp(zv->zv_name, "pool1/vol1@snapa");
+	EXPECT_EQ(ret, 0);
+	uzfs_close_dataset(zv);
 
 	EXPECT_EQ(0, uzfs_get_snap_zv_ionum(zinfo, 1998, &zv));
 	ret = strcmp(zv->zv_name, "pool1/vol1@snapa");

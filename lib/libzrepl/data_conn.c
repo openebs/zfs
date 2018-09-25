@@ -527,7 +527,8 @@ uzfs_zvol_rebuild_dw_replica(void *arg)
 	rc = uzfs_zvol_get_last_committed_io_no(
 	    zinfo->main_zv, HEALTHY_IO_SEQNUM, &checkpointed_ionum);
 	if (rc != 0) {
-		LOG_ERR("unable to get checkpointed num");
+		LOG_ERR("Unable to get checkpointed num on zvol:%s",
+		    zinfo->name);
 		goto exit;
 	}
 
@@ -574,8 +575,13 @@ next_step:
 			goto exit;
 		}
 		offset = 0;
-		checkpointed_ionum = uzfs_zvol_get_last_committed_io_no(
-		    zinfo->main_zv, HEALTHY_IO_SEQNUM);
+		rc = uzfs_zvol_get_last_committed_io_no(zinfo->main_zv,
+		    HEALTHY_IO_SEQNUM, &checkpointed_ionum);
+		if (rc != 0) {
+			LOG_ERR("Unable to get checkpointed num on zvol:%s",
+			    zinfo->name);
+			goto exit;
+		}
 	}
 
 	if (offset >= ZVOL_VOLUME_SIZE(zvol_state)) {
@@ -1275,9 +1281,15 @@ read_socket:
 			    == 1)
 				sleep(5);
 #endif
-			if (snap_zv == NULL)
-				snap_zv = uzfs_get_snap_zv_ionum(zinfo,
-				    hdr.checkpointed_io_seq);
+			if (snap_zv == NULL) {
+				rc = uzfs_get_snap_zv_ionum(zinfo,
+				    hdr.checkpointed_io_seq, &snap_zv);
+				if (rc != 0) {
+					LOG_ERR("Snap retrieve failed on zvol"
+					    " %s, err(%d)", zinfo->name, rc);
+					goto exit;
+				}
+			}
 
 			ASSERT((snap_zv == NULL) && (all_snap_done == B_FALSE));
 
@@ -1308,9 +1320,13 @@ read_socket:
 			 * internal snapshot, send snap_done opcode
 			 */
 			if (snap_zv != NULL) {
-				checkpointed_io_seq =
-				    uzfs_zvol_get_last_committed_io_no(snap_zv,
-				    HEALTHY_IO_SEQNUM);
+				rc = uzfs_zvol_get_last_committed_io_no(snap_zv,
+				    HEALTHY_IO_SEQNUM, &checkpointed_io_seq);
+				if (rc != 0) {
+					LOG_ERR("Unable to get checkpointed"
+					    " num on zvol:%s", zinfo->name);
+					goto exit;
+				}
 
 				payload_size = strlen(snap_zv->zv_name) + 1;
 				payload = (char *)malloc(payload_size);

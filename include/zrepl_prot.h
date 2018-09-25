@@ -98,7 +98,10 @@ struct zvol_io_hdr {
 	zvol_op_status_t status;
 	uint8_t 	flags;
 	uint8_t 	padding[3];
-	uint64_t	io_seq;
+	union {
+		uint64_t	io_seq;
+		uint64_t	checkpointed_io_seq;
+	};
 	/* only used for read/write */
 	uint64_t	offset;
 	/*

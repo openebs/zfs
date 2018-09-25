@@ -651,6 +651,17 @@ uzfs_append_snapshot_properties(nvlist_t *nv, struct json_object *robj,
 	}
 }
 
+/* Returns TRUE if given is name of internally created snapshot */
+static boolean_t
+internal_snapshot(char *snap)
+{
+	if ((strcmp(snap, REBUILD_SNAPSHOT_SNAPNAME) == 0) ||
+	    (strncmp(snap, IO_DIFF_SNAPNAME, sizeof (IO_DIFF_SNAPNAME) - 1)
+	    == 0))
+		return (B_TRUE);
+	return (B_FALSE);
+}
+
 static int
 uzfs_zvol_fetch_snapshot_list(zvol_info_t *zinfo, void **buf,
     size_t *buflen)
@@ -861,6 +872,10 @@ uzfs_get_snap_zv_ionum(zvol_info_t *zinfo, uint64_t ionum,
 				error = 0;
 			break;
 		}
+
+		if (internal_snapshot(snapname))
+			continue;
+
 		error = get_snapshot_zv(zv, snapname, &snap_zv);
 		if (error)
 			break;

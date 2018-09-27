@@ -99,7 +99,9 @@ struct zvol_io_hdr {
 	uint8_t 	flags;
 	uint8_t 	padding[3];
 	union {
+		/* IOnum as sent from target */
 		uint64_t	io_seq;
+		/* IOnum from which rebuild need to be done */
 		uint64_t	checkpointed_io_seq;
 	};
 	/* only used for read/write */
@@ -169,7 +171,6 @@ enum zvol_status {
 
 typedef enum zvol_status zvol_status_t;
 
-#define	ZVOL_IS_HEALTHY(zv) (zv->zv_status == ZVOL_STATUS_HEALTHY)
 struct zrepl_status_ack {
 	zvol_status_t state;
 	zvol_rebuild_status_t rebuild_status;

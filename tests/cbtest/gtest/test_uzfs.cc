@@ -52,6 +52,10 @@ zvol_state_t *zv2;
 zvol_info_t *zinfo;
 zvol_info_t *zinfo2;
 int rebuild_test_case = 0;
+
+/* This will be used to identify that clone rebuild thread is also done */
+int done_thread_count = 0;
+pthread_mutex_t done_thread_count_mtx = PTHREAD_MUTEX_INITIALIZER;
 int data_conn_fd = -1;
 
 extern void (*zinfo_create_hook)(zvol_info_t *, nvlist_t *);
@@ -285,6 +289,7 @@ uzfs_mock_rebuild_scanner_rebuild_comp(void *arg)
 	zvol_io_hdr_t hdr;
 	struct zvol_io_rw_hdr *io_hdr;
 	int fd = (int)(uintptr_t)arg;
+	int conn_fd;
 
 	/* Establish a connection with DW replica */
 	uzfs_mock_rebuild_scanner_setup_connection(fd);
@@ -296,13 +301,19 @@ uzfs_mock_rebuild_scanner_rebuild_comp(void *arg)
 	uzfs_mock_rebuild_scanner_read_rebuild_step(fd, &hdr);
 
 	/* Write ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE */
-	uzfs_mock_rebuild_scanner_write_snap_done(fd, &hdr);
-	while (1) {
-		if (ZVOL_REBUILDING_AFS !=
-		    uzfs_zvol_get_rebuild_status(zinfo->main_zv))
-			sleep(1);
-		else
-			break;
+	/* For testcase 6, data connection will be broken.
+	 * So, if ALL_SNAP_DONE is sent, socket error can come for
+	 * clone rebuild thread at any place. Instead, avoid sending
+	 * ALL_SNAP_DONE for testcase 6 */
+	if (rebuild_test_case != 6) {
+		uzfs_mock_rebuild_scanner_write_snap_done(fd, &hdr);
+		while (1) {
+			if (ZVOL_REBUILDING_AFS !=
+			    uzfs_zvol_get_rebuild_status(zinfo->main_zv))
+				sleep(1);
+			else
+				break;
+		}
 	}
 
 	hdr.opcode = ZVOL_OPCODE_READ;
@@ -325,14 +336,15 @@ uzfs_mock_rebuild_scanner_rebuild_comp(void *arg)
 
 	rc = uzfs_zvol_socket_write(fd, (char *)buf, hdr.len);
 	EXPECT_NE(rc, -1);
-
 	/* check for write cnt */
 	while (1) {
-		if (zinfo->write_req_received_cnt != (cnt + 1))
+		if ((zinfo->write_req_received_cnt != (cnt + 1)) &&
+		    (zinfo->write_req_received_cnt != (cnt + 2)))
 			sleep(1);
 		else
 			break;
 	}
+
 	free(buf);
 	
 	/* Write REBUILD_STEP_DONE */
@@ -341,9 +353,10 @@ uzfs_mock_rebuild_scanner_rebuild_comp(void *arg)
 	hdr.len = 0;
 	rc = uzfs_zvol_socket_write(fd, (char *)&hdr, sizeof(hdr));
 	EXPECT_NE(rc, -1);
-
 	if (rebuild_test_case == 6) {
-		close(data_conn_fd);
+		conn_fd = data_conn_fd;
+		data_conn_fd = -1;
+		close(conn_fd);
 		while (zinfo->is_io_receiver_created == B_TRUE)
 			sleep(2);
 		sleep(5);
@@ -380,9 +393,18 @@ uzfs_mock_rebuild_scanner_rebuild_comp(void *arg)
 exit:
 	shutdown(fd, SHUT_RDWR);
 	close(fd);
-	rebuild_test_case = 0;
+	pthread_mutex_lock(&done_thread_count_mtx);
+	done_thread_count++;
+	if (rebuild_test_case != 6) {
+		if (done_thread_count == 2)
+			rebuild_test_case = 0;
+	} else {
+		rebuild_test_case = 0;
+	}
+	pthread_mutex_unlock(&done_thread_count_mtx);
 	zk_thread_exit();
 }
+
 void
 uzfs_mock_rebuild_scanner_snap_rebuild_related(void *arg)
 {
@@ -478,8 +500,10 @@ uzfs_mock_rebuild_scanner_snap_rebuild_related(void *arg)
 	if (rebuild_test_case == 13) {
 		uzfs_mock_rebuild_scanner_write_snap_done(fd, &hdr);
 		while (1) {
-			if (ZVOL_REBUILDING_AFS !=
-			    uzfs_zvol_get_rebuild_status(zinfo->main_zv))
+			if ((ZVOL_REBUILDING_AFS !=
+			    uzfs_zvol_get_rebuild_status(zinfo->main_zv)) &&
+			    (ZVOL_REBUILDING_ERRORED !=
+			    uzfs_zvol_get_rebuild_status(zinfo->main_zv)))
 				sleep(1);
 			else
 				break;
@@ -493,7 +517,15 @@ exit:
 	shutdown(fd, SHUT_RDWR);
 	close(fd);
 
-	rebuild_test_case = 0;
+	pthread_mutex_lock(&done_thread_count_mtx);
+	done_thread_count++;
+	if (rebuild_test_case == 13) {
+		if (done_thread_count == 2)
+			rebuild_test_case = 0;
+	} else {
+		rebuild_test_case = 0;
+	}
+	pthread_mutex_unlock(&done_thread_count_mtx);
 
 	zk_thread_exit();
 }
@@ -1549,6 +1581,7 @@ void execute_rebuild_test_case(const char *s, int test_case,
 	kthread_t *thrd;
 	rebuild_thread_arg_t *rebuild_args;
 
+	done_thread_count = 0;
 	rebuild_test_case = test_case;
 	create_rebuild_args(&rebuild_args);
 	zinfo->main_zv->zv_status = ZVOL_STATUS_DEGRADED;
@@ -1563,7 +1596,7 @@ void execute_rebuild_test_case(const char *s, int test_case,
 
 	/* wait for rebuild thread to exit */
 	while (1) {
-		if (rebuild_test_case != 0)
+		if(rebuild_test_case != 0)
 			sleep(1);
 		else
 			break;

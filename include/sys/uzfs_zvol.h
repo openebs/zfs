@@ -82,6 +82,8 @@ struct zvol_state {
 	 * This should not be greater than volblocksize
 	 */
 	uint64_t zv_metavolblocksize;
+
+	/* Don't use status directly. Use getter/setter of zvol_info */
 	zvol_status_t zv_status;		/* zvol status */
 	kmutex_t rebuild_mtx;
 	zvol_rebuild_info_t rebuild_info;
@@ -94,7 +96,10 @@ typedef struct zvol_state zvol_state_t;
 #define	UZFS_IO_READ_FAIL	2
 #define	UZFS_IO_MREAD_FAIL	3
 
-#define	ZVOL_IS_DEGRADED(zv)	(zv->zv_status == ZVOL_STATUS_DEGRADED)
+#define	ZINFO_IS_DEGRADED(zinfo)	(ZVOL_IS_DEGRADED(zinfo->main_zv))
+#define	ZVOL_IS_DEGRADED(zv)		(zv->zv_status == ZVOL_STATUS_DEGRADED)
+#define	ZVOL_IS_HEALTHY(zv)		(zv->zv_status == ZVOL_STATUS_HEALTHY)
+
 #define	ZVOL_IS_REBUILDING(zv)		\
 	((zv->rebuild_info.zv_rebuild_status == ZVOL_REBUILDING_SNAP) || \
 	(zv->rebuild_info.zv_rebuild_status == ZVOL_REBUILDING_AFS))

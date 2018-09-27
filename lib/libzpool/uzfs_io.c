@@ -406,6 +406,7 @@ uzfs_zvol_get_status(zvol_state_t *zv)
 {
 	return (zv->zv_status);
 }
+
 void
 uzfs_zvol_set_rebuild_status(zvol_state_t *zv, zvol_rebuild_status_t status)
 {

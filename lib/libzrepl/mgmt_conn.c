@@ -451,7 +451,7 @@ uzfs_zvol_get_ip(char *host, size_t host_len)
 	return (rc);
 }
 
-static int
+int
 uzfs_zvol_mgmt_get_handshake_info(zvol_io_hdr_t *in_hdr, const char *name,
     zvol_info_t *zinfo, zvol_io_hdr_t *out_hdr, mgmt_ack_t *mgmt_ack)
 {
@@ -828,7 +828,7 @@ uzfs_zvol_create_snapshot_update_zap(zvol_info_t *zinfo,
 		return (ret = -1);
 	}
 
-	uzfs_zvol_store_last_committed_healthy_io_no(zinfo,
+	uzfs_zinfo_store_last_committed_healthy_io_no(zinfo,
 	    snapshot_io_num - 1);
 
 	ret = dmu_objset_snapshot_one(zinfo->name, snapname);
@@ -1061,13 +1061,12 @@ uzfs_zvol_dispatch_command(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
  * Starts rebuild thread to every helping replica
  */
 static int
-uzfs_zvol_rebuild_dw_replica_start(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
-    mgmt_ack_t *mack, zvol_info_t *zinfo, int rebuild_op_cnt)
+uzfs_zinfo_rebuild_start_threads(mgmt_ack_t *mack, zvol_info_t *zinfo,
+    int rebuild_op_cnt)
 {
 	int 			io_sfd = -1;
 	rebuild_thread_arg_t	*thrd_arg;
 	kthread_t		*thrd_info;
-
 	for (; rebuild_op_cnt > 0; rebuild_op_cnt--, mack++) {
 		LOG_INFO("zvol %s at %s:%u helping in rebuild",
 		    mack->volname, mack->ip, mack->port);
@@ -1096,9 +1095,7 @@ ret_error:
 				    ZVOL_REBUILDING_FAILED);
 
 			mutex_exit(&zinfo->main_zv->rebuild_mtx);
-			return (reply_nodata(conn,
-			    ZVOL_OP_STATUS_FAILED,
-			    hdrp->opcode, hdrp->io_seq));
+			return (-1);
 		}
 
 		io_sfd = create_and_bind("", B_FALSE, B_FALSE);
@@ -1123,9 +1120,51 @@ ret_error:
 		VERIFY3P(thrd_info, !=, NULL);
 	}
 
-	return (reply_nodata(conn,
-	    ZVOL_OP_STATUS_OK,
-	    hdrp->opcode, hdrp->io_seq));
+	return (0);
+}
+
+/*
+ * Calls API to start rebuild threads
+ */
+static int
+uzfs_zvol_rebuild_dw_replica_start(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
+    mgmt_ack_t *mack, zvol_info_t *zinfo, int rebuild_op_cnt)
+{
+	int rc;
+	rc = uzfs_zinfo_rebuild_start_threads(mack, zinfo, rebuild_op_cnt);
+	if (rc != 0)
+		return (reply_nodata(conn, ZVOL_OP_STATUS_FAILED, hdrp->opcode,
+		    hdrp->io_seq));
+	return (reply_nodata(conn, ZVOL_OP_STATUS_OK, hdrp->opcode,
+	    hdrp->io_seq));
+}
+
+/*
+ * This API starts thread to rebuild data from its clone to main vol.
+ * As rebuild_cnt is incremented in this fn, this need to be called from
+ * rebuilding thread of downgraded replica to make sure that done_cnt hadn't
+ * reached rebuild_cnt yet.
+ */
+int
+uzfs_zinfo_rebuild_from_clone(zvol_info_t *zinfo)
+{
+	mgmt_ack_t mack;
+	zvol_io_hdr_t in_hdr, out_hdr;
+	int rc;
+	in_hdr.opcode = ZVOL_OPCODE_PREPARE_FOR_REBUILD;
+	in_hdr.io_seq = 0;
+
+	rc = uzfs_zvol_mgmt_get_handshake_info(&in_hdr, zinfo->name, zinfo,
+	    &out_hdr, &mack);
+	if (rc != 0)
+		return (rc);
+	strcpy(mack.dw_volname, mack.volname);
+
+	mutex_enter(&zinfo->main_zv->rebuild_mtx);
+	zinfo->main_zv->rebuild_info.rebuild_cnt++;
+	mutex_exit(&zinfo->main_zv->rebuild_mtx);
+
+	return (uzfs_zinfo_rebuild_start_threads(&mack, zinfo, 1));
 }
 
 /*
@@ -1205,15 +1244,7 @@ handle_start_rebuild_req(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	    loop_cnt < rebuild_op_cnt; loop_cnt++, mack++)
 		if (max_ioseq < mack->checkpointed_io_seq)
 			max_ioseq = mack->checkpointed_io_seq;
-#if 0
-	mack = malloc(payload_size + sizeof (mgmt_ack_t));
-	memcpy(mack, payload, payload_size);
-	self_mack = (char *)mack + payload_size;
-	hdr1.opcode = ZVOL_OPCODE_PREPARE_FOR_REBUILD;
-	hdr1.io_seq = 0;
 
-	uzfs_zvol_mgmt_get_handshake_info(&hdr1, name, zinfo, &hdr2, self_mack);
-#endif
 	if ((zinfo->checkpointed_ionum < max_ioseq) &&
 	    (rebuild_op_cnt != 1)) {
 		mutex_exit(&zinfo->main_zv->rebuild_mtx);
@@ -1231,14 +1262,8 @@ handle_start_rebuild_req(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	memset(&zinfo->main_zv->rebuild_info, 0,
 	    sizeof (zvol_rebuild_info_t));
 	zinfo->quiesce_requested = zinfo->quiesce_done = 0;
-#if 0
-	if (zinfo->checkpointed_ionum >= max_ioseq)
-		uzfs_zvol_set_rebuild_status(zinfo->main_zv,
-		    ZVOL_REBUILDING_AFS);
-	else
-#endif
-		uzfs_zvol_set_rebuild_status(zinfo->main_zv,
-		    ZVOL_REBUILDING_SNAP);
+	uzfs_zvol_set_rebuild_status(zinfo->main_zv,
+	    ZVOL_REBUILDING_SNAP);
 
 	/* Track # of rebuilds we are initializing on replica */
 	zinfo->main_zv->rebuild_info.rebuild_cnt = rebuild_op_cnt;
@@ -1281,7 +1306,7 @@ process_message(uzfs_mgmt_conn_t *conn)
 	case ZVOL_OPCODE_PREPARE_FOR_REBUILD:
 	case ZVOL_OPCODE_REPLICA_STATUS:
 	case ZVOL_OPCODE_STATS:
-		if (payload_size == 0 || payload_size > MAX_NAME_LEN) {
+		if (payload_size == 0 || payload_size >= MAX_NAME_LEN) {
 			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
 			    hdrp->opcode, hdrp->io_seq);
 			break;
@@ -1405,7 +1430,8 @@ process_message(uzfs_mgmt_conn_t *conn)
 
 		/* ref will be released when async command has finished */
 		if ((zinfo = uzfs_zinfo_lookup(resize_data->volname)) == NULL) {
-			LOGERRCONN(conn, "Unknown zvol: %s", zvol_name);
+			LOGERRCONN(conn, "Unknown zvol: %s",
+			    resize_data->volname);
 			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
 			    hdrp->opcode, hdrp->io_seq);
 			break;
@@ -1413,7 +1439,7 @@ process_message(uzfs_mgmt_conn_t *conn)
 		if (zinfo->mgmt_conn != conn) {
 			uzfs_zinfo_drop_refcnt(zinfo);
 			LOGERRCONN(conn, "Target used invalid connection for "
-			    "zvol %s", zvol_name);
+			    "zvol %s", resize_data->volname);
 			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
 			    hdrp->opcode, hdrp->io_seq);
 			break;

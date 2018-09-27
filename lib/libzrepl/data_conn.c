@@ -356,7 +356,7 @@ uzfs_zvol_worker(void *arg)
 
 		case ZVOL_OPCODE_SYNC:
 			uzfs_flush_data(zinfo->main_zv);
-			if (zinfo->clone_zv)
+			if (!ZVOL_IS_HEALTHY(zinfo->main_zv))
 				uzfs_flush_data(zinfo->clone_zv);
 			atomic_inc_64(&zinfo->sync_req_received_cnt);
 			break;
@@ -494,6 +494,7 @@ uzfs_zvol_rebuild_dw_replica(void *arg)
 	rebuild_thread_arg_t *rebuild_args = arg;
 	struct sockaddr_in replica_ip;
 
+	int		start_rebuild_from_clone = 0;
 	int		rc = 0;
 	int		sfd = -1;
 	uint64_t	offset = 0;
@@ -618,7 +619,7 @@ next_step:
 		hdr.status = ZVOL_OP_STATUS_OK;
 		hdr.version = REPLICA_VERSION;
 		hdr.opcode = ZVOL_OPCODE_REBUILD_STEP;
-		hdr.io_seq = checkpointed_ionum;
+		hdr.checkpointed_io_seq = checkpointed_ionum;
 		hdr.offset = offset;
 		if ((offset + zvol_rebuild_step_size) >
 		    ZVOL_VOLUME_SIZE(zvol_state))
@@ -654,7 +655,8 @@ next_step:
 
 		if (hdr.opcode == ZVOL_OPCODE_REBUILD_STEP_DONE) {
 			offset += zvol_rebuild_step_size;
-			LOG_DEBUG("ZVOL_OPCODE_REBUILD_STEP_DONE received");
+			LOG_DEBUG("ZVOL_OPCODE_REBUILD_STEP_DONE received on "
+			    "fd: %d", sfd);
 			goto next_step;
 		}
 
@@ -662,6 +664,7 @@ next_step:
 			goto next_step;
 
 		if (hdr.opcode == ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE) {
+			LOG_DEBUG("Received ALL_SNAP_DONE on fd: %d", sfd);
 			/* All snapshots has been transferred */
 			all_snap_done = B_TRUE;
 			/*
@@ -679,10 +682,14 @@ next_step:
 			 * Multiple rebuild ops going on in parallel,
 			 * one of them might have changed rebuild state
 			 */
-			if (uzfs_zvol_get_rebuild_status(zinfo->main_zv) !=
-			    ZVOL_REBUILDING_AFS) {
+			zvol_rebuild_status_t state;
+			state = uzfs_zvol_get_rebuild_status(zinfo->main_zv);
+			if (state != ZVOL_REBUILDING_AFS) {
+				ASSERT(state == ZVOL_REBUILDING_SNAP);
 				uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 				    ZVOL_REBUILDING_AFS);
+				if (start_rebuild_from_clone == 0)
+					start_rebuild_from_clone = 1;
 				/*
 				 * Lets ask io_receiver thread to flush
 				 * all outstanding IOs in taskq
@@ -705,6 +712,19 @@ next_step:
 				}
 				else
 					sleep(1);
+			}
+
+			if (start_rebuild_from_clone == 1) {
+				start_rebuild_from_clone = 2;
+				rc = uzfs_zinfo_rebuild_from_clone(zinfo);
+				if (rc != 0) {
+					LOG_ERR("Rebuild from clone for vol %s "
+					    "failed", zinfo->name);
+					rc = -1;
+					goto exit;
+				}
+				LOG_INFO("Rebuild started from clone for vol "
+				    "%s", zinfo->name);
 			}
 			continue;
 		}
@@ -774,10 +794,10 @@ exit:
 }
 
 #define	STORE_LAST_COMMITTED_HEALTHY_IO_NO	\
-    uzfs_zvol_store_last_committed_healthy_io_no
+    uzfs_zinfo_store_last_committed_healthy_io_no
 
 #define	STORE_LAST_COMMITTED_DEGRADED_IO_NO	\
-    uzfs_zvol_store_last_committed_degraded_io_no
+    uzfs_zinfo_store_last_committed_degraded_io_no
 
 void
 uzfs_zvol_timer_thread(void)
@@ -1300,7 +1320,7 @@ read_socket:
 
 		case ZVOL_OPCODE_REBUILD_STEP:
 
-			metadata.io_num = hdr.io_seq;
+			metadata.io_num = hdr.checkpointed_io_seq;
 			rebuild_req_offset = hdr.offset;
 			rebuild_req_len = hdr.len;
 
@@ -1323,16 +1343,26 @@ read_socket:
 				}
 			}
 
-			ASSERT((snap_zv == NULL) && (all_snap_done == B_FALSE));
-
-			if ((snap_zv == NULL) && (all_snap_done == B_FALSE)) {
-				uzfs_zvol_send_zio_cmd(zinfo, &hdr,
-				    ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE,
-				    fd, NULL, 0, 0);
-				all_snap_done = B_TRUE;
+			zvol_state_t *zv = zinfo->main_zv;
+			if (snap_zv == NULL) {
+			/*
+			 * which means there is no user snapshot of given
+			 * io_num, but, TODO: we need to make sure that there
+			 * are no ongoing snapshots.
+			 */
+				if (all_snap_done == B_FALSE) {
+					uzfs_zvol_send_zio_cmd(zinfo, &hdr,
+					    ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE,
+					    fd, NULL, 0, 0);
+					all_snap_done = B_TRUE;
+				}
+				if (ZINFO_IS_DEGRADED(zinfo))
+					zv = zinfo->clone_zv;
+			} else {
+				ASSERT(all_snap_done == B_FALSE);
 			}
 
-			rc = uzfs_get_io_diff(zinfo->main_zv, &metadata,
+			rc = uzfs_get_io_diff(zv, &metadata,
 			    snap_zv, uzfs_zvol_rebuild_scanner_callback,
 			    rebuild_req_offset, rebuild_req_len, &warg);
 			if (rc != 0) {
@@ -1690,14 +1720,14 @@ open_zvol(int fd, zvol_info_t **zinfopp)
 	zv = zinfo->main_zv;
 	ASSERT3P(zv, !=, NULL);
 
-	ASSERT3P(zv->zv_status, ==, ZVOL_STATUS_DEGRADED);
+	ASSERT3P(uzfs_zinfo_get_status(zinfo), ==, ZVOL_STATUS_DEGRADED);
 	ASSERT3P(zv->rebuild_info.zv_rebuild_status, ==, ZVOL_REBUILDING_INIT);
 
-	if ((zv->zv_status != ZVOL_STATUS_DEGRADED) ||
+	if ((uzfs_zinfo_get_status(zinfo) != ZVOL_STATUS_DEGRADED) ||
 	    ((zv->rebuild_info.zv_rebuild_status != ZVOL_REBUILDING_INIT) &&
 	    (zv->rebuild_info.zv_rebuild_status != ZVOL_REBUILDING_FAILED))) {
 		LOG_ERR("as status for %s is %d or rebuild status is %d",
-		    open_data.volname, zv->zv_status,
+		    open_data.volname, uzfs_zinfo_get_status(zinfo),
 		    zv->rebuild_info.zv_rebuild_status);
 		hdr.status = ZVOL_OP_STATUS_FAILED;
 		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);

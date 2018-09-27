@@ -106,7 +106,7 @@ void zinfo_create_cb(zvol_info_t *zinfo, nvlist_t *create_props);
 void zinfo_destroy_cb(zvol_info_t *zinfo);
 void uzfs_zvol_mgmt_thread(void *arg);
 int finish_async_tasks(void);
-
+int uzfs_zinfo_rebuild_from_clone(zvol_info_t *zinfo);
 int uzfs_zvol_create_snapshot_update_zap(zvol_info_t *zinfo,
     char *snapname, uint64_t snapshot_io_num);
 int uzfs_get_snap_zv_ionum(zvol_info_t *, uint64_t, zvol_state_t **);

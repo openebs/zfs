@@ -355,7 +355,10 @@ uzfs_zvol_worker(void *arg)
 			break;
 
 		case ZVOL_OPCODE_SYNC:
-			uzfs_flush_data(zinfo->main_zv);
+			if (ZVOL_IS_HEALTHY(zinfo->main_zv) ||
+			    ZVOL_IS_REBUILDING_AFS(zinfo->main_zv)) {
+				uzfs_flush_data(zinfo->main_zv);
+			}
 			if (!ZVOL_IS_HEALTHY(zinfo->main_zv))
 				uzfs_flush_data(zinfo->clone_zv);
 			atomic_inc_64(&zinfo->sync_req_received_cnt);
@@ -763,6 +766,9 @@ exit:
 		LOG_ERR("uzfs_zvol_rebuild_dw_replica thread exiting, "
 		    "rebuilding failed zvol: %s", zinfo->name);
 	}
+
+	uint8_t quiesce_wait = 0;
+
 	(zinfo->main_zv->rebuild_info.rebuild_done_cnt) += 1;
 	if (zinfo->main_zv->rebuild_info.rebuild_cnt ==
 	    zinfo->main_zv->rebuild_info.rebuild_done_cnt) {
@@ -776,9 +782,35 @@ exit:
 			uzfs_zvol_set_status(zinfo->main_zv,
 			    ZVOL_STATUS_HEALTHY);
 			uzfs_update_ionum_interval(zinfo, 0);
+			/*
+			 * Lets ask io_receiver thread to flush
+			 * all outstanding IOs in taskq
+			 */
+			zinfo->quiesce_done = 0;
+			zinfo->quiesce_requested = 1;
+			quiesce_wait = 1;
 		}
 	}
 	mutex_exit(&zinfo->main_zv->rebuild_mtx);
+
+	/*
+	 * Wait for all outstanding IOs to be flushed
+	 * to disk before making further progress
+	 */
+	while (quiesce_wait) {
+		if (zinfo->quiesce_done ||
+		    !taskq_check_active_ios(
+		    zinfo->uzfs_zvol_taskq)) {
+			zinfo->quiesce_done = 1;
+			zinfo->quiesce_requested = 0;
+			break;
+		} else {
+			sleep(1);
+		}
+	}
+
+	uzfs_zvol_destroy_internal_clone(zinfo->main_zv,
+	    &zinfo->snap_zv, &zinfo->clone_zv);
 
 	kmem_free(arg, sizeof (rebuild_thread_arg_t));
 	if (zio_cmd != NULL)
@@ -1887,6 +1919,7 @@ uzfs_zvol_io_receiver(void *arg)
 			zio_cmd_free(&zio_cmd);
 			break;
 		}
+
 		/* Take refcount for uzfs_zvol_worker to work on it */
 		uzfs_zinfo_take_refcnt(zinfo);
 		zio_cmd->zinfo = zinfo;

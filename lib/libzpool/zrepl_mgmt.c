@@ -218,6 +218,8 @@ uzfs_mark_offline_and_free_zinfo(zvol_info_t *zinfo)
 		    " zero on zvol:%s", zinfo->name);
 		sleep(5);
 	}
+	(void) uzfs_zvol_release_internal_clone(
+	    zinfo->main_zv, &zinfo->snap_zv, &zinfo->clone_zv);
 
 	LOG_INFO("Freeing zvol %s", zinfo->name);
 	(void) uzfs_zinfo_free(zinfo);
@@ -302,8 +304,6 @@ uzfs_zinfo_destroy(const char *name, spa_t *spa)
 	zvol_info_t	*zinfo = NULL;
 	zvol_info_t    *zt = NULL;
 	int namelen = ((name) ? strlen(name) : 0);
-	zvol_state_t  *clone_zv = NULL;
-	zvol_state_t  *snap_zv = NULL;
 	zvol_state_t  *main_zv;
 	int destroyed = 0;
 
@@ -319,11 +319,7 @@ uzfs_zinfo_destroy(const char *name, spa_t *spa)
 
 				mutex_exit(&zvol_list_mutex);
 				main_zv = zinfo->main_zv;
-				clone_zv = zinfo->clone_zv;
-				snap_zv = zinfo->snap_zv;
 				uzfs_mark_offline_and_free_zinfo(zinfo);
-				(void) uzfs_zvol_release_internal_clone(
-				    main_zv, &snap_zv, &clone_zv);
 				uzfs_close_dataset(main_zv);
 				destroyed++;
 				mutex_enter(&zvol_list_mutex);
@@ -340,11 +336,7 @@ uzfs_zinfo_destroy(const char *name, spa_t *spa)
 
 				mutex_exit(&zvol_list_mutex);
 				main_zv = zinfo->main_zv;
-				clone_zv = zinfo->clone_zv;
-				snap_zv = zinfo->snap_zv;
 				uzfs_mark_offline_and_free_zinfo(zinfo);
-				(void) uzfs_zvol_release_internal_clone(
-				    main_zv, &snap_zv, &clone_zv);
 				uzfs_close_dataset(main_zv);
 				destroyed++;
 				goto end;

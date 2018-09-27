@@ -273,7 +273,7 @@ uzfs_zvol_worker(void *arg)
 {
 	zvol_io_cmd_t	*zio_cmd;
 	zvol_info_t	*zinfo;
-	zvol_state_t	*zvol_state, *read_zv;
+	zvol_state_t	*zvol_state, *read_zv, *io_zv;
 	zvol_io_hdr_t 	*hdr;
 	metadata_desc_t	**metadata_desc;
 	int		rc = 0;
@@ -286,6 +286,12 @@ uzfs_zvol_worker(void *arg)
 	zvol_state = zinfo->main_zv;
 	rebuild_cmd_req = hdr->flags & ZVOL_OP_FLAG_REBUILD;
 	read_metadata = hdr->flags & ZVOL_OP_FLAG_READ_METADATA;
+
+
+	if (zinfo->clone_zv)
+		io_zv = zinfo->clone_zv;
+	else
+		io_zv = zinfo->main_zv;
 
 	if (zinfo->is_io_ack_sender_created == B_FALSE) {
 		if (!(rebuild_cmd_req && (hdr->opcode == ZVOL_OPCODE_WRITE)))
@@ -320,7 +326,7 @@ uzfs_zvol_worker(void *arg)
 	}
 	switch (hdr->opcode) {
 		case ZVOL_OPCODE_READ:
-			read_zv = zinfo->main_zv;
+			read_zv = io_zv;
 			if (rebuild_cmd_req) {
 				/*
 				 * if we are rebuilding, we have
@@ -347,7 +353,7 @@ uzfs_zvol_worker(void *arg)
 			break;
 
 		case ZVOL_OPCODE_SYNC:
-			uzfs_flush_data(zinfo->main_zv);
+			uzfs_flush_data(io_zv);
 			atomic_inc_64(&zinfo->sync_req_received_cnt);
 			break;
 
@@ -745,6 +751,8 @@ exit:
 			uzfs_zvol_set_status(zinfo->main_zv,
 			    ZVOL_STATUS_HEALTHY);
 			uzfs_update_ionum_interval(zinfo, 0);
+			VERIFY0(uzfs_zvol_destroy_internal_clone(zinfo->main_zv,
+			    &zinfo->snap_zv, &zinfo->clone_zv));
 		}
 	}
 	mutex_exit(&zinfo->main_zv->rebuild_mtx);
@@ -1171,6 +1179,8 @@ uzfs_zvol_rebuild_scanner_callback(off_t offset, size_t len,
 	 * replica. Degraded replica will take care of breaking the connection
 	 */
 	uzfs_zvol_worker(zio_cmd);
+
+	zinfo->rebuild_zv = NULL;
 	return (0);
 }
 

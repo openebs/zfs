@@ -356,6 +356,8 @@ uzfs_zvol_worker(void *arg)
 
 		case ZVOL_OPCODE_SYNC:
 			uzfs_flush_data(zinfo->main_zv);
+			if (zinfo->clone_zv)
+				uzfs_flush_data(zinfo->clone_zv);
 			atomic_inc_64(&zinfo->sync_req_received_cnt);
 			break;
 

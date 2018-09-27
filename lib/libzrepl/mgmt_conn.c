@@ -1230,10 +1230,12 @@ handle_start_rebuild_req(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 
 	memset(&zinfo->main_zv->rebuild_info, 0,
 	    sizeof (zvol_rebuild_info_t));
+#if 0
 	if (zinfo->checkpointed_ionum >= max_ioseq)
 		uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 		    ZVOL_REBUILDING_AFS);
 	else
+#endif
 		uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 		    ZVOL_REBUILDING_SNAP);
 

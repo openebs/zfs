@@ -295,6 +295,53 @@ zrepl_utest_replica_rebuild_start(int fd, mgmt_ack_t *mgmt_ack,
 	return (0);
 }
 
+static int
+zrepl_send_read(int sfd, uint64_t io_block_size)
+{
+
+	char *buf;
+	int count;
+	zvol_io_hdr_t hdr;
+	struct zvol_io_rw_hdr read_hdr;
+
+	hdr.version = REPLICA_VERSION;
+	hdr.opcode = ZVOL_OPCODE_READ;
+	hdr.io_seq = 0;
+	hdr.len    = io_block_size;
+	hdr.status = 0;
+	hdr.flags = 0;
+	hdr.offset = 0;
+
+	count = write(sfd, (void *)&hdr, sizeof (hdr));
+	if (count == -1) {
+		printf("Write error\n");
+		return (-1);
+	}
+
+	count = read(sfd, (void *)&hdr, sizeof (hdr));
+	if (count == -1) {
+		printf("header read failed\n");
+		return (-1);
+	}
+
+	if (hdr.opcode == ZVOL_OPCODE_READ) {
+		count = read(sfd, &read_hdr, sizeof (read_hdr));
+		if (count != sizeof (read_hdr)) {
+			printf("Meta data header read error\n");
+			return (-1);
+		}
+
+		buf = kmem_alloc(read_hdr.len, KM_SLEEP);
+		count = read(sfd, buf, read_hdr.len);
+		free(buf);
+		if (count == -1) {
+			printf("payload read failed\n");
+			return (-1);
+		}
+	}
+	return (0);
+}
+
 static void
 reader_thread(void *arg)
 {
@@ -1026,12 +1073,20 @@ check_status:
 		goto exit;
 	}
 	/*
-	 * Check rebuild status of of downgrade replica ds1.
+	 * Check rebuild status of downgrade replica ds1.
 	 */
 status_check:
 	count = zrepl_utest_get_replica_status(ds1, ds1_mgmt_fd, &status_ack);
 	if (count == -1) {
 		goto exit;
+	}
+
+	/* Send a dummy IO to ds1 so that IO_quiesce check move on */
+	if (status_ack.rebuild_status == ZVOL_REBUILDING_AFS) {
+		sleep(1);
+		if (zrepl_send_read(ds1_io_sfd, io_block_size) == -1)
+			goto exit;
+		goto status_check;
 	}
 
 	if (status_ack.state != ZVOL_STATUS_HEALTHY) {
@@ -1099,6 +1154,14 @@ status_check1:
 	count = zrepl_utest_get_replica_status(ds2, ds2_mgmt_fd, &status_ack);
 	if (count == -1) {
 		goto exit;
+	}
+
+	/* Send a dummy IO to ds2 so that IO_quiesce check move on */
+	if (status_ack.rebuild_status == ZVOL_REBUILDING_AFS) {
+		sleep(1);
+		if (zrepl_send_read(ds2_io_sfd, io_block_size) == -1)
+			goto exit;
+		goto status_check1;
 	}
 
 	if (status_ack.state != ZVOL_STATUS_HEALTHY) {
@@ -1170,6 +1233,14 @@ status_check2:
 		goto exit;
 	}
 
+	/* Send a dummy IO to ds3 so that IO_quiesce check move on */
+	if (status_ack.rebuild_status == ZVOL_REBUILDING_AFS) {
+		sleep(1);
+		if (zrepl_send_read(ds3_io_sfd, io_block_size) == -1)
+			goto exit;
+		goto status_check2;
+	}
+
 	if (status_ack.rebuild_status != ZVOL_REBUILDING_FAILED) {
 		sleep(1);
 		goto status_check2;
@@ -1195,7 +1266,7 @@ status_check2:
 
 	/*
 	 * Start rebuild process on downgraded replica ds3
-	 * by sharing IP and rebuild_Port info with ds3.
+	 * by sharing IP and rebuild_port info with ds3.
 	 */
 	rc = zrepl_utest_replica_rebuild_start(ds3_mgmt_fd, mgmt_ack_ds3,
 	    sizeof (mgmt_ack_t) * 3);
@@ -1209,6 +1280,14 @@ status_check3:
 	count = zrepl_utest_get_replica_status(ds3, ds3_mgmt_fd, &status_ack);
 	if (count == -1) {
 		goto exit;
+	}
+
+	/* Send a dummy IO to ds3 so that IO_quiesce check move on */
+	if (status_ack.rebuild_status == ZVOL_REBUILDING_AFS) {
+		sleep(1);
+		if (zrepl_send_read(ds3_io_sfd, io_block_size) == -1)
+			goto exit;
+		goto status_check3;
 	}
 
 	if (status_ack.state != ZVOL_STATUS_HEALTHY) {

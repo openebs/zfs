@@ -295,6 +295,9 @@ uzfs_mock_rebuild_scanner_rebuild_comp(void *arg)
 	/* Read ZVOL_OPCODE_REBUILD_STEP */
 	uzfs_mock_rebuild_scanner_read_rebuild_step(fd, &hdr);
 
+#ifdef DEBUG
+	inject_error.delay.rebuid_io_quiesce_check_by_pass = 1;
+#endif
 	/* Write ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE */
 	uzfs_mock_rebuild_scanner_write_snap_done(fd, &hdr);
 	while (1) {
@@ -377,6 +380,9 @@ uzfs_mock_rebuild_scanner_rebuild_comp(void *arg)
 	EXPECT_EQ(hdr.opcode, ZVOL_OPCODE_REBUILD_COMPLETE);
 	EXPECT_EQ(hdr.status, ZVOL_OP_STATUS_OK);
 
+#ifdef DEBUG
+	inject_error.delay.rebuid_io_quiesce_check_by_pass = 0;
+#endif
 exit:
 	shutdown(fd, SHUT_RDWR);
 	close(fd);
@@ -405,6 +411,7 @@ uzfs_mock_rebuild_scanner_snap_rebuild_related(void *arg)
 	if ((rebuild_test_case >= 8) && (rebuild_test_case <= 12)) {
 #ifdef DEBUG
 		inject_error.delay.downgraded_replica_rebuild_size_set = 1;
+		inject_error.delay.rebuid_io_quiesce_check_by_pass = 1;
 #endif
 		hdr.opcode = ZVOL_OPCODE_REBUILD_SNAP_DONE;
 		hdr.status = ZVOL_OP_STATUS_OK;
@@ -487,6 +494,7 @@ uzfs_mock_rebuild_scanner_snap_rebuild_related(void *arg)
 	}
 #ifdef DEBUG
 	inject_error.delay.downgraded_replica_rebuild_size_set = 0;
+	inject_error.delay.rebuid_io_quiesce_check_by_pass = 0;
 #endif
 
 exit:

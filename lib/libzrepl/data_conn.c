@@ -228,14 +228,21 @@ uzfs_submit_writes(zvol_info_t *zinfo, zvol_io_cmd_t *zio_cmd)
 		remain -= sizeof (*write_hdr);
 		if (remain < write_hdr->len)
 			return (-1);
-
-		rc = uzfs_write_data(zinfo->main_zv, datap, data_offset,
-		    write_hdr->len, &metadata, is_rebuild);
-		if (rc != 0)
-			break;
+		/*
+		 * Write to main_zv when volume is either
+		 * healthy or in REBUILD_AFS state of rebuild
+		 */
+		if (ZVOL_IS_REBUILDING_AFS(zinfo->main_zv) ||
+		    ZVOL_IS_HEALTHY(zinfo->main_zv)) {
+			rc = uzfs_write_data(zinfo->main_zv, datap, data_offset,
+			    write_hdr->len, &metadata, is_rebuild);
+			if (rc != 0)
+				break;
+		}
 
 		/* IO to clone should be sent only when it is from app */
-		if (!is_rebuild && (zinfo->clone_zv != NULL)) {
+		if (!is_rebuild && !ZVOL_IS_HEALTHY(zinfo->main_zv) &&
+		    (zinfo->clone_zv != NULL)) {
 			rc = uzfs_write_data(zinfo->clone_zv, datap,
 			    data_offset, write_hdr->len, &metadata,
 			    is_rebuild);
@@ -670,10 +677,31 @@ next_step:
 			 * one of them might have changed rebuild state
 			 */
 			if (uzfs_zvol_get_rebuild_status(zinfo->main_zv) !=
-			    ZVOL_REBUILDING_AFS)
+			    ZVOL_REBUILDING_AFS) {
 				uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 				    ZVOL_REBUILDING_AFS);
+				/*
+				 * Lets ask io_receiver thread to flush
+				 * all outstanding IOs in taskq
+				 */
+				zinfo->quiesce_done = 0;
+				zinfo->quiesce_requested = 1;
+			}
 			mutex_exit(&zinfo->main_zv->rebuild_mtx);
+			/*
+			 * Wait for all outstanding IOs to be flushed
+			 * to disk before making further progress
+			 */
+#ifdef DEBUG
+			if (inject_error.delay.rebuid_io_quiesce_check_by_pass)
+				continue;
+#endif
+			while (1) {
+				if (!zinfo->quiesce_done)
+					sleep(1);
+				else
+					break;
+			}
 			continue;
 		}
 		ASSERT((hdr.opcode == ZVOL_OPCODE_READ) &&
@@ -1828,6 +1856,19 @@ uzfs_zvol_io_receiver(void *arg)
 		/* Take refcount for uzfs_zvol_worker to work on it */
 		uzfs_zinfo_take_refcnt(zinfo);
 		zio_cmd->zinfo = zinfo;
+
+		/*
+		 * Rebuild want to take consistent snapshot
+		 * so it asked to flush all outstanding IOs
+		 * before taking snapshot on rebuild_clone
+		 */
+		if (zinfo->quiesce_requested) {
+			ASSERT(ZVOL_IS_REBUILDING_AFS(zinfo->main_zv));
+			taskq_wait_outstanding(zinfo->uzfs_zvol_taskq, 0);
+			zinfo->quiesce_requested = 0;
+			zinfo->quiesce_done = 1;
+		}
+
 		taskq_dispatch(zinfo->uzfs_zvol_taskq, uzfs_zvol_worker,
 		    zio_cmd, TQ_SLEEP);
 	}

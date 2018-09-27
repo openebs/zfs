@@ -73,6 +73,7 @@ typedef struct inject_delay_s {
 	int helping_replica_rebuild_step;
 	int pre_uzfs_write_data;
 	int downgraded_replica_rebuild_size_set;
+	int rebuid_io_quiesce_check_by_pass;
 } inject_delay_t;
 
 typedef struct inject_error_s {
@@ -158,6 +159,11 @@ typedef struct zvol_info_s {
 
 	/* Will be used to singal ack-sender to exit */
 	uint8_t		conn_closed;
+
+	/* Rebuild flags to quiesce IOs */
+	uint8_t		quiesce_requested;
+	uint8_t		quiesce_done;
+
 	/* Pointer to mgmt connection for this zinfo */
 	void		*mgmt_conn;
 

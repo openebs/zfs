@@ -169,6 +169,7 @@ enum zvol_status {
 
 typedef enum zvol_status zvol_status_t;
 
+#define	ZVOL_IS_HEALTHY(zv) (zv->zv_status == ZVOL_STATUS_HEALTHY)
 struct zrepl_status_ack {
 	zvol_status_t state;
 	zvol_rebuild_status_t rebuild_status;

@@ -1,12 +1,12 @@
 include $(top_srcdir)/config/Rules.am
 
-AM_CPPFLAGS += $(DEBUG_STACKFLAGS)
+AM_CPPFLAGS += $(DEBUG_CFLAGS) $(DEBUG_STACKFLAGS)
 
 DEFAULT_INCLUDES += \
 	-I$(top_srcdir)/include \
 	-I$(top_srcdir)/lib/libspl/include
 
-sbin_PROGRAMS = test_uzfsserver test_uzfs test_zfs test_zrepl_prot
+sbin_PROGRAMS = test_uzfs test_uzfsserver test_zfs test_zrepl_prot
 
 test_uzfsserver_SOURCES = test_uzfsserver.cc
 test_uzfs_SOURCES = test_uzfs.cc gtest_utils.cc
@@ -31,6 +31,7 @@ test_uzfsserver_LDADD = \
 
 test_uzfsserver_CXXFLAGS = -std=c++11
 test_uzfsserver_LDFLAGS = -pthread -lgtest -lgtest_main
+test_uzfs_CXXFLAGS = -std=c++11
 test_uzfs_LDFLAGS = -pthread -lgtest -lgtest_main
-test_zrepl_prot_LDFLAGS = -pthread -lgtest -lgtest_main
+test_zrepl_prot_LDFLAGS = -pthread -lgtest -lgtest_main -ljson-c
 test_zfs_LDFLAGS = -pthread -lgtest -lgtest_main

@@ -31,6 +31,18 @@
 extern "C" {
 #endif
 
+#define	timesdiff(_clockid, _st, _now, _re)				\
+{									\
+	clock_gettime(_clockid, &_now);					\
+	if ((_now.tv_nsec - _st.tv_nsec) < 0) {				\
+		_re.tv_sec  = _now.tv_sec - _st.tv_sec - 1;		\
+		_re.tv_nsec = 1000000000 + _now.tv_nsec - _st.tv_nsec;	\
+	} else {							\
+		_re.tv_sec  = _now.tv_sec - _st.tv_sec;			\
+		_re.tv_nsec = _now.tv_nsec - _st.tv_nsec;		\
+	}								\
+}
+
 /*
  * Mgmt connection states.
  */
@@ -71,8 +83,10 @@ typedef struct async_task {
 	boolean_t finished;	// async cmd has finished
 	zvol_info_t *zinfo;
 	zvol_io_hdr_t hdr;	// header of the incoming request
-	void *payload; // snapshot name
+	void *payload;		// snapshot name
+	void *response;		// response of async task
 	int payload_length;	// length of payload in bytes
+	int response_length;	// length of response data in bytes
 	int status;		// status which should be sent back
 } async_task_t;
 
@@ -92,6 +106,13 @@ void zinfo_create_cb(zvol_info_t *zinfo, nvlist_t *create_props);
 void zinfo_destroy_cb(zvol_info_t *zinfo);
 void uzfs_zvol_mgmt_thread(void *arg);
 int finish_async_tasks(void);
+int uzfs_zinfo_rebuild_from_clone(zvol_info_t *zinfo);
+int uzfs_zvol_create_snapshot_update_zap(zvol_info_t *zinfo,
+    char *snapname, uint64_t snapshot_io_num);
+int uzfs_get_snap_zv_ionum(zvol_info_t *, uint64_t, zvol_state_t **);
+
+int uzfs_zvol_get_snap_dataset_with_io(zvol_info_t *zinfo,
+    char *snapname, uint64_t *snapshot_io_num, zvol_state_t **snap_zv);
 
 #ifdef __cplusplus
 }

@@ -341,6 +341,12 @@ uzfs_zvol_worker(void *arg)
 				}
 			}
 
+			/* App IOs should go to cloen_zv */
+			if (!rebuild_cmd_req &&
+			    !ZVOL_IS_HEALTHY(zinfo->main_zv) &&
+			    (zinfo->clone_zv != NULL))
+				read_zv = zinfo->clone_zv;
+
 			rc = uzfs_read_data(read_zv,
 			    (char *)zio_cmd->buf,
 			    hdr->offset, hdr->len,

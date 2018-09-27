@@ -241,8 +241,7 @@ uzfs_submit_writes(zvol_info_t *zinfo, zvol_io_cmd_t *zio_cmd)
 		}
 
 		/* IO to clone should be sent only when it is from app */
-		if (!is_rebuild && !ZVOL_IS_HEALTHY(zinfo->main_zv) &&
-		    (zinfo->clone_zv != NULL)) {
+		if (!is_rebuild && !ZVOL_IS_HEALTHY(zinfo->main_zv)) {
 			rc = uzfs_write_data(zinfo->clone_zv, datap,
 			    data_offset, write_hdr->len, &metadata,
 			    is_rebuild);
@@ -339,12 +338,8 @@ uzfs_zvol_worker(void *arg)
 					rc = -1;
 					break;
 				}
-			}
-
-			/* App IOs should go to cloen_zv */
-			if (!rebuild_cmd_req &&
-			    !ZVOL_IS_HEALTHY(zinfo->main_zv) &&
-			    (zinfo->clone_zv != NULL))
+			} else if (!ZVOL_IS_HEALTHY(zinfo->main_zv))
+				/* App IOs should go to clone_zv */
 				read_zv = zinfo->clone_zv;
 
 			rc = uzfs_read_data(read_zv,
@@ -1908,6 +1903,8 @@ exit:
 	zinfo->is_io_receiver_created = B_FALSE;
 	(void) uzfs_zvol_release_internal_clone(zinfo->main_zv,
 	    &zinfo->snap_zv, &zinfo->clone_zv);
+	zinfo->quiesce_requested = 0;
+	zinfo->quiesce_done = 1;
 	uzfs_zinfo_drop_refcnt(zinfo);
 thread_exit:
 	close(fd);

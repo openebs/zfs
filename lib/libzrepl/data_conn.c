@@ -693,15 +693,16 @@ next_step:
 			 * Wait for all outstanding IOs to be flushed
 			 * to disk before making further progress
 			 */
-#ifdef DEBUG
-			if (inject_error.delay.rebuid_io_quiesce_check_by_pass)
-				continue;
-#endif
 			while (1) {
-				if (!zinfo->quiesce_done)
-					sleep(1);
-				else
+				if (zinfo->quiesce_done ||
+				    !taskq_check_active_ios(
+				    zinfo->uzfs_zvol_taskq)) {
+					zinfo->quiesce_done = 1;
+					zinfo->quiesce_requested = 0;
 					break;
+				}
+				else
+					sleep(1);
 			}
 			continue;
 		}

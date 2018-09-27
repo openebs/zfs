@@ -213,6 +213,19 @@ taskq_wait_outstanding(taskq_t *tq, taskqid_t id)
 	taskq_wait(tq);
 }
 
+int
+taskq_check_active_ios(taskq_t *tq)
+{
+	int ret = 0;
+	taskq_ent_t *t;
+	mutex_enter(&tq->tq_lock);
+	if (((t = tq->tq_task.tqent_next) != &tq->tq_task) ||
+	    (tq->tq_active != 0))
+		ret = 1;
+	mutex_exit(&tq->tq_lock);
+	return (ret);
+}
+
 static void
 taskq_thread(void *arg)
 {

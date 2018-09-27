@@ -73,7 +73,6 @@ typedef struct inject_delay_s {
 	int helping_replica_rebuild_step;
 	int pre_uzfs_write_data;
 	int downgraded_replica_rebuild_size_set;
-	int rebuid_io_quiesce_check_by_pass;
 } inject_delay_t;
 
 typedef struct inject_error_s {

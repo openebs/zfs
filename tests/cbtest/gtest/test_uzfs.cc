@@ -2083,7 +2083,7 @@ void mock_tgt_thread(void *arg)
 		strcpy(mgmt_ack.dw_volname, zinfo->name);
 		p = (char *)&mgmt_ack;
 		uzfs_zvol_set_rebuild_status(zinfo->main_zv,
-		    ZVOL_REBUILDING_IN_PROGRESS);
+		    ZVOL_REBUILDING_SNAP);
 	}
 
 	/* Single Replica */

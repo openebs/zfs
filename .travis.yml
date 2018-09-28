@@ -3,6 +3,8 @@ sudo: required
 branches:
   only:
     - zfs-0.7-release
+    - /^\d+\.\d+(\.\d+)?(-\S*)?$/
+    - /^v\d+\.\d+(\.\d+)?(-\S*)?$/
 env:
   global:
     # Travis limits maximum log size, we have to cut tests output 
@@ -78,5 +80,8 @@ script:
 after_failure:
     - find /var/tmp/test_results/current/log -type f -name '*' -printf "%f\n" -exec cut -c -$ZFS_TEST_TRAVIS_LOG_MAX_LENGTH {} \;
 after_success:
+    - if [ $ZFS_BUILD_TAGS = 1 ]; then
+        ./build_image.sh
+      fi
     - find /var/tmp/test_results/current/log -type f -name '*' -printf "%f\n" -exec cut -c -$ZFS_TEST_TRAVIS_LOG_MAX_LENGTH {} \;
     - bash <(curl -s https://codecov.io/bash)

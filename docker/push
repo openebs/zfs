@@ -15,7 +15,7 @@ then
   exit 1
 fi
 
-# In case of cstor, the commit id doesn't change so using date. 
+# Get an unique id based on commit and tag
 BUILD_ID=$(git describe --tags --always)
 
 # Determine the current branch

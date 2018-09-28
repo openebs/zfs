@@ -46,6 +46,7 @@ source $UZFS_TEST_SYNC_SH
 log_fail()
 {
 	echo "failed => [$@]"
+	stop_zrepl
 	exit 1
 }
 

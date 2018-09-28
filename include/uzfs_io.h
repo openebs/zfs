@@ -59,7 +59,7 @@ int uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
  * reads data and metadata. Meta data is a list which must be freed by caller.
  */
 int uzfs_read_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
-    metadata_desc_t **md, int *data_error, int *metadata_error);
+    metadata_desc_t **md);
 
 /*
  * UNMAP data at offset.

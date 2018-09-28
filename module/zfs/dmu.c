@@ -55,6 +55,10 @@
 #include <sys/zfs_znode.h>
 #endif
 
+#ifndef	_KERNEL
+#include <sys/uzfs_zvol.h>
+#endif
+
 /*
  * Enable/disable nopwrite feature.
  */
@@ -494,9 +498,11 @@ dmu_buf_hold_array_by_dnode(dnode_t *dn, uint64_t offset, uint64_t length,
 	for (i = 0; i < nblks; i++) {
 		dmu_buf_impl_t *db = NULL;
 #ifdef	_UZFS
-		dbuf_hold_impl(dn, 0, blkid + i,
+		err = dbuf_hold_impl(dn, 0, blkid + i,
 		    (flags & DMU_READ_CHECK_HOLE) ? TRUE : FALSE, FALSE,
 		    tag, &db);
+		if (err == ENOENT)
+			continue;
 #else
 		dbuf_hold_impl(dn, 0, blkid + i, FALSE, FALSE, tag, &db);
 
@@ -744,15 +750,29 @@ dmu_objset_zfs_unmounting(objset_t *os)
 	return (B_FALSE);
 }
 
+#if defined(_KERNEL)
 static int
 dmu_free_long_range_impl(objset_t *os, dnode_t *dn, uint64_t offset,
     uint64_t length)
+#else
+int
+dmu_free_long_range_impl(objset_t *os, dnode_t *dn, uint64_t offset,
+    uint64_t length, blk_metadata_t *metadata, zvol_state_t *zv,
+    boolean_t write_zil)
+#endif
 {
 	uint64_t object_size;
-	int err;
+	int err = 0;
 	uint64_t dirty_frees_threshold;
 	dsl_pool_t *dp = dmu_objset_pool(os);
 	int t;
+#ifndef	_KERNEL
+	int i = 0;
+	boolean_t sync = (dmu_objset_syncprop(os) == ZFS_SYNC_ALWAYS) ? 1 : 0;
+	uint64_t moff, mend, mchunk, mwlen;
+	uint8_t *buf;
+	metaobj_blk_offset_t metablk;
+#endif
 
 	if (dn == NULL)
 		return (SET_ERROR(EINVAL));
@@ -770,20 +790,29 @@ dmu_free_long_range_impl(objset_t *os, dnode_t *dn, uint64_t offset,
 	if (length == DMU_OBJECT_END || offset + length > object_size)
 		length = object_size - offset;
 
+#ifndef	_KERNEL
+	mchunk = zv->zv_volmetablocksize;
+	buf = kmem_alloc(mchunk, KM_SLEEP);
+	for (i = 0; i < mchunk; i += zv->zv_volmetadatasize)
+		memcpy(buf + i, metadata, sizeof (blk_metadata_t));
+#endif
 	while (length != 0) {
 		uint64_t chunk_end, chunk_begin, chunk_len;
 		uint64_t long_free_dirty_all_txgs = 0;
 		dmu_tx_t *tx;
 
-		if (dmu_objset_zfs_unmounting(dn->dn_objset))
-			return (SET_ERROR(EINTR));
+		if (dmu_objset_zfs_unmounting(dn->dn_objset)) {
+			err = SET_ERROR(EINTR);
+			goto out;
+		}
 
 		chunk_end = chunk_begin = offset + length;
 
 		/* move chunk_begin backwards to the beginning of this chunk */
 		err = get_next_chunk(dn, &chunk_begin, offset);
 		if (err)
-			return (err);
+			goto out;
+
 		ASSERT3U(chunk_begin, >=, offset);
 		ASSERT3U(chunk_begin, <=, chunk_end);
 
@@ -810,17 +839,45 @@ dmu_free_long_range_impl(objset_t *os, dnode_t *dn, uint64_t offset,
 		tx = dmu_tx_create(os);
 		dmu_tx_hold_free(tx, dn->dn_object, chunk_begin, chunk_len);
 
-		/*
-		 * Mark this transaction as typically resulting in a net
-		 * reduction in space used.
-		 */
-		dmu_tx_mark_netfree(tx);
+#ifndef	_KERNEL
+		if (zv) {
+			get_zv_metaobj_block_details(&metablk, zv,
+			    chunk_begin, chunk_len);
+			dmu_tx_hold_write(tx, ZVOL_META_OBJ,
+			    metablk.m_offset, metablk.m_len);
+		} else
+#endif
+		{
+			/*
+			 * Mark this transaction as typically resulting in a net
+			 * reduction in space used.
+			 */
+			dmu_tx_mark_netfree(tx);
+		}
 		err = dmu_tx_assign(tx, TXG_WAIT);
 		if (err) {
 			dmu_tx_abort(tx);
-			return (err);
+			goto out;
 		}
 
+#ifndef	_KERNEL
+		if (zv) {
+			moff = metablk.m_offset;
+			mend = moff + metablk.m_len;
+
+			while (moff < mend) {
+				mwlen = ((moff + mchunk) < mend) ? mchunk :
+				    (mend - moff);
+				dmu_write(zv->zv_objset, ZVOL_META_OBJ,
+				    moff, mwlen, buf, tx);
+				moff += mwlen;
+			}
+
+			if (write_zil)
+				zvol_log_truncate(zv, tx, chunk_begin,
+				    chunk_len, sync, metadata);
+		}
+#endif
 		mutex_enter(&dp->dp_lock);
 		dp->dp_long_free_dirty_pertxg[dmu_tx_get_txg(tx) & TXG_MASK] +=
 		    chunk_len;
@@ -833,7 +890,11 @@ dmu_free_long_range_impl(objset_t *os, dnode_t *dn, uint64_t offset,
 
 		length -= chunk_len;
 	}
-	return (0);
+out:
+#ifndef	_KERNEL
+	kmem_free(buf, mchunk);
+#endif
+	return (err);
 }
 
 int
@@ -846,8 +907,12 @@ dmu_free_long_range(objset_t *os, uint64_t object,
 	err = dnode_hold(os, object, FTAG, &dn);
 	if (err != 0)
 		return (err);
+#ifdef	_UZFS
+	err = dmu_free_long_range_impl(os, dn, offset, length,
+	    NULL, NULL, FALSE);
+#else
 	err = dmu_free_long_range_impl(os, dn, offset, length);
-
+#endif
 	/*
 	 * It is important to zero out the maxblkid when freeing the entire
 	 * file, so that (a) subsequent calls to dmu_free_long_range_impl()

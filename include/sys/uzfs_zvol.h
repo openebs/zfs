@@ -114,6 +114,15 @@ extern void zvol_log_write(zvol_state_t *zv, dmu_tx_t *tx, uint64_t offset,
     uint64_t size, int sync, blk_metadata_t *md);
 
 /*
+ * unmap data and update metadata
+ */
+extern int dmu_free_long_range_impl(objset_t *os, dnode_t *dn, uint64_t offset,
+    uint64_t length, blk_metadata_t *metadata, zvol_state_t *zv,
+    boolean_t write_zil);
+extern void zvol_log_truncate(zvol_state_t *zv, dmu_tx_t *tx, uint64_t off,
+    uint64_t len, boolean_t sync, blk_metadata_t *metadata);
+
+/*
  * returns through 'm' (offset, len) of the block containing metadata of data
  * at 'offset' of lun and length of meta vol block size
  */

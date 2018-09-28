@@ -251,6 +251,19 @@ uzfs_zinfo_take_refcnt(zvol_info_t *zinfo)
  */
 #define	DEGRADED_IO_UPDATE_INTERVAL	5
 
+/*
+ * create io sequence number for unmap operation
+ */
+#define	CREATE_UNMAP_IOSEQ(_x)		((_x) | (1ULL << 63))
+/*
+ * Check if io sequence number is meant for unmap
+ */
+#define	CHECK_UNMAP_IOSEQ(_x)		((_x >> 63) & 1)
+/*
+ * Get unmap io sequence number
+ */
+#define	DECODE_IF_UNMAP_IOSEQ(_x)	((_x) &  (~(1ULL <<  63)))
+
 #ifdef	__cplusplus
 }
 #endif

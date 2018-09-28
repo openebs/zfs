@@ -622,7 +622,12 @@ zvol_replay_truncate(zvol_state_t *zv, lr_truncate_t *lr, boolean_t byteswap)
 	offset = lr->lr_offset;
 	length = lr->lr_length;
 
+#if defined(_KERNEL)
 	return (dmu_free_long_range(zv->zv_objset, ZVOL_OBJ, offset, length));
+#else
+	return (dmu_free_long_range_impl(zv->zv_objset, zv->zv_dn, offset,
+	    length, &lr->lr_metadata, zv, FALSE));
+#endif
 }
 
 #if !defined(_KERNEL)
@@ -938,17 +943,27 @@ zvol_write(void *arg)
 	BIO_END_IO(bio, -error);
 	kmem_free(zvr, sizeof (zv_request_t));
 }
+#endif
 
 /*
  * Log a DKIOCFREE/free-long-range to the ZIL with TX_TRUNCATE.
  */
-static void
+#if defined(_KERNEL)
+void
 zvol_log_truncate(zvol_state_t *zv, dmu_tx_t *tx, uint64_t off, uint64_t len,
     boolean_t sync)
+#else
+void
+zvol_log_truncate(zvol_state_t *zv, dmu_tx_t *tx, uint64_t off, uint64_t len,
+    boolean_t sync, blk_metadata_t *metadata)
+#endif
 {
 	itx_t *itx;
 	lr_truncate_t *lr;
 	zilog_t *zilog = zv->zv_zilog;
+#if !defined(_KERNEL)
+	blk_metadata_t *md;
+#endif
 
 	if (zil_replaying(zilog, tx))
 		return;
@@ -961,8 +976,18 @@ zvol_log_truncate(zvol_state_t *zv, dmu_tx_t *tx, uint64_t off, uint64_t len,
 
 	itx->itx_sync = sync;
 	zil_itx_assign(zilog, itx, tx);
+#if !defined(_KERNEL)
+	if (metadata != NULL) {
+		lr->lr_version = VERSION_1;
+		md = &(lr->lr_metadata);
+		memcpy(md, metadata, sizeof (blk_metadata_t));
+	} else
+		lr->lr_version = VERSION_0;
+#endif
+	zil_itx_assign(zilog, itx, tx);
 }
 
+#if defined(_KERNEL)
 static void
 zvol_discard(void *arg)
 {
@@ -1011,7 +1036,11 @@ zvol_discard(void *arg)
 	if (error != 0) {
 		dmu_tx_abort(tx);
 	} else {
+#if defined(_KERNEL)
 		zvol_log_truncate(zv, tx, start, size, B_TRUE);
+#else
+		zvol_log_truncate(zv, tx, start, size, B_TRUE, NULL);
+#endif
 		dmu_tx_commit(tx);
 		error = dmu_free_long_range(zv->zv_objset,
 		    ZVOL_OBJ, start, size);

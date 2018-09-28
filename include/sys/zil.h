@@ -329,6 +329,8 @@ typedef struct {
 	uint64_t	lr_foid;	/* object id of file to truncate */
 	uint64_t	lr_offset;	/* offset to truncate from */
 	uint64_t	lr_length;	/* length to truncate */
+	uint64_t	lr_version;
+	blk_metadata_t	lr_metadata;
 } lr_truncate_t;
 
 typedef struct {

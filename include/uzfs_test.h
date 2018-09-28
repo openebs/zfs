@@ -75,5 +75,4 @@ void unit_test_fn(void *arg);
 void zrepl_utest(void *arg);
 void uzfs_rebuild_test(void *arg);
 void zrepl_rebuild_test(void *arg);
-void unmap_test_fn(void *arg);
 #endif

@@ -46,6 +46,8 @@ zfs_rlock_t zrl;
 char *data;
 uint64_t *iodata;
 uint64_t g_io_num = 10;
+static uint64_t unmap_region[50][2];
+static int unmap_idx;
 
 void uzfs_test_get_metablk_details(void *arg);
 uzfs_test_info_t uzfs_tests[] = {
@@ -58,7 +60,6 @@ uzfs_test_info_t uzfs_tests[] = {
 	    " metadata for given data block" },
 	{ unit_test_fn, "zvol random read/write verification with metadata" },
 	{ zrepl_rebuild_test, "ZFS rebuild test" },
-	{ unmap_test_fn, "ZFS read/write/unmap test" },
 };
 
 uint64_t metaverify = 0;
@@ -104,6 +105,63 @@ verify_data(char *buf, uint64_t offset, int idx, uint64_t block_size)
 		exit(1);
 }
 
+int
+get_unmapped_index(uint64_t offset, uint64_t len)
+{
+	int i = 0;
+	uint64_t u_start, u_end;
+	uint64_t o_start = offset;
+	uint64_t o_end = offset + len;
+
+	if (unmap_idx == 0)
+		return (-1);
+
+	for (i = 0; i < unmap_idx; i++) {
+		u_start = unmap_region[i][0];
+		u_end = u_start + unmap_region[i][1];
+
+		if (((o_start >= u_start) && (o_start < u_end)) ||
+		    ((o_start < u_start) && (o_end > u_start)))
+			return (i);
+	}
+	return (-1);
+}
+
+void
+verify_unmapped_data(char *data, uint64_t offset, uint64_t len,
+    int unmap_index)
+{
+	char buf[512] = { 0 };
+	int count;
+	uint64_t u_start, u_end;
+	uint64_t f_off = 0, f_len = 0;
+	int i;
+	uint64_t data_off;
+
+	ASSERT(unmap_idx >= 0);
+	u_start = unmap_region[unmap_index][0];
+	u_end = u_start + unmap_region[unmap_index][1];
+
+	if ((offset >= u_start) && (offset < u_end)) {
+		f_off = offset;
+		f_len = (u_end > (offset + len)) ? len : (u_end - offset);
+	} else if ((offset < u_start)) {
+		f_off = u_start;
+		f_len = (u_end > (offset + len)) ?
+		    ((offset + len) - u_start) : (u_end - u_start);
+	} else {
+		ASSERT(0);
+	}
+
+	count = f_len / sizeof (buf);
+	ASSERT(count);
+	data_off = f_off - offset;
+
+	for (i = 0; i < count; i++, data_off += sizeof (buf)) {
+		VERIFY0(memcmp(data + data_off, buf, sizeof (buf)));
+	}
+}
+
 /*
  * Verifies data/metadata read from vol with in-memory copy
  * block_size is size at which IOs are done
@@ -125,7 +183,7 @@ verify_vol_data(void *zv, uint64_t block_size, uint64_t vol_size)
 		if (iodata[i/block_size] == 0)
 			continue;
 		memset(buf, 0, block_size);
-		uzfs_read_data(zv, buf, i, len, &md, NULL, NULL);
+		uzfs_read_data(zv, buf, i, len, &md);
 		for (j = 0; j < len; j++)
 			if (data[i+j] != buf[j]) {
 				printf("verify error at %lu\n", (i+j));
@@ -158,8 +216,8 @@ reader_thread(void *arg)
 	uint64_t *total_ios = warg->total_ios;
 	uint64_t vol_size = warg->active_size;
 	uint64_t block_size = warg->io_block_size;
-	int read_error, md_error;
 	metadata_desc_t *md;
+	int unmapped_index;
 
 	for (j = 0; j < 15; j++)
 		buf[j] = (char *)umem_alloc(sizeof (char)*(j+1)* block_size,
@@ -176,16 +234,19 @@ reader_thread(void *arg)
 	while (1) {
 		blk_offset = uzfs_random(vol_blocks - 16);
 		offset = blk_offset * block_size;
-
 		idx = uzfs_random(15);
 		memset(buf[idx], 0, (idx + 1) * block_size);
 		err = uzfs_read_data(zv, buf[idx], offset,
-		    (idx + 1) * block_size, &md, &read_error, &md_error);
-
+		    (idx + 1) * block_size, &md);
 		if (err != 0)
 			printf("RIO error at offset: %lu len: %lu\n", offset,
 			    (idx + 1) * block_size);
 		verify_data(buf[idx], offset, idx, block_size);
+		unmapped_index = get_unmapped_index(offset,
+		    (idx + 1) * block_size);
+		if (unmapped_index != -1)
+			verify_unmapped_data(buf[idx], offset,
+			    (idx + 1) * block_size, unmapped_index);
 
 		if (buf[idx][0] != 0)
 			data_ios += (idx + 1);
@@ -268,14 +329,18 @@ writer_thread(void *arg)
 		printf("Starting write..\n");
 
 	while (1) {
-		mutex_enter(mtx);
-		io_num = g_io_num++;
-		mutex_exit(mtx);
-
 		blk_offset = uzfs_random(vol_blocks - 16);
 		offset = blk_offset * block_size;
 
 		idx = uzfs_random(15);
+
+		if (get_unmapped_index(offset, (idx + 1) * block_size) >= 0) {
+			goto check_timeout;
+		}
+
+		mutex_enter(mtx);
+		io_num = g_io_num++;
+		mutex_exit(mtx);
 
 		if (uzfs_test_id == 2)
 			populate_data(buf[idx], offset, idx, block_size);
@@ -294,7 +359,24 @@ writer_thread(void *arg)
 			printf("WIO error at offset: %lu len: %lu\n", offset,
 			    (idx + 1) * block_size);
 
-		if (uzfs_test_id == 8) {
+		if (!(io_num%100)) {
+			if (unmap_idx < ARRAY_SIZE(unmap_region)) {
+				md.io_num = io_num = g_io_num++;
+				err = uzfs_unmap_data(zv, offset,
+				    (idx + 1) * block_size, &md, B_FALSE);
+				if (err != 0)
+					printf("UNMAP error at "
+					    "offset: %lu len: %lu\n", offset,
+					    (idx + 1) * block_size);
+				memset(buf[idx], 0, (idx + 1)*block_size);
+				unmap_region[unmap_idx][0] = offset;
+				unmap_region[unmap_idx][1] =
+				    (idx + 1) * block_size;
+				unmap_idx++;
+			}
+		}
+
+		if (uzfs_test_id == 6) {
 			memcpy(&data[offset], buf[idx], (idx + 1)*block_size);
 			for (i = 0; i < (idx+1); i++) {
 				iodata[blk_offset+i] = io_num;
@@ -303,6 +385,8 @@ writer_thread(void *arg)
 		}
 		zfs_range_unlock(rl);
 		ios += (idx + 1);
+
+check_timeout:
 		now = gethrtime();
 
 		if (now > end)
@@ -732,7 +816,7 @@ unit_test_fn(void *arg)
 		cv_wait(&cv, &mtx);
 	mutex_exit(&mtx);
 
-	if (uzfs_test_id == 8)
+	if (uzfs_test_id == 6)
 		verify_vol_data(zv, io_block_size, active_size);
 
 	if (silent == 0)

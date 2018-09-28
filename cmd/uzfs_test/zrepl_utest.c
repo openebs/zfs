@@ -23,7 +23,7 @@ char *ds1 = "ds1";
 char *ds2 = "ds2";
 char *ds3 = "ds3";
 static uint64_t last_io_seq_sent;
-static uint64_t unmap_region[50][0];
+static uint64_t unmap_region[50][2];
 static uint64_t unmap_idx;
 boolean_t create_snapshot = FALSE;
 
@@ -55,11 +55,11 @@ check_if_unmapped(uint64_t offset, uint64_t len)
 		return (FALSE);
 
 	for (i = 0; i < unmap_idx; i++) {
-		if (unmap_region[i][0] <= offset &&
-		    ((offset + len) >=
-		    (unmap_region[i][0] + unmap_region[i][1]))) {
+		if (((offset >= unmap_region[i][0]) &&
+		    (offset < (unmap_region[i][0] + unmap_region[i][1]))) ||
+		    ((offset < unmap_region[i][0]) &&
+		    ((offset + len) > unmap_region[i][0])))
 			return (TRUE);
-		}
 	}
 	return (FALSE);
 }
@@ -335,6 +335,7 @@ reader_thread(void *arg)
 	int write_ack_cnt = 0;
 	int read_ack_cnt = 0;
 	int sync_ack_cnt = 0;
+	int unmap_ack_cnt = 0;
 	zvol_io_hdr_t *hdr;
 	struct zvol_io_rw_hdr read_hdr;
 	worker_args_t *warg = (worker_args_t *)arg;
@@ -366,7 +367,8 @@ reader_thread(void *arg)
 					}
 					break;
 				case 2:
-					if (check == 1) {
+					if (check == 1 &&
+					    (unmap_ack_cnt == unmap_idx)) {
 						uzfs_test_create_snapshot(
 						    warg->sfd[1],
 						    (char *)warg->zv,
@@ -395,6 +397,11 @@ reader_thread(void *arg)
 				printf("Read error reader_thread\n");
 				break;
 			}
+		}
+
+		if (hdr->opcode == ZVOL_OPCODE_UNMAP) {
+			unmap_ack_cnt++;
+			continue;
 		}
 
 		if (hdr->opcode == ZVOL_OPCODE_SNAP_CREATE) {
@@ -443,7 +450,8 @@ reader_thread(void *arg)
 			if (zrepl_verify_data(buf, hdr->offset,
 			    warg->io_block_size) == -1)
 				printf("data mismatch bytes(%d) data at "
-				    "offset:%lu\n", count, hdr->offset);
+				    "offset:%lu ionum:%lu\n",
+				    count, hdr->offset, read_hdr.io_num);
 		}
 
 		bzero(hdr, sizeof (zvol_io_hdr_t));
@@ -672,9 +680,9 @@ writer_thread(void *arg)
 		    warg->io_block_size;
 		io->hdr.status = 0;
 		io->hdr.flags = 0;
-		io->hdr.offset = (i > (warg->max_iops - 3)) ? 0 : nbytes;
+		io->hdr.offset = nbytes;
 		io->rw_hdr.len = warg->io_block_size;
-		io->rw_hdr.io_num = (i > (warg->max_iops - 3)) ? 0 : i + 1;
+		io->rw_hdr.io_num = i + 1;
 
 		int bytes = sizeof (struct data_io) + warg->io_block_size;
 		char *p = (char *)io;
@@ -824,7 +832,11 @@ replica_data_verify_thread(void *arg)
 	/* Read and validate data */
 	i = 0;
 	nbytes = 0;
-	while (i < warg->max_iops) {
+	/*
+	 * skip last 2 ioseq since we have created a rebuild snapshot
+	 * on (max_iops - 3) io_seq
+	 */
+	while (i < (warg->max_iops - 2)) {
 		bzero(&hdr, sizeof (zvol_io_hdr_t));
 
 		/* Construct hdr for read request */

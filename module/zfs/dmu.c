@@ -496,17 +496,7 @@ dmu_buf_hold_array_by_dnode(dnode_t *dn, uint64_t offset, uint64_t length,
 	zio = zio_root(dn->dn_objset->os_spa, NULL, NULL, ZIO_FLAG_CANFAIL);
 	blkid = dbuf_whichblock(dn, 0, offset);
 	for (i = 0; i < nblks; i++) {
-		dmu_buf_impl_t *db = NULL;
-#ifdef	_UZFS
-		err = dbuf_hold_impl(dn, 0, blkid + i,
-		    (flags & DMU_READ_CHECK_HOLE) ? TRUE : FALSE, FALSE,
-		    tag, &db);
-		if (err == ENOENT)
-			continue;
-#else
-		dbuf_hold_impl(dn, 0, blkid + i, FALSE, FALSE, tag, &db);
-
-#endif
+		dmu_buf_impl_t *db = dbuf_hold(dn, blkid + i, tag);
 		if (db == NULL) {
 			rw_exit(&dn->dn_struct_rwlock);
 			dmu_buf_rele_array(dbp, nblks, tag);

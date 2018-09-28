@@ -405,17 +405,21 @@ uzfs_zinfo_free(zvol_info_t *zinfo)
 	return (0);
 }
 
-uint64_t
-uzfs_zvol_get_last_committed_io_no(zvol_state_t *zv, char *key)
+int
+uzfs_zvol_get_last_committed_io_no(zvol_state_t *zv, char *key, uint64_t *ionum)
 {
 	uzfs_zap_kv_t zap;
+	int error;
 
 	zap.key = key;
 	zap.value = 0;
 	zap.size = sizeof (uint64_t);
 
-	uzfs_read_zap_entry(zv, &zap);
-	return (zap.value);
+	error = uzfs_read_zap_entry(zv, &zap);
+	if (ionum != NULL)
+		*ionum = zap.value;
+
+	return (error);
 }
 
 static void
@@ -438,7 +442,7 @@ uzfs_zvol_store_kv_pair(zvol_state_t *zv, char *key,
 }
 
 void
-uzfs_zvol_store_last_committed_degraded_io_no(zvol_info_t *zinfo,
+uzfs_zinfo_store_last_committed_degraded_io_no(zvol_info_t *zinfo,
     uint64_t io_seq)
 {
 	uzfs_zvol_store_kv_pair(zinfo->main_zv,
@@ -451,7 +455,7 @@ uzfs_zvol_store_last_committed_degraded_io_no(zvol_info_t *zinfo,
  * Updates in-memory committed io_num.
  */
 void
-uzfs_zvol_store_last_committed_healthy_io_no(zvol_info_t *zinfo,
+uzfs_zinfo_store_last_committed_healthy_io_no(zvol_info_t *zinfo,
     uint64_t io_seq)
 {
 	if (io_seq == 0)
@@ -466,4 +470,16 @@ uzfs_zvol_store_last_committed_healthy_io_no(zvol_info_t *zinfo,
 	uzfs_zvol_store_kv_pair(zinfo->main_zv,
 	    HEALTHY_IO_SEQNUM, io_seq);
 	pthread_mutex_unlock(&zinfo->zinfo_ionum_mutex);
+}
+
+void
+uzfs_zinfo_set_status(zvol_info_t *zinfo, zvol_status_t status)
+{
+	uzfs_zvol_set_status(zinfo->main_zv, status);
+}
+
+zvol_status_t
+uzfs_zinfo_get_status(zvol_info_t *zinfo)
+{
+	return (uzfs_zvol_get_status(zinfo->main_zv));
 }

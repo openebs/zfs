@@ -33,5 +33,5 @@ test_uzfsserver_CXXFLAGS = -std=c++11
 test_uzfsserver_LDFLAGS = -pthread -lgtest -lgtest_main
 test_uzfs_CXXFLAGS = -std=c++11
 test_uzfs_LDFLAGS = -pthread -lgtest -lgtest_main
-test_zrepl_prot_LDFLAGS = -pthread -lgtest -lgtest_main
+test_zrepl_prot_LDFLAGS = -pthread -lgtest -lgtest_main -ljson-c
 test_zfs_LDFLAGS = -pthread -lgtest -lgtest_main

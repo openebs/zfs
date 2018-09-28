@@ -201,6 +201,7 @@ uzfs_zvol_create_meta(objset_t *os, uint64_t block_size,
     uint64_t meta_block_size, dmu_tx_t *tx)
 {
 	uint64_t metadatasize;
+	uint64_t io_seqnum = 0;
 	int error;
 
 	if (meta_block_size > block_size)
@@ -215,6 +216,14 @@ uzfs_zvol_create_meta(objset_t *os, uint64_t block_size,
 	    &metadatasize, tx);
 	if (error != 0)
 		return (error);
+
+	error = zap_update(os, ZVOL_ZAP_OBJ, HEALTHY_IO_SEQNUM, 8, 1,
+	    &io_seqnum, tx);
+	ASSERT(error == 0);
+
+	error = zap_update(os, ZVOL_ZAP_OBJ, DEGRADED_IO_SEQNUM, 8, 1,
+	    &io_seqnum, tx);
+	ASSERT(error == 0);
 
 	return (0);
 }

@@ -97,6 +97,7 @@ zio_cmd_free(zvol_io_cmd_t **cmd)
 		case ZVOL_OPCODE_READ:
 		case ZVOL_OPCODE_WRITE:
 		case ZVOL_OPCODE_OPEN:
+		case ZVOL_OPCODE_REBUILD_SNAP_DONE:
 			if (zio_cmd->buf != NULL) {
 				kmem_free(zio_cmd->buf, zio_cmd->buf_len);
 			}
@@ -104,6 +105,7 @@ zio_cmd_free(zvol_io_cmd_t **cmd)
 
 		case ZVOL_OPCODE_SYNC:
 		case ZVOL_OPCODE_REBUILD_STEP_DONE:
+		case ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE:
 		case ZVOL_OPCODE_UNMAP:
 			/* Nothing to do */
 			break;
@@ -227,14 +229,20 @@ uzfs_submit_writes(zvol_info_t *zinfo, zvol_io_cmd_t *zio_cmd)
 		remain -= sizeof (*write_hdr);
 		if (remain < write_hdr->len)
 			return (-1);
-
-		rc = uzfs_write_data(zinfo->main_zv, datap, data_offset,
-		    write_hdr->len, &metadata, is_rebuild);
-		if (rc != 0)
-			break;
+		/*
+		 * Write to main_zv when volume is either
+		 * healthy or in REBUILD_AFS state of rebuild
+		 */
+		if (ZVOL_IS_REBUILDING_AFS(zinfo->main_zv) ||
+		    ZVOL_IS_HEALTHY(zinfo->main_zv)) {
+			rc = uzfs_write_data(zinfo->main_zv, datap, data_offset,
+			    write_hdr->len, &metadata, is_rebuild);
+			if (rc != 0)
+				break;
+		}
 
 		/* IO to clone should be sent only when it is from app */
-		if (!is_rebuild && (zinfo->clone_zv != NULL)) {
+		if (!is_rebuild && !ZVOL_IS_HEALTHY(zinfo->main_zv)) {
 			rc = uzfs_write_data(zinfo->clone_zv, datap,
 			    data_offset, write_hdr->len, &metadata,
 			    is_rebuild);
@@ -331,7 +339,9 @@ uzfs_zvol_worker(void *arg)
 					rc = -1;
 					break;
 				}
-			}
+			} else if (!ZVOL_IS_HEALTHY(zinfo->main_zv))
+				/* App IOs should go to clone_zv */
+				read_zv = zinfo->clone_zv;
 
 			rc = uzfs_read_data(read_zv,
 			    (char *)zio_cmd->buf,
@@ -347,6 +357,8 @@ uzfs_zvol_worker(void *arg)
 
 		case ZVOL_OPCODE_SYNC:
 			uzfs_flush_data(zinfo->main_zv);
+			if (!ZVOL_IS_HEALTHY(zinfo->main_zv))
+				uzfs_flush_data(zinfo->clone_zv);
 			atomic_inc_64(&zinfo->sync_req_received_cnt);
 			break;
 
@@ -363,6 +375,8 @@ uzfs_zvol_worker(void *arg)
 			}
 			break;
 
+		case ZVOL_OPCODE_REBUILD_SNAP_DONE:
+		case ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE:
 		case ZVOL_OPCODE_REBUILD_STEP_DONE:
 			break;
 		default:
@@ -496,10 +510,12 @@ uzfs_zvol_rebuild_dw_replica(void *arg)
 	rebuild_thread_arg_t *rebuild_args = arg;
 	struct sockaddr_in replica_ip;
 
+	int		start_rebuild_from_clone = 0;
 	int		rc = 0;
 	int		sfd = -1;
 	uint64_t	offset = 0;
 	uint64_t	checkpointed_ionum;
+	boolean_t 	all_snap_done = B_FALSE;
 	zvol_info_t	*zinfo = NULL;
 	zvol_state_t	*zvol_state;
 	zvol_io_cmd_t	*zio_cmd = NULL;
@@ -535,8 +551,14 @@ uzfs_zvol_rebuild_dw_replica(void *arg)
 	rc = 0;
 
 	/* Set state in-progess state now */
-	checkpointed_ionum = uzfs_zvol_get_last_committed_io_no(
-	    zinfo->main_zv, HEALTHY_IO_SEQNUM);
+	rc = uzfs_zvol_get_last_committed_io_no(
+	    zinfo->main_zv, HEALTHY_IO_SEQNUM, &checkpointed_ionum);
+	if (rc != 0) {
+		LOG_ERR("Unable to get checkpointed num on zvol:%s",
+		    zinfo->name);
+		goto exit;
+	}
+
 	zvol_state = zinfo->main_zv;
 	bzero(&hdr, sizeof (hdr));
 	hdr.status = ZVOL_OP_STATUS_OK;
@@ -565,6 +587,30 @@ next_step:
 		goto exit;
 	}
 
+	/* One more snapshot has been transferred */
+	if (hdr.opcode == ZVOL_OPCODE_REBUILD_SNAP_DONE) {
+#ifdef DEBUG
+		if (inject_error.delay.downgraded_replica_rebuild_size_set == 1)
+			offset = ZVOL_VOLUME_SIZE(zvol_state) + 1;
+#endif
+		ASSERT(offset >= ZVOL_VOLUME_SIZE(zvol_state));
+		rc = uzfs_zvol_handle_rebuild_snap_done(&hdr,
+		    sfd, zinfo);
+		if (rc != 0) {
+			LOG_ERR("Rebuild snap_done failed.. for %s",
+			    zinfo->name);
+			goto exit;
+		}
+		offset = 0;
+		rc = uzfs_zvol_get_last_committed_io_no(zinfo->main_zv,
+		    HEALTHY_IO_SEQNUM, &checkpointed_ionum);
+		if (rc != 0) {
+			LOG_ERR("Unable to get checkpointed num on zvol:%s",
+			    zinfo->name);
+			goto exit;
+		}
+	}
+
 	if (offset >= ZVOL_VOLUME_SIZE(zvol_state)) {
 		hdr.opcode = ZVOL_OPCODE_REBUILD_COMPLETE;
 		rc = uzfs_zvol_socket_write(sfd, (char *)&hdr, sizeof (hdr));
@@ -573,11 +619,17 @@ next_step:
 			    "counting as success with this replica");
 			rc = 0;
 			goto exit;
+		} else if (all_snap_done == B_TRUE) {
+#ifdef DEBUG
+			mutex_enter(&zinfo->main_zv->rebuild_mtx);
+			ASSERT(uzfs_zvol_get_rebuild_status(zinfo->main_zv) ==
+			    ZVOL_REBUILDING_AFS);
+			mutex_exit(&zinfo->main_zv->rebuild_mtx);
+#endif
+			rc = 0;
+			LOG_INFO("Rebuilding zvol %s completed", zinfo->name);
+			goto exit;
 		}
-
-		rc = 0;
-		LOG_INFO("Rebuilding zvol %s completed", zinfo->name);
-		goto exit;
 	} else {
 		bzero(&hdr, sizeof (hdr));
 		hdr.status = ZVOL_OP_STATUS_OK;
@@ -619,37 +671,78 @@ next_step:
 
 		if (hdr.opcode == ZVOL_OPCODE_REBUILD_STEP_DONE) {
 			offset += zvol_rebuild_step_size;
-			LOG_DEBUG("ZVOL_OPCODE_REBUILD_STEP_DONE received");
+			LOG_DEBUG("ZVOL_OPCODE_REBUILD_STEP_DONE received on "
+			    "fd: %d", sfd);
 			goto next_step;
 		}
 
-		/* One more snapshot has been transferred */
-		if (hdr.opcode == ZVOL_OPCODE_REBUILD_SNAP_DONE) {
-			rc = uzfs_zvol_handle_rebuild_snap_done(&hdr,
-			    sfd, zinfo);
-			if (rc != 0) {
-				LOG_ERR("Rebuild snap_done failed.. for %s",
-				    zinfo->name);
-				goto exit;
-			}
-			offset = 0;
-			checkpointed_ionum = uzfs_zvol_get_last_committed_io_no(
-			    zinfo->main_zv, HEALTHY_IO_SEQNUM);
+		if (hdr.opcode == ZVOL_OPCODE_REBUILD_SNAP_DONE)
 			goto next_step;
-		}
 
-		/* All snapshots has been transferred */
 		if (hdr.opcode == ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE) {
+			LOG_DEBUG("Received ALL_SNAP_DONE on fd: %d", sfd);
+			/* All snapshots has been transferred */
+			all_snap_done = B_TRUE;
 			/*
 			 * Change rebuild state to mark that all
 			 * snapshots has been transferred now
 			 */
-			uzfs_zvol_set_rebuild_status(zinfo->main_zv,
-			    ZVOL_REBUILDING_AFS);
-			offset = 0;
-			checkpointed_ionum = uzfs_zvol_get_last_committed_io_no(
-			    zinfo->main_zv, HEALTHY_IO_SEQNUM);
-			goto next_step;
+			mutex_enter(&zinfo->main_zv->rebuild_mtx);
+			if (ZVOL_IS_REBUILDING_ERRORED(zinfo->main_zv)) {
+				mutex_exit(&zinfo->main_zv->rebuild_mtx);
+				rc = -1;
+				goto exit;
+			}
+
+			/*
+			 * Multiple rebuild ops going on in parallel,
+			 * one of them might have changed rebuild state
+			 */
+			zvol_rebuild_status_t state;
+			state = uzfs_zvol_get_rebuild_status(zinfo->main_zv);
+			if (state != ZVOL_REBUILDING_AFS) {
+				ASSERT(state == ZVOL_REBUILDING_SNAP);
+				uzfs_zvol_set_rebuild_status(zinfo->main_zv,
+				    ZVOL_REBUILDING_AFS);
+				if (start_rebuild_from_clone == 0)
+					start_rebuild_from_clone = 1;
+				/*
+				 * Lets ask io_receiver thread to flush
+				 * all outstanding IOs in taskq
+				 */
+				zinfo->quiesce_done = 0;
+				zinfo->quiesce_requested = 1;
+			}
+			mutex_exit(&zinfo->main_zv->rebuild_mtx);
+			/*
+			 * Wait for all outstanding IOs to be flushed
+			 * to disk before making further progress
+			 */
+			while (1) {
+				if (zinfo->quiesce_done ||
+				    !taskq_check_active_ios(
+				    zinfo->uzfs_zvol_taskq)) {
+					zinfo->quiesce_done = 1;
+					zinfo->quiesce_requested = 0;
+					break;
+				}
+				else
+					sleep(1);
+			}
+
+			if (start_rebuild_from_clone == 1) {
+				start_rebuild_from_clone = 2;
+				rc = uzfs_zinfo_rebuild_from_clone(zinfo);
+				if (rc != 0) {
+					LOG_ERR("Rebuild from clone for vol %s "
+					    "failed", zinfo->name);
+					rc = -1;
+					goto exit;
+				}
+				LOG_INFO("Rebuild started from clone for vol "
+				    "%s", zinfo->name);
+			}
+			continue;
 		}
 		ASSERT((hdr.opcode == ZVOL_OPCODE_READ ||
 		    hdr.opcode == ZVOL_OPCODE_UNMAP) &&
@@ -725,10 +818,10 @@ exit:
 }
 
 #define	STORE_LAST_COMMITTED_HEALTHY_IO_NO	\
-    uzfs_zvol_store_last_committed_healthy_io_no
+    uzfs_zinfo_store_last_committed_healthy_io_no
 
 #define	STORE_LAST_COMMITTED_DEGRADED_IO_NO	\
-    uzfs_zvol_store_last_committed_degraded_io_no
+    uzfs_zinfo_store_last_committed_degraded_io_no
 
 void
 uzfs_zvol_timer_thread(void)
@@ -1141,6 +1234,29 @@ uzfs_zvol_rebuild_scanner_callback(off_t offset, size_t len,
 	return (0);
 }
 
+void
+uzfs_zvol_send_zio_cmd(zvol_info_t *zinfo, zvol_io_hdr_t *hdrp,
+    zvol_op_code_t opcode, int fd, char *payload, uint64_t payload_size,
+    uint64_t checkpointed_io_seq)
+{
+
+	zvol_io_cmd_t	*zio_cmd;
+	bzero(hdrp, sizeof (*hdrp));
+	hdrp->status = ZVOL_OP_STATUS_OK;
+	hdrp->version = REPLICA_VERSION;
+	hdrp->opcode = opcode;
+	hdrp->checkpointed_io_seq = checkpointed_io_seq;
+	hdrp->len = payload_size; // MAX_NAME_LEN + 1;
+	zio_cmd = zio_cmd_alloc(hdrp, fd);
+	if (payload_size != 0)
+		bcopy(payload, zio_cmd->buf, payload_size);
+
+	/* Take refcount for uzfs_zvol_worker to work on it */
+	uzfs_zinfo_take_refcnt(zinfo);
+	zio_cmd->zinfo = zinfo;
+	uzfs_zvol_worker(zio_cmd);
+}
+
 /*
  * Rebuild scanner function which after receiving
  * vol_name and IO number, will scan metadata and
@@ -1151,6 +1267,7 @@ uzfs_zvol_rebuild_scanner(void *arg)
 {
 	int		fd = (uintptr_t)arg;
 	zvol_info_t	*zinfo = NULL;
+	zvol_state_t	*snap_zv = NULL;
 	zvol_io_hdr_t	hdr;
 	int 		rc = 0;
 	zvol_rebuild_t	warg;
@@ -1158,8 +1275,12 @@ uzfs_zvol_rebuild_scanner(void *arg)
 	blk_metadata_t	metadata;
 	uint64_t	rebuild_req_offset;
 	uint64_t	rebuild_req_len;
-	zvol_io_cmd_t	*zio_cmd;
 	struct linger	lo = { 1, 0 };
+	boolean_t	all_snap_done = B_FALSE;
+	char		*payload = NULL;
+	uint64_t	checkpointed_io_seq = 0;
+	uint64_t	payload_size = 0;
+
 
 	if ((rc = setsockopt(fd, SOL_SOCKET, SO_LINGER, &lo, sizeof (lo)))
 	    != 0) {
@@ -1241,30 +1362,82 @@ read_socket:
 			    == 1)
 				sleep(5);
 #endif
-			rc = uzfs_get_io_diff(zinfo->main_zv, &metadata,
-			    uzfs_zvol_rebuild_scanner_callback,
+			if (snap_zv == NULL) {
+				rc = uzfs_get_snap_zv_ionum(zinfo,
+				    hdr.checkpointed_io_seq, &snap_zv);
+				if (rc != 0) {
+					LOG_ERR("Snap retrieve failed on zvol"
+					    " %s, err(%d)", zinfo->name, rc);
+					goto exit;
+				}
+			}
+
+			zvol_state_t *zv = zinfo->main_zv;
+			if (snap_zv == NULL) {
+			/*
+			 * which means there is no user snapshot of given
+			 * io_num, but, TODO: we need to make sure that there
+			 * are no ongoing snapshots.
+			 */
+				if (all_snap_done == B_FALSE) {
+					uzfs_zvol_send_zio_cmd(zinfo, &hdr,
+					    ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE,
+					    fd, NULL, 0, 0);
+					all_snap_done = B_TRUE;
+				}
+				if (ZINFO_IS_DEGRADED(zinfo))
+					zv = zinfo->clone_zv;
+			} else {
+				ASSERT(all_snap_done == B_FALSE);
+			}
+
+			rc = uzfs_get_io_diff(zv, &metadata,
+			    snap_zv, uzfs_zvol_rebuild_scanner_callback,
 			    rebuild_req_offset, rebuild_req_len, &warg);
 			if (rc != 0) {
 				LOG_ERR("Rebuild scanning failed on zvol %s "
 				    "err(%d)", zinfo->name, rc);
 				goto exit;
 			}
-			bzero(&hdr, sizeof (hdr));
-			hdr.status = ZVOL_OP_STATUS_OK;
-			hdr.version = REPLICA_VERSION;
-			hdr.opcode = ZVOL_OPCODE_REBUILD_STEP_DONE;
-			zio_cmd = zio_cmd_alloc(&hdr, fd);
-			/* Take refcount for uzfs_zvol_worker to work on it */
-			uzfs_zinfo_take_refcnt(zinfo);
-			zio_cmd->zinfo = zinfo;
-			uzfs_zvol_worker(zio_cmd);
-			zio_cmd = NULL;
+
+			uzfs_zvol_send_zio_cmd(zinfo, &hdr,
+			    ZVOL_OPCODE_REBUILD_STEP_DONE,
+			    fd, NULL, 0, 0);
 			goto read_socket;
 
 		case ZVOL_OPCODE_REBUILD_COMPLETE:
-			LOG_INFO("Rebuild process is over on zvol %s",
-			    zinfo->name);
-			goto exit;
+			/*
+			 * Snapshot we were transferring was not
+			 * internal snapshot, send snap_done opcode
+			 */
+			if (snap_zv != NULL) {
+				rc = uzfs_zvol_get_last_committed_io_no(snap_zv,
+				    HEALTHY_IO_SEQNUM, &checkpointed_io_seq);
+				if (rc != 0) {
+					LOG_ERR("Unable to get checkpointed"
+					    " num on zvol:%s", zinfo->name);
+					goto exit;
+				}
+
+				payload_size = strlen(snap_zv->zv_name) + 1;
+				payload = (char *)malloc(payload_size);
+				strncpy(payload, snap_zv->zv_name,
+				    payload_size);
+				/* As DW replica to create snapshot */
+				uzfs_zvol_send_zio_cmd(zinfo, &hdr,
+				    ZVOL_OPCODE_REBUILD_SNAP_DONE,
+				    fd, payload, payload_size,
+				    checkpointed_io_seq + 1);
+				free(payload);
+				/* Close snapshot dataset */
+				uzfs_close_dataset(snap_zv);
+				snap_zv = NULL;
+				goto read_socket;
+			} else {
+				LOG_INFO("Rebuild process is over on zvol %s",
+				    zinfo->name);
+				goto exit;
+			}
 
 		default:
 			LOG_ERR("Wrong opcode: %d", hdr.opcode);
@@ -1436,19 +1609,27 @@ uzfs_zvol_io_ack_sender(void *arg)
 
 		rc = uzfs_zvol_socket_write(zio_cmd->conn,
 		    (char *)&zio_cmd->hdr, sizeof (zio_cmd->hdr));
-		if (rc == -1) {
-			LOG_ERRNO("socket write err");
-			zinfo->zio_cmd_in_ack = NULL;
-			/*
-			 * exit due to network errors on fd related
-			 * to iscsi target
-			 */
-			if (zio_cmd->conn == fd) {
+		if (rc == -1)
+			goto error_check;
+
+		if (zio_cmd->hdr.opcode == ZVOL_OPCODE_REBUILD_SNAP_DONE) {
+			rc = uzfs_zvol_socket_write(zio_cmd->conn,
+			    (char *)&zio_cmd->buf, sizeof (zio_cmd->hdr.len));
+error_check:
+			if (rc == -1) {
+				LOG_ERRNO("socket write err");
+				zinfo->zio_cmd_in_ack = NULL;
+				/*
+				 * exit due to network errors on fd related
+				 * to iscsi target
+				 */
+				if (zio_cmd->conn == fd) {
+					zio_cmd_free(&zio_cmd);
+					goto exit;
+				}
 				zio_cmd_free(&zio_cmd);
-				goto exit;
+				continue;
 			}
-			zio_cmd_free(&zio_cmd);
-			continue;
 		}
 
 		switch (zio_cmd->hdr.opcode) {
@@ -1577,14 +1758,14 @@ open_zvol(int fd, zvol_info_t **zinfopp)
 	zv = zinfo->main_zv;
 	ASSERT3P(zv, !=, NULL);
 
-	ASSERT3P(zv->zv_status, ==, ZVOL_STATUS_DEGRADED);
+	ASSERT3P(uzfs_zinfo_get_status(zinfo), ==, ZVOL_STATUS_DEGRADED);
 	ASSERT3P(zv->rebuild_info.zv_rebuild_status, ==, ZVOL_REBUILDING_INIT);
 
-	if ((zv->zv_status != ZVOL_STATUS_DEGRADED) ||
+	if ((uzfs_zinfo_get_status(zinfo) != ZVOL_STATUS_DEGRADED) ||
 	    ((zv->rebuild_info.zv_rebuild_status != ZVOL_REBUILDING_INIT) &&
 	    (zv->rebuild_info.zv_rebuild_status != ZVOL_REBUILDING_FAILED))) {
 		LOG_ERR("as status for %s is %d or rebuild status is %d",
-		    open_data.volname, zv->zv_status,
+		    open_data.volname, uzfs_zinfo_get_status(zinfo),
 		    zv->rebuild_info.zv_rebuild_status);
 		hdr.status = ZVOL_OP_STATUS_FAILED;
 		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
@@ -1710,8 +1891,7 @@ uzfs_zvol_io_receiver(void *arg)
 	LOG_INFO("Data connection associated with zvol %s fd: %d",
 	    zinfo->name, fd);
 
-	while ((rc = uzfs_zvol_socket_read(fd, (char *)&hdr, sizeof (hdr))) ==
-	    0) {
+	while ((rc = uzfs_zvol_read_header(fd, &hdr)) == 0) {
 		if ((zinfo->state == ZVOL_INFO_STATE_OFFLINE))
 			break;
 
@@ -1749,6 +1929,19 @@ uzfs_zvol_io_receiver(void *arg)
 		/* Take refcount for uzfs_zvol_worker to work on it */
 		uzfs_zinfo_take_refcnt(zinfo);
 		zio_cmd->zinfo = zinfo;
+
+		/*
+		 * Rebuild want to take consistent snapshot
+		 * so it asked to flush all outstanding IOs
+		 * before taking snapshot on rebuild_clone
+		 */
+		if (zinfo->quiesce_requested) {
+			ASSERT(ZVOL_IS_REBUILDING_AFS(zinfo->main_zv));
+			taskq_wait_outstanding(zinfo->uzfs_zvol_taskq, 0);
+			zinfo->quiesce_requested = 0;
+			zinfo->quiesce_done = 1;
+		}
+
 		taskq_dispatch(zinfo->uzfs_zvol_taskq, uzfs_zvol_worker,
 		    zio_cmd, TQ_SLEEP);
 	}
@@ -1782,6 +1975,8 @@ exit:
 	zinfo->is_io_receiver_created = B_FALSE;
 	(void) uzfs_zvol_release_internal_clone(zinfo->main_zv,
 	    &zinfo->snap_zv, &zinfo->clone_zv);
+	zinfo->quiesce_requested = 0;
+	zinfo->quiesce_done = 1;
 	uzfs_zinfo_drop_refcnt(zinfo);
 thread_exit:
 	close(fd);

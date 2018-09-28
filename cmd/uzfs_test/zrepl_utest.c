@@ -22,7 +22,6 @@ char *tgt_port3 = "99161";
 char *ds1 = "ds1";
 char *ds2 = "ds2";
 char *ds3 = "ds3";
-static uint64_t last_io_seq_sent;
 static uint64_t unmap_region[50][2];
 static uint64_t unmap_idx;
 boolean_t create_snapshot = FALSE;
@@ -324,6 +323,7 @@ zrepl_utest_replica_rebuild_start(int fd, mgmt_ack_t *mgmt_ack,
 	return (0);
 }
 
+
 static void
 reader_thread(void *arg)
 {
@@ -412,7 +412,6 @@ reader_thread(void *arg)
 		}
 
 		if (hdr->opcode == ZVOL_OPCODE_SYNC) {
-			printf("sync ack\n");
 			sync_ack_cnt++;
 			continue;
 		}
@@ -674,8 +673,7 @@ writer_thread(void *arg)
 	while (i < warg->max_iops) {
 		io->hdr.version = REPLICA_VERSION;
 		io->hdr.opcode = ZVOL_OPCODE_WRITE;
-		io->hdr.checkpointed_io_seq = io->hdr.io_seq =
-		    (i > (warg->max_iops - 3)) ? 0 : i + 1;
+		io->hdr.io_seq = i + 1;
 		io->hdr.len = sizeof (struct zvol_io_rw_hdr) +
 		    warg->io_block_size;
 		io->hdr.status = 0;
@@ -712,7 +710,6 @@ writer_thread(void *arg)
 		}
 		nbytes += warg->io_block_size;
 		i++;
-		last_io_seq_sent = io->hdr.checkpointed_io_seq;
 
 		if (warg->rebuild_test && (i == (warg->max_iops - 3))) {
 			/*
@@ -1323,7 +1320,7 @@ check_status:
 		goto exit;
 	}
 	/*
-	 * Check rebuild status of of downgrade replica ds1.
+	 * Check rebuild status of downgrade replica ds1.
 	 */
 status_check:
 	count = zrepl_utest_get_replica_status(ds1, ds1_mgmt_fd, &status_ack);
@@ -1492,7 +1489,7 @@ status_check2:
 
 	/*
 	 * Start rebuild process on downgraded replica ds3
-	 * by sharing IP and rebuild_Port info with ds3.
+	 * by sharing IP and rebuild_port info with ds3.
 	 */
 	rc = zrepl_utest_replica_rebuild_start(ds3_mgmt_fd, mgmt_ack_ds3,
 	    sizeof (mgmt_ack_t) * 3);

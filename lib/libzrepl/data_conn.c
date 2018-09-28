@@ -803,14 +803,13 @@ exit:
 		    zinfo->uzfs_zvol_taskq)) {
 			zinfo->quiesce_done = 1;
 			zinfo->quiesce_requested = 0;
+			uzfs_zvol_destroy_internal_clone(zinfo->main_zv,
+			    &zinfo->snap_zv, &zinfo->clone_zv);
 			break;
 		} else {
 			sleep(1);
 		}
 	}
-
-	uzfs_zvol_destroy_internal_clone(zinfo->main_zv,
-	    &zinfo->snap_zv, &zinfo->clone_zv);
 
 	kmem_free(arg, sizeof (rebuild_thread_arg_t));
 	if (zio_cmd != NULL)
@@ -1969,6 +1968,7 @@ exit:
 	zinfo->is_io_receiver_created = B_FALSE;
 	(void) uzfs_zvol_release_internal_clone(zinfo->main_zv,
 	    &zinfo->snap_zv, &zinfo->clone_zv);
+
 	zinfo->quiesce_requested = 0;
 	zinfo->quiesce_done = 1;
 	uzfs_zinfo_drop_refcnt(zinfo);

@@ -80,6 +80,6 @@ script:
 after_failure:
     - find /var/tmp/test_results/current/log -type f -name '*' -printf "%f\n" -exec cut -c -$ZFS_TEST_TRAVIS_LOG_MAX_LENGTH {} \;
 after_success:
-    - if [ $ZFS_BUILD_TAGS = 1 ]; then ./build_image.sh; fi
+    - if [ $ZFS_BUILD_TAGS = 0 ]; then ./build_image.sh; fi
     - find /var/tmp/test_results/current/log -type f -name '*' -printf "%f\n" -exec cut -c -$ZFS_TEST_TRAVIS_LOG_MAX_LENGTH {} \;
     - bash <(curl -s https://codecov.io/bash)

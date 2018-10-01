@@ -4,7 +4,7 @@ branches:
   only:
     - zfs-0.7-release
     - /^\d+\.\d+(\.\d+)?(-\S*)?$/
-    - /^v\d+\.\d+(\.\d+)?(-\S*)?$/
+    - /^v\d+\.\d+(\.\S*)?$/
 env:
   global:
     # Travis limits maximum log size, we have to cut tests output 

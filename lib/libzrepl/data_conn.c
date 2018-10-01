@@ -102,7 +102,6 @@ static inline void quiesce_wait(zvol_info_t *zinfo, uint8_t delete_clone)
 		else
 			sleep(1);
 	}
-	return;
 }
 
 /*

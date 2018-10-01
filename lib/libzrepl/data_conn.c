@@ -85,6 +85,26 @@ zio_cmd_alloc(zvol_io_hdr_t *hdr, int fd)
 	return (zio_cmd);
 }
 
+static inline void quiesce_wait(zvol_info_t *zinfo, uint8_t delete_clone)
+{
+	while (1) {
+		if (zinfo->quiesce_done ||
+		    !taskq_check_active_ios(
+		    zinfo->uzfs_zvol_taskq)) {
+			zinfo->quiesce_done = 1;
+			zinfo->quiesce_requested = 0;
+			if (delete_clone)
+				uzfs_zvol_destroy_internal_clone(zinfo->main_zv,
+				    &zinfo->snap_zv, &zinfo->clone_zv);
+
+			return;
+		}
+		else
+			sleep(1);
+	}
+	return;
+}
+
 /*
  * Free zio command along with buffer.
  */
@@ -705,17 +725,7 @@ next_step:
 			 * Wait for all outstanding IOs to be flushed
 			 * to disk before making further progress
 			 */
-			while (1) {
-				if (zinfo->quiesce_done ||
-				    !taskq_check_active_ios(
-				    zinfo->uzfs_zvol_taskq)) {
-					zinfo->quiesce_done = 1;
-					zinfo->quiesce_requested = 0;
-					break;
-				}
-				else
-					sleep(1);
-			}
+			quiesce_wait(zinfo, 0);
 
 			if (start_rebuild_from_clone == 1) {
 				start_rebuild_from_clone = 2;
@@ -767,7 +777,7 @@ exit:
 		    "rebuilding failed zvol: %s", zinfo->name);
 	}
 
-	uint8_t quiesce_wait = 0;
+	uint8_t wquiesce = 0;
 
 	(zinfo->main_zv->rebuild_info.rebuild_done_cnt) += 1;
 	if (zinfo->main_zv->rebuild_info.rebuild_cnt ==
@@ -788,7 +798,7 @@ exit:
 			 */
 			zinfo->quiesce_done = 0;
 			zinfo->quiesce_requested = 1;
-			quiesce_wait = 1;
+			wquiesce = 1;
 		}
 	}
 	mutex_exit(&zinfo->main_zv->rebuild_mtx);
@@ -797,19 +807,8 @@ exit:
 	 * Wait for all outstanding IOs to be flushed
 	 * to disk before making further progress
 	 */
-	while (quiesce_wait) {
-		if (zinfo->quiesce_done ||
-		    !taskq_check_active_ios(
-		    zinfo->uzfs_zvol_taskq)) {
-			zinfo->quiesce_done = 1;
-			zinfo->quiesce_requested = 0;
-			uzfs_zvol_destroy_internal_clone(zinfo->main_zv,
-			    &zinfo->snap_zv, &zinfo->clone_zv);
-			break;
-		} else {
-			sleep(1);
-		}
-	}
+	if (wquiesce)
+		quiesce_wait(zinfo, 1);
 
 	kmem_free(arg, sizeof (rebuild_thread_arg_t));
 	if (zio_cmd != NULL)

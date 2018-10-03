@@ -56,6 +56,7 @@
 #endif
 
 #ifndef	_KERNEL
+#include <uzfs_io.h>
 #include <sys/uzfs_zvol.h>
 #endif
 
@@ -747,8 +748,7 @@ dmu_free_long_range_impl(objset_t *os, dnode_t *dn, uint64_t offset,
 #else
 int
 dmu_free_long_range_impl(objset_t *os, dnode_t *dn, uint64_t offset,
-    uint64_t length, blk_metadata_t *metadata, zvol_state_t *zv,
-    boolean_t write_zil)
+    uint64_t length, blk_metadata_t *metadata, zvol_state_t *zv)
 #endif
 {
 	uint64_t object_size;
@@ -757,10 +757,7 @@ dmu_free_long_range_impl(objset_t *os, dnode_t *dn, uint64_t offset,
 	dsl_pool_t *dp = dmu_objset_pool(os);
 	int t;
 #ifndef	_KERNEL
-	int i = 0;
 	boolean_t sync = (dmu_objset_syncprop(os) == ZFS_SYNC_ALWAYS) ? 1 : 0;
-	uint64_t moff, mend, mchunk, mwlen;
-	uint8_t *buf;
 	metaobj_blk_offset_t metablk;
 #endif
 
@@ -768,8 +765,14 @@ dmu_free_long_range_impl(objset_t *os, dnode_t *dn, uint64_t offset,
 		return (SET_ERROR(EINVAL));
 
 	object_size = (dn->dn_maxblkid + 1) * dn->dn_datablksz;
-	if (offset >= object_size)
+	if (offset >= object_size) {
+#ifndef	_KERNEL
+		return (uzfs_write_metadata(zv, offset, length,
+		    metadata, NULL));
+#else
 		return (0);
+#endif
+	}
 
 	if (zfs_per_txg_dirty_frees_percent <= 100)
 		dirty_frees_threshold =
@@ -780,28 +783,20 @@ dmu_free_long_range_impl(objset_t *os, dnode_t *dn, uint64_t offset,
 	if (length == DMU_OBJECT_END || offset + length > object_size)
 		length = object_size - offset;
 
-#ifndef	_KERNEL
-	mchunk = zv->zv_volmetablocksize;
-	buf = kmem_alloc(mchunk, KM_SLEEP);
-	for (i = 0; i < mchunk; i += zv->zv_volmetadatasize)
-		memcpy(buf + i, metadata, sizeof (blk_metadata_t));
-#endif
 	while (length != 0) {
 		uint64_t chunk_end, chunk_begin, chunk_len;
 		uint64_t long_free_dirty_all_txgs = 0;
 		dmu_tx_t *tx;
 
-		if (dmu_objset_zfs_unmounting(dn->dn_objset)) {
-			err = SET_ERROR(EINTR);
-			goto out;
-		}
+		if (dmu_objset_zfs_unmounting(dn->dn_objset))
+			return (SET_ERROR(EINTR));
 
 		chunk_end = chunk_begin = offset + length;
 
 		/* move chunk_begin backwards to the beginning of this chunk */
 		err = get_next_chunk(dn, &chunk_begin, offset);
 		if (err)
-			goto out;
+			return (err);
 
 		ASSERT3U(chunk_begin, >=, offset);
 		ASSERT3U(chunk_begin, <=, chunk_end);
@@ -847,25 +842,20 @@ dmu_free_long_range_impl(objset_t *os, dnode_t *dn, uint64_t offset,
 		err = dmu_tx_assign(tx, TXG_WAIT);
 		if (err) {
 			dmu_tx_abort(tx);
-			goto out;
+			return (err);
 		}
 
 #ifndef	_KERNEL
 		if (zv) {
-			moff = metablk.m_offset;
-			mend = moff + metablk.m_len;
-
-			while (moff < mend) {
-				mwlen = ((moff + mchunk) < mend) ? mchunk :
-				    (mend - moff);
-				dmu_write(zv->zv_objset, ZVOL_META_OBJ,
-				    moff, mwlen, buf, tx);
-				moff += mwlen;
+			err = uzfs_write_metadata(zv, chunk_begin, chunk_len,
+			    metadata, tx);
+			if (err) {
+				dmu_tx_abort(tx);
+				return (err);
 			}
 
-			if (write_zil)
-				zvol_log_truncate(zv, tx, chunk_begin,
-				    chunk_len, sync, metadata);
+			zvol_log_truncate(zv, tx, chunk_begin,
+			    chunk_len, sync, metadata);
 		}
 #endif
 		mutex_enter(&dp->dp_lock);
@@ -880,11 +870,7 @@ dmu_free_long_range_impl(objset_t *os, dnode_t *dn, uint64_t offset,
 
 		length -= chunk_len;
 	}
-out:
-#ifndef	_KERNEL
-	kmem_free(buf, mchunk);
-#endif
-	return (err);
+	return (0);
 }
 
 int
@@ -899,7 +885,7 @@ dmu_free_long_range(objset_t *os, uint64_t object,
 		return (err);
 #ifdef	_UZFS
 	err = dmu_free_long_range_impl(os, dn, offset, length,
-	    NULL, NULL, FALSE);
+	    NULL, NULL);
 #else
 	err = dmu_free_long_range_impl(os, dn, offset, length);
 #endif

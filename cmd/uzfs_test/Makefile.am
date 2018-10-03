@@ -16,7 +16,7 @@ uzfs_test_SOURCES = \
 	uzfs_test_sync.c \
 	uzfs_zvol_zap.c \
 	zrepl_utest.c \
-	uzfs_test_rebuilding.c \
+	uzfs_test_rebuilding.c
 
 uzfs_test_LDADD = \
 	$(top_builddir)/lib/libnvpair/libnvpair.la \

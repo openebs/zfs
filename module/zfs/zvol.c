@@ -626,7 +626,7 @@ zvol_replay_truncate(zvol_state_t *zv, lr_truncate_t *lr, boolean_t byteswap)
 	return (dmu_free_long_range(zv->zv_objset, ZVOL_OBJ, offset, length));
 #else
 	return (dmu_free_long_range_impl(zv->zv_objset, zv->zv_dn, offset,
-	    length, &lr->lr_metadata, zv, FALSE));
+	    length, &lr->lr_metadata, zv));
 #endif
 }
 
@@ -975,7 +975,6 @@ zvol_log_truncate(zvol_state_t *zv, dmu_tx_t *tx, uint64_t off, uint64_t len,
 	lr->lr_length = len;
 
 	itx->itx_sync = sync;
-	zil_itx_assign(zilog, itx, tx);
 #if !defined(_KERNEL)
 	if (metadata != NULL) {
 		lr->lr_version = VERSION_1;

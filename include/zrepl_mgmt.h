@@ -267,11 +267,11 @@ uzfs_zinfo_take_refcnt(zvol_info_t *zinfo)
 /*
  * Check if io sequence number is meant for unmap
  */
-#define	CHECK_UNMAP_IOSEQ(_x)		((_x >> 63) & 1)
+#define	IS_UNMAP_IOSEQ(_x)		((_x >> 63) & 1)
 /*
  * Get unmap io sequence number
  */
-#define	DECODE_IF_UNMAP_IOSEQ(_x)	((_x) &  (~(1ULL <<  63)))
+#define	GET_IOSEQ(_x)	((_x) &  (~(1ULL <<  63)))
 
 #ifdef	__cplusplus
 }

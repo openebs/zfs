@@ -44,11 +44,11 @@
 int
 compare_blk_metadata(blk_metadata_t *first, blk_metadata_t *second)
 {
-	if (DECODE_IF_UNMAP_IOSEQ(first->io_num) <
-	    DECODE_IF_UNMAP_IOSEQ(second->io_num))
+	if (GET_IOSEQ(first->io_num) <
+	    GET_IOSEQ(second->io_num))
 		return (-1);
-	if (DECODE_IF_UNMAP_IOSEQ(first->io_num) ==
-	    DECODE_IF_UNMAP_IOSEQ(second->io_num))
+	if (GET_IOSEQ(first->io_num) ==
+	    GET_IOSEQ(second->io_num))
 		return (0);
 	return (1);
 }

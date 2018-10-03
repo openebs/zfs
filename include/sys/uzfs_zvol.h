@@ -97,7 +97,8 @@ typedef struct zvol_state zvol_state_t;
 #define	UZFS_IO_MREAD_FAIL	3
 #define	UZFS_IO_UNMAP_FAIL	4
 
-#define	ZINFO_IS_DEGRADED(zinfo)	(ZVOL_IS_DEGRADED(zinfo->main_zv))
+#define	ZINFO_IS_HEALTHY(zinfo)		(ZVOL_IS_HEALTHY(zinfo->main_zv))
+#define	ZINFO_IS_DEGRADED(zinfo)	(!(ZINFO_IS_HEALTHY(zinfo)))
 #define	ZVOL_IS_DEGRADED(zv)		(zv->zv_status == ZVOL_STATUS_DEGRADED)
 #define	ZVOL_IS_HEALTHY(zv)		(zv->zv_status == ZVOL_STATUS_HEALTHY)
 
@@ -125,8 +126,7 @@ extern void zvol_log_write(zvol_state_t *zv, dmu_tx_t *tx, uint64_t offset,
  * unmap data and update metadata
  */
 extern int dmu_free_long_range_impl(objset_t *os, dnode_t *dn, uint64_t offset,
-    uint64_t length, blk_metadata_t *metadata, zvol_state_t *zv,
-    boolean_t write_zil);
+    uint64_t length, blk_metadata_t *metadata, zvol_state_t *zv);
 extern void zvol_log_truncate(zvol_state_t *zv, dmu_tx_t *tx, uint64_t off,
     uint64_t len, boolean_t sync, blk_metadata_t *metadata);
 

@@ -53,93 +53,26 @@ inject_error_t	inject_error;
 			len_in_first_aligned_block = len;	\
 	} while (0)
 
-#define	WRITE_METADATA(zv, metablk, mdata, tx)			\
-	do {							\
-		dmu_write(zv->zv_objset, ZVOL_META_OBJ,		\
-		    metablk.m_offset, metablk.m_len,		\
-		    mdata, tx);					\
-	} while (0)
+typedef int (uzfs_perform_ios_fn)(zvol_state_t *zv, char *buf, uint64_t offset,
+    uint64_t len, blk_metadata_t *metadata,
+    boolean_t sync, boolean_t is_rebuild);
 
-/* Writes data 'buf' to dataset 'zv' at 'offset' for 'len' */
-int
-uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
-    blk_metadata_t *metadata, boolean_t is_rebuild)
+static int
+_uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
+    blk_metadata_t *metadata, boolean_t sync, boolean_t is_rebuild)
 {
-	uint64_t bytes = 0, sync;
+	uint64_t bytes = 0;
 	uint64_t volsize = zv->zv_volsize;
 	uint64_t blocksize = zv->zv_volblocksize;
 	uint64_t end = len + offset;
 	uint64_t wrote = 0;
 	objset_t *os = zv->zv_objset;
-	rl_t *rl;
-	uint64_t mlen = 0;
 	int ret = 0, error;
 	metaobj_blk_offset_t metablk;
-	uint64_t metadatasize = zv->zv_volmetadatasize;
 	uint64_t len_in_first_aligned_block = 0;
-	uint32_t count = 0;
-	list_t *chunk_io = NULL;
-	uint64_t orig_offset = offset;
-	char *mdata = NULL, *tmdata = NULL, *tmdataend = NULL;
-
-	/*
-	 * If trying IO on fresh zvol before metadata granularity is set return
-	 * error.
-	 */
-
-	if (zv->zv_metavolblocksize == 0)
-		return (EINVAL);
-	ASSERT3P(zv->zv_metavolblocksize, !=, 0);
-	if (!IS_P2ALIGNED(offset, zv->zv_metavolblocksize) ||
-	    !IS_P2ALIGNED(len, zv->zv_metavolblocksize) ||
-	    len == 0)
-		return (EINVAL);
-
-	if (offset + len > zv->zv_volsize || offset > zv->zv_volsize)
-		return (EINVAL);
-
-	sync = (dmu_objset_syncprop(os) == ZFS_SYNC_ALWAYS) ? 1 : 0;
-	ASSERT3P(zv->zv_volmetablocksize, !=, 0);
-
-#if DEBUG
-	if (inject_error.delay.pre_uzfs_write_data == 1) {
-		LOG_DEBUG("delaying write");
-		sleep(10);
-	}
-#endif
-	if (metadata != NULL) {
-		mlen = get_metadata_len(zv, offset, len);
-		VERIFY((mlen % metadatasize) == 0);
-		tmdata = mdata = kmem_alloc(mlen, KM_SLEEP);
-		tmdataend = mdata + mlen;
-		while (tmdata < tmdataend) {
-			memcpy(tmdata, metadata, metadatasize);
-			tmdata += metadatasize;
-		}
-	}
 
 	CHECK_FIRST_ALIGNED_BLOCK(len_in_first_aligned_block, offset, len,
 	    blocksize);
-
-	rl = zfs_range_lock(&zv->zv_range_lock, offset, len, RL_WRITER);
-
-	if (is_rebuild) {
-		VERIFY(ZVOL_IS_DEGRADED(zv) && (ZVOL_IS_REBUILDING(zv) ||
-		    ZVOL_IS_REBUILDING_ERRORED(zv)));
-		count = uzfs_get_nonoverlapping_ondisk_blks(zv, offset,
-		    len, metadata, (void **)&chunk_io);
-		if (!count)
-			goto exit_with_error;
-chunk_io:
-			GET_NEXT_CHUNK(chunk_io, offset, len, end);
-			wrote = offset - orig_offset;
-			CHECK_FIRST_ALIGNED_BLOCK(
-			    len_in_first_aligned_block, offset, len,
-			    blocksize);
-
-			zv->rebuild_info.rebuild_bytes += len;
-			count--;
-	}
 
 	while (offset < end && offset < volsize) {
 		if (len_in_first_aligned_block != 0) {
@@ -167,12 +100,12 @@ chunk_io:
 		if (error) {
 			dmu_tx_abort(tx);
 			ret = UZFS_IO_TX_ASSIGN_FAIL;
-			goto exit_with_error;
+			break;
 		}
 		dmu_write(os, ZVOL_OBJ, offset, bytes, buf + wrote, tx);
 
 		if (metadata)
-			WRITE_METADATA(zv, metablk, mdata, tx);
+			uzfs_write_metadata(zv, offset, bytes, metadata, tx);
 
 		zvol_log_write(zv, tx, offset, bytes, sync, metadata);
 
@@ -183,7 +116,89 @@ chunk_io:
 		len -= bytes;
 	}
 
-exit_with_error:
+	return (ret);
+}
+
+static int
+_uzfs_unmap_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
+    blk_metadata_t *metadata, boolean_t sync, boolean_t is_rebuild)
+{
+	int error = 0;
+
+	if (!is_rebuild) {
+		metadata->io_num = CREATE_UNMAP_IOSEQ(metadata->io_num);
+	} else {
+		if (!IS_UNMAP_IOSEQ(metadata->io_num))
+			return (EINVAL);
+	}
+
+	error = dmu_free_long_range_impl(zv->zv_objset, zv->zv_dn, offset, len,
+	    metadata, zv);
+	if (error) {
+		LOG_ERR("Failed to free range %lu+%lu err:%d\n",
+		    offset, len, error);
+	}
+	return (error);
+}
+
+/* Writes data 'buf' to dataset 'zv' at 'offset' for 'len' */
+static int
+uzfs_perform_ops(zvol_state_t *zv, uzfs_perform_ios_fn *fn, char *buf,
+    uint64_t offset, uint64_t len, blk_metadata_t *metadata,
+    boolean_t is_rebuild)
+{
+	boolean_t sync;
+	uint64_t end = len + offset;
+	uint64_t wrote = 0;
+	objset_t *os = zv->zv_objset;
+	rl_t *rl;
+	int ret = 0;
+	uint32_t count = 0;
+	list_t *chunk_io = NULL;
+	uint64_t orig_offset = offset;
+
+	/*
+	 * If trying IO on fresh zvol before metadata granularity is set return
+	 * error.
+	 */
+
+	if (zv->zv_metavolblocksize == 0)
+		return (EINVAL);
+
+	ASSERT3P(zv->zv_metavolblocksize, !=, 0);
+
+	if (!IS_P2ALIGNED(offset, zv->zv_metavolblocksize) ||
+	    !IS_P2ALIGNED(len, zv->zv_metavolblocksize) ||
+	    len == 0)
+		return (EINVAL);
+
+	if (offset + len > zv->zv_volsize || offset > zv->zv_volsize)
+		return (EINVAL);
+
+	sync = (dmu_objset_syncprop(os) == ZFS_SYNC_ALWAYS) ? B_TRUE : B_FALSE;
+
+	ASSERT3P(zv->zv_volmetablocksize, !=, 0);
+
+	rl = zfs_range_lock(&zv->zv_range_lock, offset, len, RL_WRITER);
+
+	if (is_rebuild) {
+		VERIFY(ZVOL_IS_DEGRADED(zv) && (ZVOL_IS_REBUILDING(zv) ||
+		    ZVOL_IS_REBUILDING_ERRORED(zv)));
+		count = uzfs_get_nonoverlapping_ondisk_blks(zv, offset,
+		    len, metadata, (void **)&chunk_io);
+		if (!count)
+			goto exit;
+chunk_io:
+			GET_NEXT_CHUNK(chunk_io, offset, len, end);
+			wrote = offset - orig_offset;
+			zv->rebuild_info.rebuild_bytes += len;
+			count--;
+	}
+
+	ret = fn(zv, (char *)buf + wrote, offset, len, metadata,
+	    sync, is_rebuild);
+
+exit:
 	if (is_rebuild && count && !ret &&
 	    ZVOL_IS_DEGRADED(zv) && ZVOL_IS_REBUILDING(zv))
 		goto chunk_io;
@@ -198,8 +213,26 @@ exit_with_error:
 	if (sync)
 		zil_commit(zv->zv_zilog, ZVOL_OBJ);
 
-	if (mdata)
-		kmem_free(mdata, mlen);
+	return (ret);
+}
+
+
+/* Writes data 'buf' to dataset 'zv' at 'offset' for 'len' */
+int
+uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
+    blk_metadata_t *metadata, boolean_t is_rebuild)
+{
+	int ret = 0;
+
+#if DEBUG
+	if (inject_error.delay.pre_uzfs_write_data == 1) {
+		LOG_DEBUG("delaying write");
+		sleep(10);
+	}
+#endif
+
+	ret =  uzfs_perform_ops(zv, _uzfs_write_data, buf, offset, len,
+	    metadata, is_rebuild);
 
 	return (ret);
 }
@@ -518,76 +551,63 @@ int
 uzfs_unmap_data(zvol_state_t *zv, uint64_t offset, uint64_t len,
     blk_metadata_t *metadata, boolean_t is_rebuild)
 {
-	int error = 0;
-	uint32_t count = 0;
-	list_t *chunk_io = NULL;
-	uint64_t orig_offset = offset;
-	uint64_t end = len + offset;
-	uint64_t wrote = 0;
-	uint64_t blocksize = zv->zv_volblocksize;
-	rl_t *rl;
-	uint64_t len_in_first_aligned_block = 0;
+	int ret = 0;
 
-	/*
-	 * If trying IO on fresh zvol before metadata granularity is set return
-	 * error.
-	 */
+	ret = uzfs_perform_ops(zv, _uzfs_unmap_data, NULL, offset, len,
+	    metadata, is_rebuild);
 
-	if (zv->zv_metavolblocksize == 0)
-		return (EINVAL);
+	return (ret);
+}
 
-	ASSERT(metadata);
-	ASSERT3P(zv->zv_metavolblocksize, !=, 0);
-	if (!IS_P2ALIGNED(offset, zv->zv_metavolblocksize) ||
-	    !IS_P2ALIGNED(len, zv->zv_metavolblocksize) ||
-	    len == 0)
-		return (EINVAL);
+int
+uzfs_write_metadata(zvol_state_t *zv, uint64_t offset, uint64_t len,
+    blk_metadata_t *metadata, dmu_tx_t *tx)
+{
+	uint64_t moff, mend, mchunk = 0, mwlen;
+	uint8_t *buf = NULL;
+	metaobj_blk_offset_t metablk;
+	boolean_t tx_commit = B_FALSE;
+	int i, err = 0;
 
-	if (offset + len > zv->zv_volsize || offset > zv->zv_volsize)
-		return (EINVAL);
+	if (!zv)
+		return (0);
 
-	rl = zfs_range_lock(&zv->zv_range_lock, offset, len, RL_WRITER);
+	mchunk = zv->zv_volmetablocksize;
+	buf = kmem_alloc(mchunk, KM_SLEEP);
+	for (i = 0; i < mchunk; i += zv->zv_volmetadatasize)
+		memcpy(buf + i, metadata, sizeof (blk_metadata_t));
 
-	if (!is_rebuild) {
-		metadata->io_num = CREATE_UNMAP_IOSEQ(metadata->io_num);
-	} else {
-		if (!CHECK_UNMAP_IOSEQ(metadata->io_num))
-			return (EINVAL);
+	get_zv_metaobj_block_details(&metablk, zv,
+	    offset, len);
 
-		VERIFY(ZVOL_IS_DEGRADED(zv) && (ZVOL_IS_REBUILDING(zv) ||
-		    ZVOL_IS_REBUILDING_ERRORED(zv)));
-		count = uzfs_get_nonoverlapping_ondisk_blks(zv, offset,
-		    len, metadata, (void **)&chunk_io);
-		if (!count)
+	if (tx == NULL) {
+		tx = dmu_tx_create(zv->zv_objset);
+		dmu_tx_hold_write(tx, ZVOL_META_OBJ,
+		    metablk.m_offset, metablk.m_len);
+		tx_commit = B_TRUE;
+
+		err = dmu_tx_assign(tx, TXG_WAIT);
+		if (err) {
+			dmu_tx_abort(tx);
 			goto out;
-chunk_io:
-			GET_NEXT_CHUNK(chunk_io, offset, len, end);
-			wrote = offset - orig_offset;
-			CHECK_FIRST_ALIGNED_BLOCK(
-			    len_in_first_aligned_block, offset, len,
-			    blocksize);
-
-			zv->rebuild_info.rebuild_bytes += len;
-			count--;
+		}
 	}
 
-	error = dmu_free_long_range_impl(zv->zv_objset, zv->zv_dn, offset, len,
-	    metadata, zv, TRUE);
-	if (error) {
-		LOG_ERR("Failed to free range %lu+%lu err:%d\n",
-		    offset, len, error);
+	moff = metablk.m_offset;
+	mend = moff + metablk.m_len;
+
+	while (moff < mend) {
+		mwlen = ((moff + mchunk) < mend) ? mchunk :
+		    (mend - moff);
+		dmu_write(zv->zv_objset, ZVOL_META_OBJ,
+		    moff, mwlen, buf, tx);
+		moff += mwlen;
 	}
+
+	if (tx_commit)
+		dmu_tx_commit(tx);
 
 out:
-	if (is_rebuild && count && !error &&
-	    ZVOL_IS_DEGRADED(zv) && ZVOL_IS_REBUILDING(zv))
-		goto chunk_io;
-
-	if (chunk_io) {
-		list_destroy(chunk_io);
-		umem_free(chunk_io, sizeof (*chunk_io));
-	}
-
-	zfs_range_unlock(rl);
-	return (error);
+	kmem_free(buf, mchunk);
+	return (err);
 }

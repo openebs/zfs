@@ -95,6 +95,11 @@ extern zvol_status_t uzfs_zvol_get_status(zvol_state_t *zv);
  */
 extern int uzfs_read_metadata(zvol_state_t *zv, char *buf, uint64_t offset,
     uint64_t len, uint64_t *r);
+/*
+ * API to write metadata
+ */
+extern int uzfs_write_metadata(zvol_state_t *zv, uint64_t offset, uint64_t len,
+    blk_metadata_t *metadata, dmu_tx_t *tx);
 #ifdef __cplusplus
 }
 #endif

@@ -50,6 +50,15 @@ uint64_t zvol_rebuild_cmd_queue_limit = REBUILD_CMD_QUEUE_MAX_LIMIT;
 	    zinfo->rebuild_cmd_acked_cnt) >	\
 	    zvol_rebuild_cmd_queue_limit)
 
+#define	IS_IO_ACK_NEEDED(_hdr)				\
+	(!((_hdr->opcode == ZVOL_OPCODE_RB_WRITE) ||	\
+	    (_hdr->opcode == ZVOL_OPCODE_RB_UNMAP)))
+
+#define	IS_REBUILD_OPCODE(_hdr)				\
+	((_hdr->flags & ZVOL_OP_FLAG_REBUILD) &&	\
+	    (_hdr->opcode == ZVOL_OPCODE_H_RB_READ ||	\
+	    _hdr->opcode == ZVOL_OPCODE_H_RB_UNMAP))
+
 uint16_t io_server_port = IO_SERVER_PORT;
 uint16_t rebuild_io_server_port = REBUILD_IO_SERVER_PORT;
 
@@ -76,6 +85,8 @@ zio_cmd_alloc(zvol_io_hdr_t *hdr, int fd)
 	bcopy(hdr, &zio_cmd->hdr, sizeof (zio_cmd->hdr));
 	if ((hdr->opcode == ZVOL_OPCODE_READ) ||
 	    (hdr->opcode == ZVOL_OPCODE_WRITE) ||
+	    (hdr->opcode == ZVOL_OPCODE_H_RB_READ) ||
+	    (hdr->opcode == ZVOL_OPCODE_RB_WRITE) ||
 	    (hdr->opcode == ZVOL_OPCODE_OPEN)) {
 		zio_cmd->buf = kmem_zalloc(sizeof (char) * hdr->len, KM_SLEEP);
 		zio_cmd->buf_len = hdr->len;
@@ -98,6 +109,8 @@ zio_cmd_free(zvol_io_cmd_t **cmd)
 		case ZVOL_OPCODE_WRITE:
 		case ZVOL_OPCODE_OPEN:
 		case ZVOL_OPCODE_REBUILD_SNAP_DONE:
+		case ZVOL_OPCODE_H_RB_READ:
+		case ZVOL_OPCODE_RB_WRITE:
 			if (zio_cmd->buf != NULL) {
 				kmem_free(zio_cmd->buf, zio_cmd->buf_len);
 			}
@@ -107,6 +120,8 @@ zio_cmd_free(zvol_io_cmd_t **cmd)
 		case ZVOL_OPCODE_REBUILD_STEP_DONE:
 		case ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE:
 		case ZVOL_OPCODE_UNMAP:
+		case ZVOL_OPCODE_RB_UNMAP:
+		case ZVOL_OPCODE_H_RB_UNMAP:
 			/* Nothing to do */
 			break;
 
@@ -218,6 +233,13 @@ uzfs_submit_writes(zvol_info_t *zinfo, zvol_io_cmd_t *zio_cmd)
 	uint64_t running_ionum;
 	is_rebuild = hdr->flags & ZVOL_OP_FLAG_REBUILD;
 
+#ifdef DEBUG
+	if (is_rebuild) {
+		ASSERT(ZVOL_IS_REBUILDING(zinfo->main_zv));
+		ASSERT(ZINFO_IS_DEGRADED(zinfo));
+	}
+#endif
+
 	while (remain > 0) {
 		if (remain < sizeof (*write_hdr))
 			return (-1);
@@ -233,7 +255,7 @@ uzfs_submit_writes(zvol_info_t *zinfo, zvol_io_cmd_t *zio_cmd)
 		 * Write to main_zv when volume is either
 		 * healthy or in REBUILD_AFS state of rebuild
 		 */
-		if (ZVOL_IS_REBUILDING_AFS(zinfo->main_zv) ||
+		if (is_rebuild || ZVOL_IS_REBUILDING_AFS(zinfo->main_zv) ||
 		    ZVOL_IS_HEALTHY(zinfo->main_zv)) {
 			rc = uzfs_write_data(zinfo->main_zv, datap, data_offset,
 			    write_hdr->len, &metadata, is_rebuild);
@@ -265,6 +287,53 @@ uzfs_submit_writes(zvol_info_t *zinfo, zvol_io_cmd_t *zio_cmd)
 	return (rc);
 }
 
+static int
+uzfs_submit_unmap(zvol_info_t *zinfo, zvol_io_cmd_t *zio_cmd)
+{
+	zvol_io_hdr_t 	*hdr = &zio_cmd->hdr;
+	int		err = 0;
+	uint64_t running_ionum;
+	boolean_t is_rebuild = hdr->flags & ZVOL_OP_FLAG_REBUILD;
+	blk_metadata_t	metadata;
+
+#ifdef DEBUG
+	if (is_rebuild) {
+		ASSERT(ZVOL_IS_REBUILDING(zinfo->main_zv));
+		ASSERT(ZINFO_IS_DEGRADED(zinfo));
+	}
+#endif
+	metadata.io_num = hdr->io_seq;
+
+	if (is_rebuild ||
+	    ZVOL_IS_REBUILDING_AFS(zinfo->main_zv) ||
+	    ZVOL_IS_HEALTHY(zinfo->main_zv)) {
+		err = uzfs_unmap_data(zinfo->main_zv,
+		    hdr->offset, hdr->len, &metadata, is_rebuild);
+		if (err != 0)
+			goto out;
+	}
+
+	if (!is_rebuild &&
+	    !ZVOL_IS_HEALTHY(zinfo->main_zv)) {
+		err = uzfs_unmap_data(zinfo->clone_zv,
+		    hdr->offset, hdr->len, &metadata, is_rebuild);
+		if (err != 0)
+			goto out;
+	}
+
+	/* Update the highest ionum used for checkpointing */
+	running_ionum = zinfo->running_ionum;
+	while (running_ionum < hdr->io_seq) {
+		atomic_cas_64(&zinfo->running_ionum, running_ionum,
+		    hdr->io_seq);
+		running_ionum = zinfo->running_ionum;
+	}
+
+out:
+	return (err);
+}
+
+
 /*
  * zvol worker is responsible for actual work.
  * It execute read/write/sync command to uzfs.
@@ -278,11 +347,11 @@ uzfs_submit_writes(zvol_info_t *zinfo, zvol_io_cmd_t *zio_cmd)
 void
 uzfs_zvol_worker(void *arg)
 {
-	zvol_io_cmd_t	*zio_cmd;
+	zvol_io_cmd_t   *zio_cmd;
 	zvol_info_t	*zinfo;
-	zvol_state_t	*zvol_state, *read_zv;
-	zvol_io_hdr_t 	*hdr;
-	metadata_desc_t	**metadata_desc;
+	zvol_state_t    *zvol_state, *read_zv;
+	zvol_io_hdr_t   *hdr;
+	metadata_desc_t **metadata_desc;
 	int		rc = 0;
 	boolean_t	rebuild_cmd_req;
 	boolean_t	read_metadata;
@@ -295,7 +364,7 @@ uzfs_zvol_worker(void *arg)
 	read_metadata = hdr->flags & ZVOL_OP_FLAG_READ_METADATA;
 
 	if (zinfo->is_io_ack_sender_created == B_FALSE) {
-		if (!(rebuild_cmd_req && (hdr->opcode == ZVOL_OPCODE_WRITE)))
+		if (IS_IO_ACK_NEEDED(hdr))
 			zio_cmd_free(&zio_cmd);
 		if (hdr->opcode == ZVOL_OPCODE_WRITE)
 			atomic_inc_64(&zinfo->write_req_received_cnt);
@@ -308,7 +377,7 @@ uzfs_zvol_worker(void *arg)
 	if (zinfo->state == ZVOL_INFO_STATE_OFFLINE) {
 		hdr->status = ZVOL_OP_STATUS_FAILED;
 		hdr->len = 0;
-		if (!(rebuild_cmd_req && (hdr->opcode == ZVOL_OPCODE_WRITE)))
+		if (!IS_IO_ACK_NEEDED(hdr))
 			zio_cmd_free(&zio_cmd);
 		goto drop_refcount;
 	}
@@ -328,18 +397,7 @@ uzfs_zvol_worker(void *arg)
 	switch (hdr->opcode) {
 		case ZVOL_OPCODE_READ:
 			read_zv = zinfo->main_zv;
-			if (rebuild_cmd_req) {
-				/*
-				 * if we are rebuilding, we have
-				 * to read the data from the snapshot
-				 */
-				if (zinfo->rebuild_zv) {
-					read_zv = zinfo->rebuild_zv;
-				} else {
-					rc = -1;
-					break;
-				}
-			} else if (!ZVOL_IS_HEALTHY(zinfo->main_zv))
+			if (!ZVOL_IS_HEALTHY(zinfo->main_zv))
 				/* App IOs should go to clone_zv */
 				read_zv = zinfo->clone_zv;
 
@@ -350,7 +408,15 @@ uzfs_zvol_worker(void *arg)
 			atomic_inc_64(&zinfo->read_req_received_cnt);
 			break;
 
+		case ZVOL_OPCODE_H_RB_READ:
+			rc = uzfs_read_data(zinfo->rebuild_zv,
+			    (char *)zio_cmd->buf,
+			    hdr->offset, hdr->len,
+			    metadata_desc);
+			break;
+
 		case ZVOL_OPCODE_WRITE:
+		case ZVOL_OPCODE_RB_WRITE:
 			rc = uzfs_submit_writes(zinfo, zio_cmd);
 			atomic_inc_64(&zinfo->write_req_received_cnt);
 			break;
@@ -363,21 +429,16 @@ uzfs_zvol_worker(void *arg)
 			break;
 
 		case ZVOL_OPCODE_UNMAP:
-			if ((rebuild_cmd_req &&
-			    ZVOL_IS_REBUILDING(zinfo->main_zv)) ||
-			    !CHECK_UNMAP_IOSEQ(hdr->io_seq)) {
-				rc = uzfs_unmap_data(zinfo->main_zv,
-				    hdr->offset, hdr->len,
-				    (blk_metadata_t *)&hdr->io_seq,
-				    rebuild_cmd_req);
-				hdr->len = 0;
-				atomic_inc_64(&zinfo->unmap_req_received_cnt);
-			}
+		case ZVOL_OPCODE_RB_UNMAP:
+			rc = uzfs_submit_unmap(zinfo, zio_cmd);
+			hdr->len = 0;
+			atomic_inc_64(&zinfo->unmap_req_received_cnt);
 			break;
 
 		case ZVOL_OPCODE_REBUILD_SNAP_DONE:
 		case ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE:
 		case ZVOL_OPCODE_REBUILD_STEP_DONE:
+		case ZVOL_OPCODE_H_RB_UNMAP:
 			break;
 		default:
 			VERIFY(!"Should be a valid opcode");
@@ -395,11 +456,8 @@ uzfs_zvol_worker(void *arg)
 	/*
 	 * We are not sending ACK for writes/unmap meant for rebuild
 	 */
-	if (rebuild_cmd_req && ((hdr->opcode == ZVOL_OPCODE_WRITE) ||
-	    ((hdr->opcode == ZVOL_OPCODE_UNMAP) &&
-	    ZVOL_IS_REBUILDING(zinfo->main_zv)))) {
+	if (!IS_IO_ACK_NEEDED(hdr))
 		goto drop_refcount;
-	}
 
 	(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
 	if (!zinfo->is_io_ack_sender_created) {
@@ -407,6 +465,7 @@ uzfs_zvol_worker(void *arg)
 		zio_cmd_free(&zio_cmd);
 		goto drop_refcount;
 	}
+
 	STAILQ_INSERT_TAIL(&zinfo->complete_queue, zio_cmd, cmd_link);
 
 	if (zinfo->io_ack_waiting) {
@@ -744,15 +803,16 @@ next_step:
 			}
 			continue;
 		}
-		ASSERT((hdr.opcode == ZVOL_OPCODE_READ ||
-		    hdr.opcode == ZVOL_OPCODE_UNMAP) &&
-		    (hdr.flags & ZVOL_OP_FLAG_REBUILD));
 
-		if (hdr.opcode == ZVOL_OPCODE_READ)
-			hdr.opcode = ZVOL_OPCODE_WRITE;
+		ASSERT(IS_REBUILD_OPCODE((&hdr)));
+
+		if (hdr.opcode == ZVOL_OPCODE_H_RB_READ)
+			hdr.opcode = ZVOL_OPCODE_RB_WRITE;
+		else if (hdr.opcode == ZVOL_OPCODE_H_RB_UNMAP)
+			hdr.opcode = ZVOL_OPCODE_RB_UNMAP;
 
 		zio_cmd = zio_cmd_alloc(&hdr, sfd);
-		if (hdr.opcode == ZVOL_OPCODE_WRITE) {
+		if (hdr.opcode == ZVOL_OPCODE_RB_WRITE) {
 			rc = uzfs_zvol_socket_read(sfd, zio_cmd->buf, hdr.len);
 			if (rc != 0) {
 				LOG_ERR("read failed %d %lu %lu..",
@@ -1197,10 +1257,10 @@ uzfs_zvol_rebuild_scanner_callback(off_t offset, size_t len,
 
 	hdr.version = REPLICA_VERSION;
 
-	if (CHECK_UNMAP_IOSEQ(metadata->io_num))
-		hdr.opcode = ZVOL_OPCODE_UNMAP;
+	if (IS_UNMAP_IOSEQ(metadata->io_num))
+		hdr.opcode = ZVOL_OPCODE_H_RB_UNMAP;
 	else
-		hdr.opcode = ZVOL_OPCODE_READ;
+		hdr.opcode = ZVOL_OPCODE_H_RB_READ;
 
 	hdr.io_seq = metadata->io_num;
 	hdr.offset = offset;
@@ -1512,7 +1572,7 @@ uzfs_send_reads(int fd, zvol_io_cmd_t *zio_cmd)
 	 * vector write.
 	 */
 	for (md = zio_cmd->metadata_desc; md != NULL; md = md->next) {
-		read_hdr.io_num = DECODE_IF_UNMAP_IOSEQ(md->metadata.io_num);
+		read_hdr.io_num = GET_IOSEQ(md->metadata.io_num);
 		read_hdr.len = md->len;
 		rc = uzfs_zvol_socket_write(fd, (char *)&read_hdr,
 		    sizeof (read_hdr));
@@ -1588,12 +1648,13 @@ uzfs_zvol_io_ack_sender(void *arg)
 			zinfo->rebuild_cmd_acked_cnt++;
 		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 
-		LOG_DEBUG("ACK for op: %d, seq-id: %ld",
+		LOG_DEBUG("ACK for op: %d, seq-id: %lu",
 		    zio_cmd->hdr.opcode, zio_cmd->hdr.io_seq);
 
 		/* account for space taken by metadata headers */
 		if (zio_cmd->hdr.status == ZVOL_OP_STATUS_OK &&
-		    zio_cmd->hdr.opcode == ZVOL_OPCODE_READ) {
+		    (zio_cmd->hdr.opcode == ZVOL_OPCODE_READ ||
+		    zio_cmd->hdr.opcode == ZVOL_OPCODE_H_RB_READ)) {
 			md_len = 0;
 			for (metadata_desc_t *md = zio_cmd->metadata_desc;
 			    md != NULL;
@@ -1643,6 +1704,7 @@ error_check:
 				atomic_inc_64(&zinfo->unmap_req_ack_cnt);
 				break;
 			case ZVOL_OPCODE_READ:
+			case ZVOL_OPCODE_H_RB_READ:
 				if (zio_cmd->hdr.status == ZVOL_OP_STATUS_OK) {
 					/* Send data read from disk */
 					rc = uzfs_send_reads(zio_cmd->conn,

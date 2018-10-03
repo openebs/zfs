@@ -190,7 +190,8 @@ verify_vol_data(void *zv, uint64_t block_size, uint64_t vol_size)
 				exit(1);
 			}
 		for (md_tmp = md; md_tmp != NULL; md_tmp = md_tmp->next)
-			if (iodata[i/block_size] != md_tmp->metadata.io_num) {
+			if (iodata[i/block_size] !=
+			    GET_IOSEQ(md_tmp->metadata.io_num)) {
 				printf("verify merror at %lu %lu %lu\n",
 				    i/block_size, md_tmp->metadata.io_num,
 				    iodata[i/block_size]);
@@ -672,7 +673,7 @@ static void process_options(int argc, char **argv)
 	if (active_size > vol_size)
 		vol_size = active_size << 1;
 
-	if (uzfs_test_id == 8) {
+	if (uzfs_test_id == 6) {
 		data = kmem_zalloc(vol_size, KM_SLEEP);
 		vol_blocks = (vol_size) / io_block_size;
 		iodata = kmem_zalloc(vol_blocks*sizeof (uint64_t), KM_SLEEP);

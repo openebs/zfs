@@ -96,6 +96,25 @@ zio_cmd_alloc(zvol_io_hdr_t *hdr, int fd)
 	return (zio_cmd);
 }
 
+static inline void quiesce_wait(zvol_info_t *zinfo, uint8_t delete_clone)
+{
+	while (1) {
+		if (zinfo->quiesce_done ||
+		    !taskq_check_active_ios(
+		    zinfo->uzfs_zvol_taskq)) {
+			zinfo->quiesce_done = 1;
+			zinfo->quiesce_requested = 0;
+			if (delete_clone)
+				uzfs_zvol_destroy_internal_clone(zinfo->main_zv,
+				    &zinfo->snap_zv, &zinfo->clone_zv);
+
+			return;
+		}
+		else
+			sleep(1);
+	}
+}
+
 /*
  * Free zio command along with buffer.
  */
@@ -422,7 +441,10 @@ uzfs_zvol_worker(void *arg)
 			break;
 
 		case ZVOL_OPCODE_SYNC:
-			uzfs_flush_data(zinfo->main_zv);
+			if (ZVOL_IS_HEALTHY(zinfo->main_zv) ||
+			    ZVOL_IS_REBUILDING_AFS(zinfo->main_zv)) {
+				uzfs_flush_data(zinfo->main_zv);
+			}
 			if (!ZVOL_IS_HEALTHY(zinfo->main_zv))
 				uzfs_flush_data(zinfo->clone_zv);
 			atomic_inc_64(&zinfo->sync_req_received_cnt);
@@ -777,17 +799,7 @@ next_step:
 			 * Wait for all outstanding IOs to be flushed
 			 * to disk before making further progress
 			 */
-			while (1) {
-				if (zinfo->quiesce_done ||
-				    !taskq_check_active_ios(
-				    zinfo->uzfs_zvol_taskq)) {
-					zinfo->quiesce_done = 1;
-					zinfo->quiesce_requested = 0;
-					break;
-				}
-				else
-					sleep(1);
-			}
+			quiesce_wait(zinfo, 0);
 
 			if (start_rebuild_from_clone == 1) {
 				start_rebuild_from_clone = 2;
@@ -847,6 +859,9 @@ exit:
 		LOG_ERR("uzfs_zvol_rebuild_dw_replica thread exiting, "
 		    "rebuilding failed zvol: %s", zinfo->name);
 	}
+
+	uint8_t wquiesce = 0;
+
 	(zinfo->main_zv->rebuild_info.rebuild_done_cnt) += 1;
 	if (zinfo->main_zv->rebuild_info.rebuild_cnt ==
 	    zinfo->main_zv->rebuild_info.rebuild_done_cnt) {
@@ -860,9 +875,23 @@ exit:
 			uzfs_zvol_set_status(zinfo->main_zv,
 			    ZVOL_STATUS_HEALTHY);
 			uzfs_update_ionum_interval(zinfo, 0);
+			/*
+			 * Lets ask io_receiver thread to flush
+			 * all outstanding IOs in taskq
+			 */
+			zinfo->quiesce_done = 0;
+			zinfo->quiesce_requested = 1;
+			wquiesce = 1;
 		}
 	}
 	mutex_exit(&zinfo->main_zv->rebuild_mtx);
+
+	/*
+	 * Wait for all outstanding IOs to be flushed
+	 * to disk before making further progress
+	 */
+	if (wquiesce)
+		quiesce_wait(zinfo, 1);
 
 	kmem_free(arg, sizeof (rebuild_thread_arg_t));
 	if (zio_cmd != NULL)
@@ -1988,6 +2017,7 @@ uzfs_zvol_io_receiver(void *arg)
 			zio_cmd_free(&zio_cmd);
 			break;
 		}
+
 		/* Take refcount for uzfs_zvol_worker to work on it */
 		uzfs_zinfo_take_refcnt(zinfo);
 		zio_cmd->zinfo = zinfo;
@@ -2037,6 +2067,7 @@ exit:
 	zinfo->is_io_receiver_created = B_FALSE;
 	(void) uzfs_zvol_release_internal_clone(zinfo->main_zv,
 	    &zinfo->snap_zv, &zinfo->clone_zv);
+
 	zinfo->quiesce_requested = 0;
 	zinfo->quiesce_done = 1;
 	uzfs_zinfo_drop_refcnt(zinfo);

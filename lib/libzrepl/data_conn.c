@@ -1886,6 +1886,8 @@ uzfs_zvol_io_receiver(void *arg)
 		}
 	}
 
+	zinfo->io_fd = fd;
+
 	LOG_INFO("Data connection associated with zvol %s fd: %d",
 	    zinfo->name, fd);
 

@@ -240,8 +240,8 @@ reader_thread(void *arg)
 		err = uzfs_read_data(zv, buf[idx], offset,
 		    (idx + 1) * block_size, &md);
 		if (err != 0)
-			printf("RIO error at offset: %lu len: %lu\n", offset,
-			    (idx + 1) * block_size);
+			printf("RIO error at offset: %lu len: %lu err:%d\n",
+			    offset, (idx + 1) * block_size, err);
 		verify_data(buf[idx], offset, idx, block_size);
 		unmapped_index = get_unmapped_index(offset,
 		    (idx + 1) * block_size);
@@ -335,10 +335,6 @@ writer_thread(void *arg)
 
 		idx = uzfs_random(15);
 
-		if (get_unmapped_index(offset, (idx + 1) * block_size) >= 0) {
-			goto check_timeout;
-		}
-
 		mutex_enter(mtx);
 		io_num = g_io_num++;
 		mutex_exit(mtx);
@@ -350,6 +346,11 @@ writer_thread(void *arg)
 
 		rl = zfs_range_lock(&zrl, offset, (idx + 1)*block_size,
 		    RL_WRITER);
+
+		if (get_unmapped_index(offset, (idx + 1) * block_size) >= 0) {
+			goto check_timeout;
+		}
+
 		/* randomness in io_num is to test VERSION_0 zil records */
 		md.io_num = io_num;
 		err = uzfs_write_data(zv, buf[idx], offset,
@@ -384,10 +385,9 @@ writer_thread(void *arg)
 //				printf("%lu: %lu\n", io_num, blk_offset + i);
 			}
 		}
-		zfs_range_unlock(rl);
 		ios += (idx + 1);
-
 check_timeout:
+		zfs_range_unlock(rl);
 		now = gethrtime();
 
 		if (now > end)

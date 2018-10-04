@@ -1244,6 +1244,9 @@ handle_start_rebuild_req(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	    loop_cnt < rebuild_op_cnt; loop_cnt++, mack++)
 		if (max_ioseq < mack->checkpointed_io_seq)
 			max_ioseq = mack->checkpointed_io_seq;
+#if	DEBUG
+	if (getenv("avoid_rebuild_count_check"))
+#endif
 
 	if ((zinfo->checkpointed_ionum < max_ioseq) &&
 	    (rebuild_op_cnt != 1)) {

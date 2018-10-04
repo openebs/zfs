@@ -883,7 +883,7 @@ dmu_free_long_range(objset_t *os, uint64_t object,
 	err = dnode_hold(os, object, FTAG, &dn);
 	if (err != 0)
 		return (err);
-#ifdef	_UZFS
+#ifndef	_KERNEL
 	err = dmu_free_long_range_impl(os, dn, offset, length,
 	    NULL, NULL);
 #else

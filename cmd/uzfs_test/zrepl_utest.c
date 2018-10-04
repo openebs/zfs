@@ -1382,7 +1382,7 @@ status_check:
 	 * by sharing IP and rebuild_Port info with ds2.
 	 */
 	rc = zrepl_utest_replica_rebuild_start(ds2_mgmt_fd, mgmt_ack_ds2,
-	    sizeof (mgmt_ack_t) * 1);
+	    sizeof (mgmt_ack_t) * 2);
 	if (rc == -1) {
 		goto exit;
 	}
@@ -1452,9 +1452,27 @@ status_check1:
 	 */
 	rc = zrepl_utest_replica_rebuild_start(ds3_mgmt_fd, mgmt_ack_ds3,
 	    sizeof (mgmt_ack_t) * 3);
-	ASSERT(rc == -1);
+	if (rc == -1) {
+		goto exit;
+	}
+	/*
+	 * Check rebuild status of ds3.
+	 */
+status_check2:
+	count = zrepl_utest_get_replica_status(ds3, ds3_mgmt_fd, &status_ack);
+	if (count == -1) {
+		goto exit;
+	}
 
+	if (status_ack.rebuild_status != ZVOL_REBUILDING_FAILED) {
+		sleep(1);
+		goto status_check2;
+	}
+
+	printf("Rebuilding failed on Replica:%s\n", ds3);
 	sleep(10);
+
+	printf("\n\n");
 
 	/* Lets retry to rebuild on ds3 with correct info */
 	p = mgmt_ack_ds3;

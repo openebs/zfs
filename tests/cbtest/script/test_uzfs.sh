@@ -1240,7 +1240,15 @@ execute_test() {
 
 run_zrepl_rebuild_test()
 {
+	stop_zrepl
+	export avoid_rebuild_count_check=1
+	start_zrepl
+
 	log_must run_zrepl_rebuild_uzfs_test log 4096 disabled
+
+	stop_zrepl
+	unset avoid_rebuild_count_check
+	start_zrepl
 }
 
 echo "ulimit -c unlimited" >> ~/.bash_rc

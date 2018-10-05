@@ -63,8 +63,9 @@ uzfs_test_info_t uzfs_tests[] = {
 };
 
 uint64_t metaverify = 0;
-int verify = 0;
+int verify = -1;
 int write_op = 0;
+int unmap_op = 0;
 int silent = 0;
 int verify_err = 0;
 
@@ -517,7 +518,7 @@ static void usage(int num)
 	    " -l(for log device) -m <metadata to verify during replay>"
 	    " -p <pool name> -s(for sync on) -S(for silent)"
 	    " -V <data to verify during replay> -w(for write during replay)"
-	    " -T <test id> "
+	    " -u(for unmap during replay) -T <test id> "
 	    "-x(directory to scan for pool import default:/tmp/)\n");
 
 	printf("Test id:\n");
@@ -592,7 +593,7 @@ static void process_options(int argc, char **argv)
 	uint64_t num_tests = sizeof (uzfs_tests) / sizeof (uzfs_tests[0]);
 	uint64_t vol_blocks;
 
-	while ((opt = getopt(argc, argv, "a:b:cd:i:lm:p:sSt:v:V:wT:n:x:"))
+	while ((opt = getopt(argc, argv, "a:b:cd:i:lm:p:sSt:v:V:wuT:n:x:"))
 	    != EOF) {
 		switch (opt) {
 			case 'd':
@@ -659,6 +660,9 @@ static void process_options(int argc, char **argv)
 				break;
 			case 'x':
 				pool_dir = optarg;
+				break;
+			case 'u':
+				unmap_op = 1;
 				break;
 			default:
 				usage(0);

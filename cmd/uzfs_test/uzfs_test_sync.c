@@ -48,7 +48,7 @@ verify_fn(void *zv, char *buf, int block_size)
 	}
 
 	if (md != NULL)
-		io_num = md->metadata.io_num;
+		io_num = GET_IOSEQ(md->metadata.io_num);
 	else
 		io_num = 0;
 
@@ -62,7 +62,7 @@ verify_fn(void *zv, char *buf, int block_size)
 	if (md != NULL) {
 		if (md->next != NULL)
 			return (1);
-		if (md->metadata.io_num != io_num)
+		if (metaverify != io_num)
 			return (1);
 		FREE_METADATA_LIST(md);
 	}
@@ -70,7 +70,7 @@ verify_fn(void *zv, char *buf, int block_size)
 }
 
 void
-write_fn(void *zv, char *buf, int block_size)
+write_fn(void *zv, char *buf, int block_size, boolean_t is_unmap)
 {
 	int err, nometa;
 	static uint64_t io_num;
@@ -93,8 +93,19 @@ write_fn(void *zv, char *buf, int block_size)
 	txg1 = uzfs_synced_txg(zv);
 
 	md.io_num = io_num;
-	err = uzfs_write_data(zv, buf, 0, block_size,
-	    (nometa == 1 ? NULL : &md), B_FALSE);
+	if (is_unmap) {
+		/*
+		 * For UNMAP, we will write data at 0 offset and then unmap
+		 */
+		(void) uzfs_write_data(zv, buf, 0, block_size,
+		    &md, B_FALSE);
+		md.io_num = ++io_num;
+		err = uzfs_unmap_data(zv, 0, block_size,
+		    &md, B_FALSE);
+		buf[0] = 0;
+	} else
+		err = uzfs_write_data(zv, buf, 0, block_size,
+		    (nometa == 1 ? NULL : &md), B_FALSE);
 	if (err != 0)
 		printf("IO error\n");
 
@@ -114,6 +125,7 @@ test_replay(void *zv, uint64_t block_size)
 {
 	char *buf;
 	hrtime_t end, now;
+	boolean_t is_unmap;
 
 	buf = (char *)umem_alloc(sizeof (char)*block_size, UMEM_NOFAIL);
 
@@ -121,11 +133,15 @@ test_replay(void *zv, uint64_t block_size)
 	end = now + (hrtime_t)(total_time_in_sec * (hrtime_t)(NANOSEC));
 
 	if (silent == 0)
-		printf("Starting %s..\n", write_op ? "write" : "verify");
+		printf("Starting %s..\n",
+		    write_op ? "write" :
+		    ((unmap_op == 1) ? "unmap" : "verify"));
+
+	is_unmap = (unmap_op == 1) ? B_TRUE : B_FALSE;
 
 	while (1) {
-		if (write_op == 1)
-			write_fn(zv, buf, block_size);
+		if (write_op == 1 || is_unmap)
+			write_fn(zv, buf, block_size, is_unmap);
 		else {
 			verify_err = verify_fn(zv, buf, block_size);
 			goto done;
@@ -141,7 +157,10 @@ test_replay(void *zv, uint64_t block_size)
 done:
 	umem_free(buf, sizeof (char)*block_size);
 	if (silent == 0)
-		printf("Stoping %s..\n", write_op ? "write" : "verify");
+		printf("Stoping %s..\n",
+		    write_op ? "write" :
+		    ((unmap_op == 1) ? "unmap" : "verify"));
+
 	if (write_op == 1)
 		exit(1);
 }
@@ -154,7 +173,7 @@ replay_fn(void *arg)
 
 	zfs_txg_timeout = 30;
 
-	if (write_op == 1) {
+	if (write_op == 1 || unmap_op == 1) {
 		if (create == 1) {
 			setup_unit_test();
 			unit_test_create_pool_ds();
@@ -162,7 +181,7 @@ replay_fn(void *arg)
 
 		open_pool(&spa);
 		open_ds(spa, ds, &zv);
-	} else if (verify != 0) {
+	} else if (verify != -1) {
 		open_pool(&spa);
 		open_ds(spa, ds, &zv);
 	} else {
@@ -173,7 +192,7 @@ replay_fn(void *arg)
 
 	test_replay(zv, io_block_size);
 
-	if (verify != 0)
+	if (verify != -1)
 		if (silent == 0)
 			printf("verify error: %d\n", verify_err);
 	uzfs_close_dataset(zv);

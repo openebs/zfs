@@ -347,11 +347,11 @@ uzfs_dataset_zv_create(const char *ds_name, zvol_state_t **z)
 
 	strlcpy(zv->zv_name, ds_name, MAXNAMELEN);
 
-	error = dmu_objset_own(ds_name, DMU_OST_ZVOL, 1, zv, &os);
+	error = uzfs_hold_dataset(zv);
 	if (error != 0)
 		goto free_ret;
 
-	zv->zv_objset = os;
+	os = zv->zv_objset;
 
 	error = dmu_object_info(os, ZVOL_OBJ, &doi);
 	if (error) {
@@ -412,7 +412,7 @@ free_ret:
 			zil_replay(os, zv, zvol_replay_vector);
 	}
 
-	dmu_objset_disown(zv->zv_objset, zv);
+	uzfs_rele_dataset(zv);
 
 	zv->zv_objset = NULL;
 ret:

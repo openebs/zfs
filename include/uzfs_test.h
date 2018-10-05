@@ -32,6 +32,7 @@ extern int sync_data;
 extern int zfs_txg_timeout;
 extern int total_time_in_sec;
 extern int write_op;
+extern int unmap_op;
 extern int verify_err;
 extern int verify;
 extern int test_iterations;

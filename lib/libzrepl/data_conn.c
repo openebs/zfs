@@ -385,7 +385,8 @@ uzfs_zvol_worker(void *arg)
 	if (zinfo->is_io_ack_sender_created == B_FALSE) {
 		if (IS_IO_ACK_NEEDED(hdr))
 			zio_cmd_free(&zio_cmd);
-		if (hdr->opcode == ZVOL_OPCODE_WRITE)
+		if (hdr->opcode == ZVOL_OPCODE_WRITE ||
+		    hdr->opcode == ZVOL_OPCODE_RB_WRITE)
 			atomic_inc_64(&zinfo->write_req_received_cnt);
 		goto drop_refcount;
 	}
@@ -415,6 +416,14 @@ uzfs_zvol_worker(void *arg)
 	}
 	switch (hdr->opcode) {
 		case ZVOL_OPCODE_READ:
+			/*
+			 * For rebuild read, opcode should be
+			 * set to ZVOL_OPCODE_H_RB_READ
+			 */
+			if (rebuild_cmd_req) {
+				rc = -1;
+				break;
+			}
 			read_zv = zinfo->main_zv;
 			if (!ZVOL_IS_HEALTHY(zinfo->main_zv))
 				/* App IOs should go to clone_zv */

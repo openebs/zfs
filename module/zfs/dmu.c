@@ -767,8 +767,25 @@ dmu_free_long_range_impl(objset_t *os, dnode_t *dn, uint64_t offset,
 	object_size = (dn->dn_maxblkid + 1) * dn->dn_datablksz;
 	if (offset >= object_size) {
 #ifndef	_KERNEL
-		return (uzfs_write_metadata(zv, offset, length,
-		    metadata, NULL));
+		if (zv) {
+			dmu_tx_t *tx = dmu_tx_create(os);
+			get_zv_metaobj_block_details(&metablk, zv,
+			    offset, length);
+			dmu_tx_hold_write(tx, ZVOL_META_OBJ,
+			    metablk.m_offset, metablk.m_len);
+			err = dmu_tx_assign(tx, TXG_WAIT);
+			if (err) {
+				dmu_tx_abort(tx);
+				return (err);
+			}
+			err = uzfs_write_metadata(zv, offset, length,
+			    metadata, tx);
+			zvol_log_truncate(zv, tx, offset, length,
+			    sync, metadata);
+			dmu_tx_commit(tx);
+			return (err);
+		} else
+			return (0);
 #else
 		return (0);
 #endif

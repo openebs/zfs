@@ -959,7 +959,8 @@ uzfs_zvol_execute_async_command(void *arg)
 			 * snap create command failed, close the io
 			 * connection so that it can start the rebuilding
 			 */
-			VERIFY0(shutdown(zinfo->io_fd, SHUT_RDWR));
+			if (zinfo->io_fd >= 0)
+				VERIFY0(shutdown(zinfo->io_fd, SHUT_RDWR));
 			LOG_ERR("Failed to create %s@%s: %d",
 			    zinfo->name, snap, rc);
 			async_task->status = ZVOL_OP_STATUS_FAILED;
@@ -1409,6 +1410,9 @@ process_message(uzfs_mgmt_conn_t *conn)
 		    ZVOL_STATUS_HEALTHY) {
 			if (hdrp->opcode == ZVOL_OPCODE_SNAP_CREATE &&
 			    ZVOL_IS_REBUILDING_AFS(zinfo->main_zv)) {
+				LOG_INFO("zvol %s is not healthy and rebuild"
+				"is going on, can't take the %s snapshot,"
+				"erroring out the rebuild", zvol_name, snap);
 				mutex_enter(&zinfo->main_zv->rebuild_mtx);
 				uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 				    ZVOL_REBUILDING_ERRORED);

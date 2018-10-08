@@ -1988,6 +1988,8 @@ uzfs_zvol_io_receiver(void *arg)
 		}
 	}
 
+	zinfo->io_fd = fd;
+
 	LOG_INFO("Data connection associated with zvol %s fd: %d",
 	    zinfo->name, fd);
 
@@ -2080,6 +2082,7 @@ exit:
 	zinfo->quiesce_requested = 0;
 	zinfo->quiesce_done = 1;
 	uzfs_zinfo_drop_refcnt(zinfo);
+	zinfo->io_fd = -1;
 thread_exit:
 	close(fd);
 	LOG_INFO("Data connection closed on fd: %d", fd);

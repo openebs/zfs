@@ -1678,7 +1678,7 @@ TEST(uZFSRebuild, TestRebuildExitAfterValidWrite) {
 	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
 }
 
-TEST(uZFS, CreateAndDestroyDelayIOReceiverExit) {
+TEST(uZFSIOConnAccept, CreateAndDestroyDelayIOReceiverExit) {
 	io_receiver = &uzfs_zvol_io_receiver;
 	do_data_connection(data_conn_fd_todelete, "127.0.0.1", IO_SERVER_PORT, "vol_todelete");
 #if DEBUG
@@ -2226,7 +2226,7 @@ void mgmt_thread_test_case(int test_case)
 
 kthread_t	*mgmt_thread;
 TEST(MgmtThreadTest, MgmtThreadCreation) {
-	EXPECT_EQ(2, uzfs_mgmt_conn_list_count(&uzfs_mgmt_conns));
+	EXPECT_EQ(3, uzfs_mgmt_conn_list_count(&uzfs_mgmt_conns));
 	EXPECT_EQ(2, zinfo->refcnt);
 
 	mgmt_thread = zk_thread_create(NULL, 0, uzfs_zvol_mgmt_thread,

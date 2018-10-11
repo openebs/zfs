@@ -73,6 +73,7 @@ void uzfs_update_ionum_interval(zvol_info_t *zinfo, uint32_t timeout);
 void uzfs_zvol_timer_thread(void);
 
 void signal_fds_related_to_zinfo(zvol_info_t *zinfo);
+void quiesce_wait(zvol_info_t *zinfo, uint8_t delete_clone);
 
 #ifdef __cplusplus
 }

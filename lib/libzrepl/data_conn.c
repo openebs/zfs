@@ -74,18 +74,21 @@ zio_cmd_alloc(zvol_io_hdr_t *hdr, int fd)
 	    sizeof (zvol_io_cmd_t), KM_SLEEP);
 
 	bcopy(hdr, &zio_cmd->hdr, sizeof (zio_cmd->hdr));
-	if ((hdr->opcode == ZVOL_OPCODE_READ) ||
-	    (hdr->opcode == ZVOL_OPCODE_WRITE) ||
-	    (hdr->opcode == ZVOL_OPCODE_OPEN)) {
+
+	if (hdr->len != 0) {
 		zio_cmd->buf = kmem_zalloc(sizeof (char) * hdr->len, KM_SLEEP);
 		zio_cmd->buf_len = hdr->len;
+		ASSERT((hdr->opcode == ZVOL_OPCODE_READ) ||
+		    (hdr->opcode == ZVOL_OPCODE_WRITE) ||
+		    (hdr->opcode == ZVOL_OPCODE_OPEN) ||
+		    (hdr->opcode == ZVOL_OPCODE_REBUILD_SNAP_DONE));
 	}
-
 	zio_cmd->conn = fd;
 	return (zio_cmd);
 }
 
-static inline void quiesce_wait(zvol_info_t *zinfo, uint8_t delete_clone)
+void
+quiesce_wait(zvol_info_t *zinfo, uint8_t delete_clone)
 {
 	while (1) {
 		if (zinfo->quiesce_done ||
@@ -503,13 +506,19 @@ uzfs_zvol_handle_rebuild_snap_done(zvol_io_hdr_t *hdrp,
 	}
 
 	*snap++ = '\0';
-
+#if 0
+	/*
+	 * TODO: Not sure if we need this check as in test automation
+	 * we can not have multiple replica with same name, intention
+	 * is to pass snap name so that snapshot of same name can be
+	 * taken at DW replica
+	 */
 	if (strcmp(zinfo->name, zvol_name) != 0) {
 		LOG_ERR("Wrong volume, Received name: %s, Expected:%s",
 		    zvol_name, zinfo->name);
 		return (rc = -1);
 	}
-
+#endif
 	rc = uzfs_zvol_create_snapshot_update_zap(zinfo, snap, hdrp->io_seq);
 	if (rc != 0) {
 		LOG_ERR("Failed to create %s@%s: %d", zinfo->name, snap, rc);
@@ -1621,7 +1630,7 @@ uzfs_zvol_io_ack_sender(void *arg)
 
 		if (zio_cmd->hdr.opcode == ZVOL_OPCODE_REBUILD_SNAP_DONE) {
 			rc = uzfs_zvol_socket_write(zio_cmd->conn,
-			    (char *)&zio_cmd->buf, sizeof (zio_cmd->hdr.len));
+			    zio_cmd->buf, zio_cmd->hdr.len);
 error_check:
 			if (rc == -1) {
 				LOG_ERRNO("socket write err");

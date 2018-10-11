@@ -60,6 +60,7 @@ typedef struct worker_args {
 	int *threads_done;
 	uint64_t io_block_size;
 	uint64_t active_size;
+	uint64_t start_offset;
 	int sfd[2];
 	int max_iops;
 	int rebuild_test;

@@ -1237,6 +1237,7 @@ handle_start_rebuild_req(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 		uzfs_update_ionum_interval(zinfo, 0);
 		LOG_INFO("Rebuild of zvol %s completed",
 		    zinfo->name);
+		quiesce_wait(zinfo, 1);
 		uzfs_zinfo_drop_refcnt(zinfo);
 		rc = reply_nodata(conn, ZVOL_OP_STATUS_OK,
 		    hdrp->opcode, hdrp->io_seq);

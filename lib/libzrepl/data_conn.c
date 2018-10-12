@@ -506,13 +506,8 @@ uzfs_zvol_handle_rebuild_snap_done(zvol_io_hdr_t *hdrp,
 	}
 
 	*snap++ = '\0';
-#if 0
-	/*
-	 * TODO: Not sure if we need this check as in test automation
-	 * we can not have multiple replica with same name, intention
-	 * is to pass snap name so that snapshot of same name can be
-	 * taken at DW replica
-	 */
+
+#if !defined(DEBUG)
 	if (strcmp(zinfo->name, zvol_name) != 0) {
 		LOG_ERR("Wrong volume, Received name: %s, Expected:%s",
 		    zvol_name, zinfo->name);

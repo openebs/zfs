@@ -73,6 +73,7 @@ typedef struct inject_delay_s {
 	int helping_replica_rebuild_step;
 	int pre_uzfs_write_data;
 	int downgraded_replica_rebuild_size_set;
+	int io_receiver_exit;
 } inject_delay_t;
 
 typedef struct inject_error_s {
@@ -100,6 +101,11 @@ typedef struct zvol_info_s {
 	zvol_state_t    *rebuild_zv; // current snapshot which is rebuilding
 	uint64_t	refcnt;
 
+	/*
+	 * While checking for these big flags, do as below,
+	 * if (zinfo->is_io_ack_sender_created) (or)
+	 * if (!zinfo->is_io_ack_sender_created)
+	 */
 	union {
 		struct {
 			int	is_io_ack_sender_created	: 1;

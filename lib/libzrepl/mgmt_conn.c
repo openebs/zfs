@@ -1230,17 +1230,29 @@ handle_start_rebuild_req(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 		    sizeof (zvol_rebuild_info_t));
 		/* Mark replica healthy now */
 		uzfs_zvol_set_rebuild_status(zinfo->main_zv,
-		    ZVOL_REBUILDING_DONE);
+		    ZVOL_REBUILDING_AFS);
+		/*
+		 * Lets ask io_receiver thread to flush
+		 * all outstanding IOs in taskq
+		 */
+		zinfo->quiesce_done = 0;
+		zinfo->quiesce_requested = 1;
 		mutex_exit(&zinfo->main_zv->rebuild_mtx);
-		uzfs_zvol_set_status(zinfo->main_zv,
-		    ZVOL_STATUS_HEALTHY);
-		uzfs_update_ionum_interval(zinfo, 0);
-		LOG_INFO("Rebuild of zvol %s completed",
-		    zinfo->name);
-		quiesce_wait(zinfo, 1);
+
+		quiesce_wait(zinfo, 0);
+		rc = uzfs_zinfo_rebuild_from_clone(zinfo);
+		if (rc != 0) {
+			LOG_ERR("Rebuild from clone for vol %s "
+			    "failed", zinfo->name);
+			rc = reply_nodata(conn, ZVOL_OP_STATUS_FAILED,
+			    hdrp->opcode, hdrp->io_seq);
+		} else {
+			LOG_INFO("Rebuild started from clone for vol "
+			    "%s", zinfo->name);
+			rc = reply_nodata(conn, ZVOL_OP_STATUS_OK,
+			    hdrp->opcode, hdrp->io_seq);
+		}
 		uzfs_zinfo_drop_refcnt(zinfo);
-		rc = reply_nodata(conn, ZVOL_OP_STATUS_OK,
-		    hdrp->opcode, hdrp->io_seq);
 		goto end;
 	}
 

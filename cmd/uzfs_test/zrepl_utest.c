@@ -351,9 +351,7 @@ reader_thread(void *arg)
 	kmutex_t *mtx;
 	kcondvar_t *cv;
 	int *threads_done;
-	int write_ack_cnt = 0;
 	int read_ack_cnt = 0;
-	int sync_ack_cnt = 0;
 	zvol_io_hdr_t *hdr;
 	struct zvol_io_rw_hdr read_hdr;
 	worker_args_t *warg = (worker_args_t *)arg;
@@ -367,26 +365,13 @@ reader_thread(void *arg)
 	buf = kmem_alloc(warg->io_block_size, KM_SLEEP);
 	printf("Start reading ........\n");
 	while (1) {
-		if ((warg->max_iops == write_ack_cnt) &&
-		    (warg->max_iops == read_ack_cnt) &&
-		    sync_ack_cnt) {
+		if (warg->max_iops == read_ack_cnt) {
 			break;
 		}
 		count = read(sfd, (void *)hdr, sizeof (zvol_io_hdr_t));
 		if (count == -1) {
 			printf("Read error reader_thread\n");
 			break;
-		}
-
-		if (hdr->opcode == ZVOL_OPCODE_SYNC) {
-			sync_ack_cnt++;
-			continue;
-		}
-
-		if (hdr->opcode == ZVOL_OPCODE_WRITE) {
-			write_ack_cnt++;
-			bzero(hdr, sizeof (zvol_io_hdr_t));
-			continue;
 		}
 
 		if (hdr->opcode == ZVOL_OPCODE_READ) {
@@ -407,6 +392,7 @@ reader_thread(void *arg)
 					printf("\n");
 					printf("Read error in reader_thread "
 					    "reading data\n");
+					goto exit;
 				}
 				p += count;
 				nbytes -= count;
@@ -415,16 +401,75 @@ reader_thread(void *arg)
 			if (zrepl_verify_data(buf, warg->io_block_size) == -1) {
 				printf("Read :%d bytes data\n", count);
 				printf("Data mismatch\n");
+				goto exit;
 			}
 		}
 
 		bzero(hdr, sizeof (zvol_io_hdr_t));
 		bzero(buf, warg->io_block_size);
 	}
+exit:
+	printf("Total read iops requested:%d, total read acks: %d\n",
+	    warg->max_iops, read_ack_cnt);
+	free(hdr);
+	free(buf);
+	mutex_enter(mtx);
+	*threads_done = *threads_done + 1;
+	cv_signal(cv);
+	mutex_exit(mtx);
+	zk_thread_exit();
+}
 
-	printf("Total iops requested:%d, total write acks%d,"
-	    " total read acks: %d total sync acks:%d\n",
-	    warg->max_iops, write_ack_cnt, read_ack_cnt, sync_ack_cnt);
+static void
+write_ack_receiver_thread(void *arg)
+{
+
+	char *buf;
+	int sfd, count;
+	kmutex_t *mtx;
+	kcondvar_t *cv;
+	int *threads_done;
+	int write_ack_cnt = 0;
+	int sync_ack_cnt = 0;
+	zvol_io_hdr_t *hdr;
+	worker_args_t *warg = (worker_args_t *)arg;
+
+	mtx = warg->mtx;
+	cv = warg->cv;
+	threads_done = warg->threads_done;
+
+	sfd = warg->sfd[0];
+	hdr = kmem_alloc(sizeof (zvol_io_hdr_t), KM_SLEEP);
+	buf = kmem_alloc(warg->io_block_size, KM_SLEEP);
+	printf("Start write ack receiving........\n");
+	while (1) {
+		if ((warg->max_iops == write_ack_cnt) &&
+		    sync_ack_cnt) {
+			break;
+		}
+		count = read(sfd, (void *)hdr, sizeof (zvol_io_hdr_t));
+		if (count == -1) {
+			printf("Read error reader_thread\n");
+			break;
+		}
+
+		if (hdr->opcode == ZVOL_OPCODE_SYNC) {
+			sync_ack_cnt++;
+			continue;
+		}
+
+		if (hdr->opcode == ZVOL_OPCODE_WRITE) {
+			write_ack_cnt++;
+			bzero(hdr, sizeof (zvol_io_hdr_t));
+			continue;
+		}
+
+		bzero(hdr, sizeof (zvol_io_hdr_t));
+	}
+
+	printf("Total write iops requested:%d, total write acks:%d,"
+	    " total sync acks:%d\n", warg->max_iops, write_ack_cnt,
+	    sync_ack_cnt);
 	free(hdr);
 	free(buf);
 	mutex_enter(mtx);
@@ -460,7 +505,6 @@ writer_thread(void *arg)
 	bzero(io, sizeof (struct data_io));
 	populate(io->buf, warg->io_block_size);
 
-	printf("Start writing ........\n");
 	/* Write data */
 	while (i < warg->max_iops) {
 		io->hdr.version = REPLICA_VERSION;
@@ -521,9 +565,44 @@ writer_thread(void *arg)
 			goto exit;
 		}
 	}
-	/* Read and validate data */
+	printf("Dataset generation completed.....\n");
+exit:
+	free(io);
+	mutex_enter(mtx);
+	*threads_done = *threads_done + 1;
+	cv_signal(cv);
+	mutex_exit(mtx);
+	zk_thread_exit();
+}
+
+static void
+read_request_sender_thread(void *arg)
+{
+	int i = 0;
+	int sfd, sfd1;
+	int count = 0;
+	uint64_t nbytes;
+	kmutex_t *mtx;
+	kcondvar_t *cv;
+	int *threads_done;
+	struct data_io *io;
+	worker_args_t *warg = (worker_args_t *)arg;
+
+	sfd = warg->sfd[0];
+	sfd1 = warg->sfd[1];
+	mtx = warg->mtx;
+	cv = warg->cv;
+	threads_done = warg->threads_done;
+
+	io = kmem_alloc((sizeof (struct data_io) +
+	    warg->io_block_size), KM_SLEEP);
+
+	bzero(io, sizeof (struct data_io));
+
+	printf("Read request started.....\n");
+	/* Issue read */
 	i = 0;
-	nbytes = 0;
+	nbytes = warg->start_offset;
 	bzero(io, sizeof (struct data_io));
 	while (i < warg->max_iops) {
 		io->hdr.version = REPLICA_VERSION;
@@ -552,8 +631,8 @@ writer_thread(void *arg)
 		nbytes += warg->io_block_size;
 		i++;
 	}
-	printf("Dataset generation completed.....\n");
-exit:
+	printf("Read request completed.....\n");
+
 	free(io);
 	mutex_enter(mtx);
 	*threads_done = *threads_done + 1;
@@ -704,7 +783,9 @@ zrepl_utest(void *arg)
 	int threads_done = 0;
 	int num_threads = 0;
 	kthread_t *reader;
+	kthread_t *reader_req;
 	kthread_t *writer;
+	kthread_t *writer_ack;
 	socklen_t in_len;
 	mgmt_ack_t mgmt_ack;
 	zrepl_status_ack_t status_ack;
@@ -727,6 +808,7 @@ zrepl_utest(void *arg)
 	writer_args.io_block_size = io_block_size;
 	writer_args.active_size = active_size;
 	writer_args.max_iops = max_iops;
+	writer_args.start_offset = 0;
 	writer_args.rebuild_test = B_FALSE;
 
 	reader_args.threads_done = &threads_done;
@@ -735,6 +817,7 @@ zrepl_utest(void *arg)
 	reader_args.io_block_size = io_block_size;
 	reader_args.active_size = active_size;
 	reader_args.max_iops = max_iops;
+	reader_args.start_offset = 0;
 	reader_args.rebuild_test = B_FALSE;
 
 
@@ -765,6 +848,47 @@ zrepl_utest(void *arg)
 
 
 	writer_args.sfd[0] = reader_args.sfd[0] = io_sfd;
+
+	rc = zrepl_utest_get_replica_status(ds, new_fd, &status_ack);
+	if (rc == -1) {
+		goto exit;
+	}
+
+	ASSERT(status_ack.state != ZVOL_STATUS_HEALTHY);
+
+	/* write ack receiver thread  */
+	mutex_enter(&mtx);
+	writer_ack = zk_thread_create(NULL, 0,
+	    (thread_func_t)write_ack_receiver_thread, &writer_args, 0, NULL,
+	    TS_RUN, 0, PTHREAD_CREATE_DETACHED);
+	num_threads++;
+
+	/* Write some data in clone_zv */
+	writer = zk_thread_create(NULL, 0,
+	    (thread_func_t)writer_thread, &writer_args, 0, NULL,
+	    TS_RUN, 0, PTHREAD_CREATE_DETACHED);
+	num_threads++;
+
+	while (threads_done != num_threads)
+		cv_wait(&cv, &mtx);
+	mutex_exit(&mtx);
+
+	/* read ack receiver thread */
+	mutex_enter(&mtx);
+	reader = zk_thread_create(NULL, 0, (thread_func_t)reader_thread,
+	    &reader_args, 0, NULL, TS_RUN, 0, PTHREAD_CREATE_DETACHED);
+	num_threads++;
+
+	/* read req sender thread */
+	reader_req = zk_thread_create(NULL, 0,
+	    (thread_func_t)read_request_sender_thread,
+	    &reader_args, 0, NULL, TS_RUN, 0, PTHREAD_CREATE_DETACHED);
+	num_threads++;
+
+	while (threads_done != num_threads)
+		cv_wait(&cv, &mtx);
+	mutex_exit(&mtx);
+
 	rc = zrepl_utest_get_replica_status(ds, new_fd, &status_ack);
 	if (rc == -1) {
 		goto exit;
@@ -792,18 +916,46 @@ check_status:
 		goto check_status;
 	}
 	printf("Volume:%s health status: HEALTHY\n", ds);
+
+	/* Write to new offset in healthy vol */
+	writer_args.start_offset = writer_args.io_block_size *
+	    writer_args.max_iops;
+	reader_args.start_offset = 0;
+	reader_args.max_iops = reader_args.max_iops * 2;
+
+	mutex_enter(&mtx);
+	/* write ack receiver thread  */
+	writer_ack = zk_thread_create(NULL, 0,
+	    (thread_func_t)write_ack_receiver_thread, &writer_args, 0, NULL,
+	    TS_RUN, 0, PTHREAD_CREATE_DETACHED);
+	num_threads++;
+
+	/* Write some data in clone_zv */
 	writer = zk_thread_create(NULL, 0,
 	    (thread_func_t)writer_thread, &writer_args, 0, NULL,
 	    TS_RUN, 0, PTHREAD_CREATE_DETACHED);
 	num_threads++;
-	reader = zk_thread_create(NULL, 0, (thread_func_t)reader_thread,
-	    &reader_args, 0, NULL, TS_RUN, 0, PTHREAD_CREATE_DETACHED);
-	num_threads++;
-	printf("Write_func thread created successfully\n");
-	mutex_enter(&mtx);
+
 	while (threads_done != num_threads)
 		cv_wait(&cv, &mtx);
 	mutex_exit(&mtx);
+
+	/* read ack receiver thread */
+	mutex_enter(&mtx);
+	reader = zk_thread_create(NULL, 0, (thread_func_t)reader_thread,
+	    &reader_args, 0, NULL, TS_RUN, 0, PTHREAD_CREATE_DETACHED);
+	num_threads++;
+
+	/* read req sender thread */
+	reader_req = zk_thread_create(NULL, 0,
+	    (thread_func_t)read_request_sender_thread,
+	    &reader_args, 0, NULL, TS_RUN, 0, PTHREAD_CREATE_DETACHED);
+	num_threads++;
+
+	while (threads_done != num_threads)
+		cv_wait(&cv, &mtx);
+	mutex_exit(&mtx);
+
 	cv_destroy(&cv);
 	mutex_destroy(&mtx);
 exit:
@@ -896,7 +1048,9 @@ zrepl_rebuild_test(void *arg)
 	int threads_done = 0;
 	int num_threads = 0;
 	kthread_t *reader[2];
+	kthread_t *reader_req;
 	kthread_t *writer;
+	kthread_t *writer_ack;
 	// mgmt_ack_t *p = NULL;
 	mgmt_ack_t *mgmt_ack = NULL;
 	mgmt_ack_t *mgmt_ack_ds1 = NULL;
@@ -926,7 +1080,7 @@ zrepl_rebuild_test(void *arg)
 	writer_args.active_size = active_size;
 	writer_args.max_iops = max_iops;
 	writer_args.start_offset = 0;
-	writer_args.rebuild_test = B_TRUE;
+	writer_args.rebuild_test = B_FALSE;
 
 	reader_args[0].threads_done = &threads_done;
 	reader_args[0].mtx = &mtx;
@@ -934,6 +1088,7 @@ zrepl_rebuild_test(void *arg)
 	reader_args[0].io_block_size = io_block_size;
 	reader_args[0].active_size = active_size;
 	reader_args[0].max_iops = max_iops;
+	reader_args[0].start_offset = 0;
 	reader_args[0].rebuild_test = B_FALSE;
 
 	reader_args[1].threads_done = &threads_done;
@@ -942,7 +1097,8 @@ zrepl_rebuild_test(void *arg)
 	reader_args[1].io_block_size = io_block_size;
 	reader_args[1].active_size = active_size;
 	reader_args[1].max_iops = max_iops / 2;
-	reader_args[1].rebuild_test = B_TRUE;
+	reader_args[1].start_offset = 0;
+	reader_args[1].rebuild_test = B_FALSE;
 
 	ds0_mgmt_fd = create_bind_listen_and_accept(tgt_port, B_TRUE, B_FALSE);
 	if (ds0_mgmt_fd == -1) {
@@ -1030,27 +1186,41 @@ check_status:
 	}
 	printf("Volume:%s health status: HEALTHY\n", ds);
 
-	/* Start writing data to both replicas */
+	/* Write ack receiver thread  */
+	mutex_enter(&mtx);
+	writer_ack = zk_thread_create(NULL, 0,
+	    (thread_func_t)write_ack_receiver_thread, &writer_args, 0, NULL,
+	    TS_RUN, 0, PTHREAD_CREATE_DETACHED);
+	num_threads++;
+
+	/* Write data to ds0 */
 	writer = zk_thread_create(NULL, 0,
 	    (thread_func_t)writer_thread, &writer_args, 0, NULL,
 	    TS_RUN, 0, PTHREAD_CREATE_DETACHED);
 	num_threads++;
 
+	while (threads_done != num_threads)
+		cv_wait(&cv, &mtx);
+	mutex_exit(&mtx);
+
+	/* Read ack receiver thread */
+	mutex_enter(&mtx);
 	reader[0] = zk_thread_create(NULL, 0, (thread_func_t)reader_thread,
 	    &reader_args[0], 0, NULL, TS_RUN, 0, PTHREAD_CREATE_DETACHED);
 	num_threads++;
 
-	reader[1] = zk_thread_create(NULL, 0, (thread_func_t)reader_thread,
-	    &reader_args[1], 0, NULL, TS_RUN, 0, PTHREAD_CREATE_DETACHED);
+	/* Read data from ds0 for validation */
+	reader_req = zk_thread_create(NULL, 0,
+	    (thread_func_t)read_request_sender_thread,
+	    &reader_args, 0, NULL, TS_RUN, 0, PTHREAD_CREATE_DETACHED);
 	num_threads++;
 
-	/* Let's wait for threads to be done */
-	mutex_enter(&mtx);
 	while (threads_done != num_threads)
 		cv_wait(&cv, &mtx);
 	mutex_exit(&mtx);
 	num_threads = threads_done = 0;
 
+	/* Create a snapshot on ds0 */
 	rc = zrepl_utest_snap_create(ds0_mgmt_fd, ds0_io_sfd, ds,
 	    pool, "@test_snap");
 	if (rc == -1) {
@@ -1058,6 +1228,7 @@ check_status:
 		ASSERT(0);
 		goto exit;
 	}
+
 	/* Start rebuilding operation on ds1 from ds0 */
 
 	/*

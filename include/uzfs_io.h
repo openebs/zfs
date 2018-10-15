@@ -100,6 +100,29 @@ extern int uzfs_read_metadata(zvol_state_t *zv, char *buf, uint64_t offset,
  */
 extern int uzfs_write_metadata(zvol_state_t *zv, uint64_t offset, uint64_t len,
     blk_metadata_t *metadata, dmu_tx_t *tx);
+
+#define	WRITE_UNMAP_METADATA(_zv, _os, _off, _len, _md, _is_sync, _err)	\
+do {									\
+	if ((_zv == NULL) || (_len == 0) || (_md == NULL)) {		\
+		_err = 0;						\
+		break;							\
+	}								\
+	metaobj_blk_offset_t _metablk;					\
+	dmu_tx_t *_tx = dmu_tx_create(_os);				\
+	get_zv_metaobj_block_details(&_metablk, _zv,			\
+	    _off, _len);						\
+	dmu_tx_hold_write(_tx, ZVOL_META_OBJ, _metablk.m_offset,	\
+	    _metablk.m_len);						\
+	_err = dmu_tx_assign(_tx, TXG_WAIT);				\
+	if (_err) {							\
+		dmu_tx_abort(_tx);					\
+		break;							\
+	}								\
+	_err = uzfs_write_metadata(_zv, _off, _len, _md, _tx);		\
+	zvol_log_truncate(_zv, _tx, _off, _len, _is_sync, _md);		\
+	dmu_tx_commit(_tx);						\
+} while (0)
+
 #ifdef __cplusplus
 }
 #endif

@@ -104,8 +104,12 @@ _uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 		}
 		dmu_write(os, ZVOL_OBJ, offset, bytes, buf + wrote, tx);
 
-		if (metadata)
-			uzfs_write_metadata(zv, offset, bytes, metadata, tx);
+		if (metadata) {
+			error = uzfs_write_metadata(zv, offset, bytes,
+			    metadata, tx);
+			ret = error;
+			break;
+		}
 
 		zvol_log_write(zv, tx, offset, bytes, sync, metadata);
 
@@ -172,7 +176,7 @@ uzfs_perform_ops(zvol_state_t *zv, uzfs_perform_ios_fn *fn, char *buf,
 	    len == 0)
 		return (EINVAL);
 
-	if (offset + len > zv->zv_volsize || offset > zv->zv_volsize)
+	if (offset + len > zv->zv_volsize)
 		return (EINVAL);
 
 	sync = (dmu_objset_syncprop(os) == ZFS_SYNC_ALWAYS) ? B_TRUE : B_FALSE;
@@ -569,7 +573,7 @@ uzfs_write_metadata(zvol_state_t *zv, uint64_t offset, uint64_t len,
 	boolean_t tx_commit = B_FALSE;
 	int i, err = 0;
 
-	if (!zv)
+	if ((!zv) || (!metadata))
 		return (0);
 
 	mchunk = zv->zv_volmetablocksize;

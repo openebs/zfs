@@ -56,7 +56,7 @@ compare_blk_metadata(blk_metadata_t *first, blk_metadata_t *second)
 boolean_t
 iszero(blk_metadata_t *md)
 {
-	if (md->io_num == 0)
+	if (GET_IOSEQ(md->io_num) == 0)
 		return (B_TRUE);
 	return (B_FALSE);
 }

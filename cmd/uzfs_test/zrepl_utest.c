@@ -73,7 +73,7 @@ zrepl_verify_data(char *p, uint64_t offset, uint64_t size)
 		return (0);
 
 	for (i = 0; i < size; i++) {
-		if (p[i] != 'C') {
+		if (p[i] != 'C' && p[i] != 'R') {
 			return (-1);
 		}
 	}
@@ -548,6 +548,9 @@ uzfs_send_random_writes(int fd1, int fd2, uint64_t running_ioseq,
 		io = kmem_zalloc((sizeof (struct data_io) +
 		    block_size * write_blk), KM_SLEEP);
 		populate(io->buf, block_size * write_blk);
+		for (int i = 0; i < (block_size * write_blk); i++) {
+			io->buf[i] = 'R';
+		}
 		io->hdr.version = REPLICA_VERSION;
 		io->hdr.opcode = ZVOL_OPCODE_WRITE;
 		io->hdr.io_seq = ioseq;
@@ -842,6 +845,7 @@ replica_data_verify_thread(void *arg)
 		hdr.io_seq = i;
 		hdr.len    = warg->io_block_size;
 		hdr.offset = nbytes;
+		hdr.flags = ZVOL_OP_FLAG_READ_METADATA;
 
 		/* Read request to replica ds0 */
 		count = write(sfd, (void *)&hdr, sizeof (zvol_io_hdr_t));
@@ -922,6 +926,8 @@ replica_data_verify_thread(void *arg)
 		    sizeof (struct zvol_io_rw_hdr),
 		    buf2 + sizeof (struct zvol_io_rw_hdr), read_hdr1->len);
 		if (count != 0) {
+			printf("mismatch at offset:%lu len:%lu\n",
+			    hdr.offset, hdr.len);
 			ASSERT(!"Data mistmach mismatch\n");
 		}
 

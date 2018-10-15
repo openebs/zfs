@@ -20,6 +20,7 @@
  */
 #include <sys/zfs_context.h>
 #include <sys/zfs_rlock.h>
+#include <sys/dnode.h>
 #include <uzfs_mgmt.h>
 #include <uzfs_io.h>
 #include <uzfs_test.h>
@@ -43,11 +44,11 @@ char *ds = "ds0";
 char *pool_dir = "/tmp/";
 int max_iops = 0;
 zfs_rlock_t zrl;
-char *data;
 uint64_t *iodata;
 uint64_t g_io_num = 10;
 static uint64_t unmap_region[50][2];
 static int unmap_idx;
+kmutex_t unmap_mtx;
 
 void uzfs_test_get_metablk_details(void *arg);
 uzfs_test_info_t uzfs_tests[] = {
@@ -72,38 +73,52 @@ int verify_err = 0;
 void reader_thread(void *zv);
 
 void
-verify_data(char *buf, uint64_t offset, int idx, uint64_t block_size)
+verify_data(char *buf, uint64_t offset, uint64_t len,
+    metadata_desc_t *metadata_desc, uint64_t block_size)
 {
 	int i;
-	int err = 0;
-	if ((buf[0] != ((offset / 256) % 128)) && (buf[0] != 0)) {
-		printf("error0 in data..\n");
-		err = 1;
-	}
+	uint8_t *mbuf;
+	metadata_desc_t *md;
+	uint64_t end = offset + len;
+	uint64_t chunk_len;
+	uint64_t io_num;
 
-	for (i = 0; i < idx; i++) {
-		if ((buf[((i + 1) * block_size) - 1] !=
-		    (((offset + (i * block_size)) / 4096) % 128)) &&
-		    (buf[((i + 1) * block_size) - 1] != 0)) {
-			printf("error0 %d in data..\n", i);
-			err = 1;
+	mbuf = calloc(1, block_size);
+	for (md = metadata_desc; md != NULL; md = md->next) {
+		len = md->len;
+
+		ASSERT((offset + len) <= end);
+		ASSERT(len);
+
+		/*
+		 * We are not verifying data with metadata 0 or 64th-bit set
+		 */
+		if (md->metadata.io_num == 0 ||
+		    IS_UNMAP_IOSEQ(md->metadata.io_num)) {
+			offset += len;
+			buf += len;
+			continue;
 		}
-		if ((buf[((i + 1) * block_size)] !=
-		    (((offset + ((i + 1) * block_size)) / 256) % 128)) &&
-		    (buf[((i + 1) * block_size)] != 0)) {
-			printf("error1 %d in data..\n", i);
-			err = 1;
+
+		for (i = 0; i < block_size; i += sizeof (md->metadata))
+			memcpy(mbuf + i, &md->metadata, sizeof (md->metadata));
+
+		for (i = 0; i < len; i += chunk_len) {
+			chunk_len = ((i + block_size) < len) ?
+			    block_size : (len - i);
+			memcpy(&io_num, buf + i, sizeof (io_num));
+			/*
+			 * Data written without metadata contains number
+			 * having 64th-bit set. So we will skip that block.
+			 */
+			if (IS_UNMAP_IOSEQ(io_num))
+				continue;
+			VERIFY0(memcmp(buf + i, mbuf, chunk_len));
 		}
+		offset += len;
+		buf += len;
 	}
-	if ((buf[((i + 1) * block_size) - 1] !=
-	    (((offset + (i * block_size)) / 4096) % 128)) &&
-	    (buf[((i + 1) * block_size) - 1] != 0)) {
-		printf("error1 %lu %d in data..\n", offset+i*block_size,
-		    buf[((i+1)*block_size)-1]);
-		err = 1;
-	}
-	if (err == 1)
-		exit(1);
+	free(mbuf);
 }
 
 int
@@ -117,14 +132,18 @@ get_unmapped_index(uint64_t offset, uint64_t len)
 	if (unmap_idx == 0)
 		return (-1);
 
+	mutex_enter(&unmap_mtx);
 	for (i = 0; i < unmap_idx; i++) {
 		u_start = unmap_region[i][0];
 		u_end = u_start + unmap_region[i][1];
 
 		if (((o_start >= u_start) && (o_start < u_end)) ||
-		    ((o_start < u_start) && (o_end > u_start)))
+		    ((o_start < u_start) && (o_end > u_start))) {
+			mutex_exit(&unmap_mtx);
 			return (i);
+		}
 	}
+	mutex_exit(&unmap_mtx);
 	return (-1);
 }
 
@@ -164,14 +183,14 @@ verify_unmapped_data(char *data, uint64_t offset, uint64_t len,
 }
 
 /*
- * Verifies data/metadata read from vol with in-memory copy
+ * Verifies metadata read from vol with in-memory copy and data with metadata
  * block_size is size at which IOs are done
  * vol_size is active dataset size
  */
 void
 verify_vol_data(void *zv, uint64_t block_size, uint64_t vol_size)
 {
-	uint64_t len, i, j;
+	uint64_t len, i;
 	char *buf;
 	metadata_desc_t *md, *md_tmp;
 
@@ -185,11 +204,7 @@ verify_vol_data(void *zv, uint64_t block_size, uint64_t vol_size)
 			continue;
 		memset(buf, 0, block_size);
 		uzfs_read_data(zv, buf, i, len, &md);
-		for (j = 0; j < len; j++)
-			if (data[i+j] != buf[j]) {
-				printf("verify error at %lu\n", (i+j));
-				exit(1);
-			}
+		verify_data(buf, i, len, md, block_size);
 		for (md_tmp = md; md_tmp != NULL; md_tmp = md_tmp->next)
 			if (iodata[i/block_size] !=
 			    GET_IOSEQ(md_tmp->metadata.io_num)) {
@@ -209,7 +224,8 @@ reader_thread(void *arg)
 	worker_args_t *warg = (worker_args_t *)arg;
 	char *buf[15];
 	int idx, j, err;
-	uint64_t blk_offset, offset, vol_blocks, ios = 0, data_ios = 0;
+	uint64_t offset, len;
+	uint64_t blk_offset, vol_blocks, ios = 0, data_ios = 0;
 	hrtime_t end, now;
 	void *zv = warg->zv;
 	kmutex_t *mtx = warg->mtx;
@@ -235,20 +251,21 @@ reader_thread(void *arg)
 
 	while (1) {
 		blk_offset = uzfs_random(vol_blocks - 16);
-		offset = blk_offset * block_size;
 		idx = uzfs_random(15);
-		memset(buf[idx], 0, (idx + 1) * block_size);
-		err = uzfs_read_data(zv, buf[idx], offset,
-		    (idx + 1) * block_size, &md);
+		offset = blk_offset * block_size;
+		len = (idx + 1) * block_size;
+
+		memset(buf[idx], 0, len);
+		err = uzfs_read_data(zv, buf[idx], offset, len, &md);
 		if (err != 0)
 			printf("RIO error at offset: %lu len: %lu err:%d\n",
-			    offset, (idx + 1) * block_size, err);
-		verify_data(buf[idx], offset, idx, block_size);
-		unmapped_index = get_unmapped_index(offset,
-		    (idx + 1) * block_size);
+			    offset, len, err);
+
+		verify_data(buf[idx], offset, len, md, block_size);
+		unmapped_index = get_unmapped_index(offset, len);
 		if (unmapped_index != -1)
-			verify_unmapped_data(buf[idx], offset,
-			    (idx + 1) * block_size, unmapped_index);
+			verify_unmapped_data(buf[idx], offset, len,
+			    unmapped_index);
 
 		if (buf[idx][0] != 0)
 			data_ios += (idx + 1);
@@ -275,27 +292,23 @@ reader_thread(void *arg)
 }
 
 void
-populate_random_data(char *buf, uint64_t offset, int idx, uint64_t block_size)
+populate_data(char *buf, uint64_t offset, uint64_t len, blk_metadata_t *md,
+    uint64_t block_size)
 {
 	int i;
-	for (i = 0; i < (idx + 1)*block_size; i++)
-		buf[i] = uzfs_random(200);
-}
+	char *mbuf;
+	uint64_t chunk_len;
 
-void
-populate_data(char *buf, uint64_t offset, int idx, uint64_t block_size)
-{
-	int i;
-	buf[0] = (offset / 256) % 128;
+	memset(buf, 0, len);
+	mbuf = calloc(1, block_size);
+	for (i = 0; i < block_size; i += sizeof (blk_metadata_t))
+		memcpy(mbuf + i, md, sizeof (blk_metadata_t));
 
-	for (i = 0; i < idx; i++) {
-		buf[((i + 1) * block_size) - 1] =
-		    ((offset + (i * block_size)) / 4096) % 128;
-		buf[((i + 1) * block_size)] =
-		    ((offset + ((i + 1) * block_size)) / 256) % 128;
+	for (i = 0; i < len; i += chunk_len) {
+		chunk_len = (i + block_size) < len ? block_size : (len - i);
+		memcpy(buf + i, mbuf, chunk_len);
 	}
-	buf[((i + 1) * block_size) - 1] =
-	    ((offset + (i * block_size)) / 4096) % 128;
+	free(mbuf);
 }
 
 void
@@ -304,7 +317,7 @@ writer_thread(void *arg)
 	worker_args_t *warg = (worker_args_t *)arg;
 	char *buf[15];
 	int idx, i, j, err;
-	uint64_t blk_offset, offset, vol_blocks, ios = 0;
+	uint64_t blk_offset, offset, vol_blocks, ios = 0, len;
 	hrtime_t end, now;
 	void *zv = warg->zv;
 	kmutex_t *mtx = warg->mtx;
@@ -316,6 +329,7 @@ writer_thread(void *arg)
 	uint64_t io_num;
 	rl_t *rl;
 	blk_metadata_t md;
+	boolean_t write_metadata = B_FALSE;
 
 	i = 0;
 	for (j = 0; j < 15; j++)
@@ -335,55 +349,82 @@ writer_thread(void *arg)
 		offset = blk_offset * block_size;
 
 		idx = uzfs_random(15);
+		len = (idx + 1) * block_size;
 
 		mutex_enter(mtx);
 		io_num = g_io_num++;
 		mutex_exit(mtx);
 
-		if (uzfs_test_id == 2)
-			populate_data(buf[idx], offset, idx, block_size);
+		if (uzfs_test_id == 2 && uzfs_random(2) == 0)
+			write_metadata = B_FALSE;
 		else
-			populate_random_data(buf[idx], offset, idx, block_size);
-
-		rl = zfs_range_lock(&zrl, offset, (idx + 1)*block_size,
-		    RL_WRITER);
-
-		if (get_unmapped_index(offset, (idx + 1) * block_size) >= 0) {
-			goto check_timeout;
-		}
+			write_metadata = B_TRUE;
 
 		/* randomness in io_num is to test VERSION_0 zil records */
-		md.io_num = io_num;
-		err = uzfs_write_data(zv, buf[idx], offset,
-		    (idx + 1) * block_size,
-		    (uzfs_test_id == 2 && uzfs_random(2) == 0) ? NULL : &md,
-		    B_FALSE);
+		if (write_metadata)
+			md.io_num = io_num;
+		else
+			md.io_num = CREATE_UNMAP_IOSEQ(io_num);
+
+		populate_data(buf[idx], offset, len, &md, block_size);
+
+		rl = zfs_range_lock(&zrl, offset, len, RL_WRITER);
+		if (get_unmapped_index(offset, len) >= 0) {
+			goto check_timeout;
+		}
+		err = uzfs_write_data(zv, buf[idx], offset, len,
+		    (write_metadata) ? &md : NULL, B_FALSE);
 		if (err != 0)
 			printf("WIO error at offset: %lu len: %lu\n", offset,
 			    (idx + 1) * block_size);
 
 		if (!(io_num%100)) {
 			if (unmap_idx < ARRAY_SIZE(unmap_region)) {
+				uint64_t object_size;
+				uint64_t uoff = 0, ulen = 0;
+				dnode_t *dn = ((zvol_state_t *)zv)->zv_dn;
+				object_size =  (dn->dn_maxblkid + 1) *
+				    dn->dn_datablksz;
+				if (object_size &&
+				    (object_size < (vol_blocks * block_size)) &&
+				    (uzfs_random(2) == 0)) {
+					/*
+					 * Unmapping region which overlaps
+					 * with last allocated block in zv_dn
+					 */
+					if (object_size > (block_size)) {
+						uoff = object_size - block_size;
+					} else
+						uoff = object_size;
+					ulen = 5 * block_size;
+				} else {
+					/*
+					 * Unmapping last written region
+					 */
+					uoff = offset;
+					ulen = (idx + 1) * block_size;
+				}
+				mutex_enter(mtx);
 				md.io_num = io_num = g_io_num++;
-				err = uzfs_unmap_data(zv, offset,
-				    (idx + 1) * block_size, &md, B_FALSE);
+				mutex_exit(mtx);
+				err = uzfs_unmap_data(zv, uoff, ulen, &md,
+				    B_FALSE);
 				if (err != 0)
-					printf("UNMAP error at "
-					    "offset: %lu len: %lu\n", offset,
-					    (idx + 1) * block_size);
-				memset(buf[idx], 0, (idx + 1)*block_size);
-				unmap_region[unmap_idx][0] = offset;
-				unmap_region[unmap_idx][1] =
-				    (idx + 1) * block_size;
+					printf("UNMAP error at offset: %lu "
+					    "len: %lu err(%d)\n",
+					    uoff, ulen, err);
+				mutex_enter(&unmap_mtx);
+				unmap_region[unmap_idx][0] = uoff;
+				unmap_region[unmap_idx][1] = ulen;
 				unmap_idx++;
+				mutex_exit(&unmap_mtx);
 			}
 		}
 
 		if (uzfs_test_id == 6) {
-			memcpy(&data[offset], buf[idx], (idx + 1)*block_size);
 			for (i = 0; i < (idx+1); i++) {
-				iodata[blk_offset+i] = io_num;
-//				printf("%lu: %lu\n", io_num, blk_offset + i);
+				iodata[blk_offset+i] =
+				    (write_metadata) ? io_num : 0;
 			}
 		}
 		ios += (idx + 1);
@@ -678,7 +719,6 @@ static void process_options(int argc, char **argv)
 		vol_size = active_size << 1;
 
 	if (uzfs_test_id == 6) {
-		data = kmem_zalloc(vol_size, KM_SLEEP);
 		vol_blocks = (vol_size) / io_block_size;
 		iodata = kmem_zalloc(vol_blocks*sizeof (uint64_t), KM_SLEEP);
 	}
@@ -775,6 +815,7 @@ unit_test_fn(void *arg)
 	worker_args_t reader1_args;
 	worker_args_t writer_args[3];
 
+	mutex_init(&unmap_mtx, NULL, MUTEX_DEFAULT, NULL);
 	mutex_init(&mtx, NULL, MUTEX_DEFAULT, NULL);
 	cv_init(&cv, NULL, CV_DEFAULT, NULL);
 
@@ -829,6 +870,7 @@ unit_test_fn(void *arg)
 
 	cv_destroy(&cv);
 	mutex_destroy(&mtx);
+	mutex_destroy(&unmap_mtx);
 	uzfs_close_dataset(zv);
 	uzfs_close_pool(spa);
 }

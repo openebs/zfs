@@ -63,13 +63,13 @@ enum zvol_op_code {
 	ZVOL_OPCODE_SYNC,
 	/*
 	 * Following requests are used on rebuild connection
-	 * *_H_RB_* = if opcode is for replica which is helping in rebuild
-	 * *_RB_*   = if opcode is for replica which is rebuilding
+	 * *_HELPING_* = if opcode is for replica which is helping in rebuild
+	 * *_DW_*   = if opcode is for replica which is rebuilding
 	 */
-	ZVOL_OPCODE_H_RB_READ,
-	ZVOL_OPCODE_H_RB_UNMAP,
-	ZVOL_OPCODE_RB_WRITE,
-	ZVOL_OPCODE_RB_UNMAP,
+	ZVOL_OPCODE_HELPING_READ,
+	ZVOL_OPCODE_HELPING_UNMAP,
+	ZVOL_OPCODE_DW_WRITE,
+	ZVOL_OPCODE_DW_UNMAP,
 	// Following commands apply to mgmt connection
 	ZVOL_OPCODE_UNMAP,
 	ZVOL_OPCODE_REPLICA_STATUS,

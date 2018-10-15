@@ -236,7 +236,7 @@ uzfs_mock_rebuild_scanner_exit_after_write(void *arg)
 	/* Read ZVOL_OPCODE_REBUILD_STEP */
 	uzfs_mock_rebuild_scanner_read_rebuild_step(fd, &hdr);
 
-	hdr.opcode = ZVOL_OPCODE_H_RB_READ;
+	hdr.opcode = ZVOL_OPCODE_HELPING_READ;
 	hdr.flags = ZVOL_OP_FLAG_REBUILD;
 	hdr.status = ZVOL_OP_STATUS_OK;
 	hdr.len = 512;
@@ -317,7 +317,7 @@ uzfs_mock_rebuild_scanner_rebuild_comp(void *arg)
 		}
 	}
 
-	hdr.opcode = ZVOL_OPCODE_H_RB_READ;
+	hdr.opcode = ZVOL_OPCODE_HELPING_READ;
 	hdr.flags = ZVOL_OP_FLAG_REBUILD;
 	hdr.status = ZVOL_OP_STATUS_OK;
 	hdr.len = 512;

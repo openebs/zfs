@@ -767,25 +767,9 @@ dmu_free_long_range_impl(objset_t *os, dnode_t *dn, uint64_t offset,
 	object_size = (dn->dn_maxblkid + 1) * dn->dn_datablksz;
 	if (offset >= object_size) {
 #ifndef	_KERNEL
-		if (zv) {
-			dmu_tx_t *tx = dmu_tx_create(os);
-			get_zv_metaobj_block_details(&metablk, zv,
-			    offset, length);
-			dmu_tx_hold_write(tx, ZVOL_META_OBJ,
-			    metablk.m_offset, metablk.m_len);
-			err = dmu_tx_assign(tx, TXG_WAIT);
-			if (err) {
-				dmu_tx_abort(tx);
-				return (err);
-			}
-			err = uzfs_write_metadata(zv, offset, length,
-			    metadata, tx);
-			zvol_log_truncate(zv, tx, offset, length,
-			    sync, metadata);
-			dmu_tx_commit(tx);
-			return (err);
-		} else
-			return (0);
+		WRITE_UNMAP_METADATA(zv, os, offset, length,
+		    metadata, sync, err);
+		return (err);
 #else
 		return (0);
 #endif
@@ -798,7 +782,20 @@ dmu_free_long_range_impl(objset_t *os, dnode_t *dn, uint64_t offset,
 		dirty_frees_threshold = zfs_dirty_data_max / 4;
 
 	if (length == DMU_OBJECT_END || offset + length > object_size)
+#ifdef	_KERNEL
 		length = object_size - offset;
+#else
+	{
+		if (length != DMU_OBJECT_END) {
+			WRITE_UNMAP_METADATA(zv, os, object_size,
+			    length - (object_size - offset),
+			    metadata, sync, err);
+			if (err)
+				return (err);
+		}
+		length = object_size - offset;
+	}
+#endif
 
 	while (length != 0) {
 		uint64_t chunk_end, chunk_begin, chunk_len;
@@ -842,7 +839,7 @@ dmu_free_long_range_impl(objset_t *os, dnode_t *dn, uint64_t offset,
 		dmu_tx_hold_free(tx, dn->dn_object, chunk_begin, chunk_len);
 
 #ifndef	_KERNEL
-		if (zv) {
+		if (zv && metadata) {
 			get_zv_metaobj_block_details(&metablk, zv,
 			    chunk_begin, chunk_len);
 			dmu_tx_hold_write(tx, ZVOL_META_OBJ,
@@ -864,11 +861,13 @@ dmu_free_long_range_impl(objset_t *os, dnode_t *dn, uint64_t offset,
 
 #ifndef	_KERNEL
 		if (zv) {
-			err = uzfs_write_metadata(zv, chunk_begin, chunk_len,
-			    metadata, tx);
-			if (err) {
-				dmu_tx_abort(tx);
-				return (err);
+			if (metadata) {
+				err = uzfs_write_metadata(zv,
+				    chunk_begin, chunk_len, metadata, tx);
+				if (err) {
+					dmu_tx_abort(tx);
+					return (err);
+				}
 			}
 
 			zvol_log_truncate(zv, tx, chunk_begin,

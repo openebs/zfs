@@ -1167,6 +1167,8 @@ uzfs_zinfo_rebuild_from_clone(zvol_info_t *zinfo)
 	return (uzfs_zinfo_rebuild_start_threads(&mack, zinfo, 1));
 }
 
+extern void quiesce_wait(zvol_info_t *zinfo, uint8_t delete_clone);
+
 /*
  * Sanitizes START_REBUILD request, its header.
  * Handles rebuild for single replica case.
@@ -1228,6 +1230,7 @@ handle_start_rebuild_req(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 		mutex_exit(&zinfo->main_zv->rebuild_mtx);
 		uzfs_zvol_set_status(zinfo->main_zv,
 		    ZVOL_STATUS_HEALTHY);
+		quiesce_wait(zinfo, 1);
 		uzfs_update_ionum_interval(zinfo, 0);
 		LOG_INFO("Rebuild of zvol %s completed",
 		    zinfo->name);

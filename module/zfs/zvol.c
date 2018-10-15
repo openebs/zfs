@@ -615,6 +615,14 @@ static int
 zvol_replay_truncate(zvol_state_t *zv, lr_truncate_t *lr, boolean_t byteswap)
 {
 	uint64_t offset, length;
+#ifndef	_KERNEL
+	blk_metadata_t *metadata;
+
+	if (lr->lr_version == VERSION_1)
+		metadata = &lr->lr_metadata;
+	else
+		metadata = NULL;
+#endif
 
 	if (byteswap)
 		byteswap_uint64_array(lr, sizeof (*lr));
@@ -626,7 +634,7 @@ zvol_replay_truncate(zvol_state_t *zv, lr_truncate_t *lr, boolean_t byteswap)
 	return (dmu_free_long_range(zv->zv_objset, ZVOL_OBJ, offset, length));
 #else
 	return (dmu_free_long_range_impl(zv->zv_objset, zv->zv_dn, offset,
-	    length, &lr->lr_metadata, zv));
+	    length, metadata, zv));
 #endif
 }
 

@@ -162,6 +162,7 @@ typedef struct zvol_info_s {
 	/* Rebuild flags to quiesce IOs */
 	uint8_t		quiesce_requested;
 	uint8_t		quiesce_done;
+	int32_t		io_fd;
 
 	/* Pointer to mgmt connection for this zinfo */
 	void		*mgmt_conn;

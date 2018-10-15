@@ -383,7 +383,7 @@ uzfs_zvol_worker(void *arg)
 	rebuild_cmd_req = hdr->flags & ZVOL_OP_FLAG_REBUILD;
 	read_metadata = hdr->flags & ZVOL_OP_FLAG_READ_METADATA;
 
-	if (zinfo->is_io_ack_sender_created == B_FALSE) {
+	if (!zinfo->is_io_ack_sender_created) {
 		if (IS_IO_ACK_NEEDED(hdr))
 			zio_cmd_free(&zio_cmd);
 		if (hdr->opcode == ZVOL_OPCODE_WRITE ||
@@ -1320,7 +1320,7 @@ uzfs_zvol_rebuild_scanner_callback(off_t offset, size_t len,
 
 	while (1) {
 		if ((zinfo->state == ZVOL_INFO_STATE_OFFLINE) ||
-		    (zinfo->is_io_ack_sender_created == B_FALSE))
+		    (!zinfo->is_io_ack_sender_created))
 			return (-1);
 		if (IS_REBUILD_HIT_MAX_CMD_LIMIT(zinfo))
 			usleep(100);
@@ -1402,14 +1402,14 @@ uzfs_zvol_rebuild_scanner(void *arg)
 read_socket:
 	if ((zinfo != NULL) &&
 	    ((zinfo->state == ZVOL_INFO_STATE_OFFLINE) ||
-	    (zinfo->is_io_ack_sender_created == B_FALSE)))
+	    (!zinfo->is_io_ack_sender_created)))
 		goto exit;
 
 	rc = uzfs_zvol_read_header(fd, &hdr);
 	if ((rc != 0) ||
 	    ((zinfo != NULL) &&
 	    ((zinfo->state == ZVOL_INFO_STATE_OFFLINE) ||
-	    (zinfo->is_io_ack_sender_created == B_FALSE))))
+	    (!zinfo->is_io_ack_sender_created))))
 		goto exit;
 
 	LOG_DEBUG("op_code=%d io_seq=%ld", hdr.opcode, hdr.io_seq);
@@ -1782,19 +1782,14 @@ error_check:
 exit:
 	zinfo->zio_cmd_in_ack = NULL;
 	shutdown(fd, SHUT_RDWR);
-	LOG_INFO("Data connection for zvol %s closed on fd: %d",
-	    zinfo->name, fd);
 
 	(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
-	zinfo->is_io_ack_sender_created = B_FALSE;
-	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
-
-	remove_pending_cmds_to_ack(fd, zinfo);
-
-	(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
+	zinfo->is_io_ack_sender_created = 0;
 	zinfo->conn_closed = B_FALSE;
 	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 
+	LOG_INFO("Data connection for zvol %s closed on fd: %d",
+	    zinfo->name, fd);
 	uzfs_zinfo_drop_refcnt(zinfo);
 
 	zk_thread_exit();
@@ -1855,14 +1850,14 @@ open_zvol(int fd, zvol_info_t **zinfopp)
 		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 		goto open_reply;
 	}
-	if (zinfo->is_io_ack_sender_created != B_FALSE) {
+	if (zinfo->is_io_ack_sender_created) {
 		LOG_ERR("zvol %s ack sender already present",
 		    open_data.volname);
 		hdr.status = ZVOL_OP_STATUS_FAILED;
 		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 		goto open_reply;
 	}
-	if (zinfo->is_io_receiver_created != B_FALSE) {
+	if (zinfo->is_io_receiver_created) {
 		LOG_ERR("zvol %s io receiver already present",
 		    open_data.volname);
 		hdr.status = ZVOL_OP_STATUS_FAILED;
@@ -1944,8 +1939,8 @@ open_zvol(int fd, zvol_info_t **zinfopp)
 	*zinfopp = zinfo;
 
 	zinfo->conn_closed = B_FALSE;
-	zinfo->is_io_ack_sender_created = B_TRUE;
-	zinfo->is_io_receiver_created = B_TRUE;
+	zinfo->is_io_ack_sender_created = 1;
+	zinfo->is_io_receiver_created = 1;
 	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 	thrd_arg = kmem_alloc(sizeof (thread_args_t), KM_SLEEP);
 	thrd_arg->fd = fd;
@@ -2064,8 +2059,15 @@ uzfs_zvol_io_receiver(void *arg)
 		    zio_cmd, TQ_SLEEP);
 	}
 exit:
+#if DEBUG
+	if (inject_error.delay.io_receiver_exit == 1)
+		sleep(5);
+#endif
 	(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
-	zinfo->conn_closed = B_TRUE;
+
+	if (zinfo->is_io_ack_sender_created)
+		zinfo->conn_closed = B_TRUE;
+
 	/*
 	 * Send signal to ack sender so that it can free
 	 * zio_cmd, close fd and exit.
@@ -2079,10 +2081,15 @@ exit:
 	 */
 	while (zinfo->conn_closed || zinfo->is_io_ack_sender_created) {
 		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
-		usleep(1000);
+		LOG_INFO("Waiting for conn_closed (%d) and ack_sender (%d)"
+		    "to be false for %s", zinfo->conn_closed,
+		    zinfo->is_io_ack_sender_created, zinfo->name);
+		sleep(1);
 		(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
 	}
 	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
+
+	remove_pending_cmds_to_ack(fd, zinfo);
 
 	shutdown_fds_related_to_zinfo(zinfo);
 
@@ -2090,7 +2097,7 @@ exit:
 
 	taskq_wait(zinfo->uzfs_zvol_taskq);
 	reinitialize_zv_state(zinfo->main_zv);
-	zinfo->is_io_receiver_created = B_FALSE;
+	zinfo->is_io_receiver_created = 0;
 	(void) uzfs_zvol_release_internal_clone(zinfo->main_zv,
 	    &zinfo->snap_zv, &zinfo->clone_zv);
 

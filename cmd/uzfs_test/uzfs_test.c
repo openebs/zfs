@@ -46,7 +46,7 @@ int max_iops = 0;
 zfs_rlock_t zrl;
 uint64_t *iodata;
 uint64_t g_io_num = 10;
-static uint64_t unmap_region[50][2];
+static uint64_t unmap_region[50][3];
 static int unmap_idx;
 kmutex_t unmap_mtx;
 
@@ -71,6 +71,7 @@ int silent = 0;
 int verify_err = 0;
 
 void reader_thread(void *zv);
+int get_unmapped_index(uint64_t offset, uint64_t len);
 
 void
 verify_data(char *buf, uint64_t offset, uint64_t len,
@@ -82,6 +83,7 @@ verify_data(char *buf, uint64_t offset, uint64_t len,
 	uint64_t end = offset + len;
 	uint64_t chunk_len;
 	uint64_t io_num;
+	uint64_t unmapped_index;
 
 	mbuf = calloc(1, block_size);
 	for (md = metadata_desc; md != NULL; md = md->next) {
@@ -93,8 +95,8 @@ verify_data(char *buf, uint64_t offset, uint64_t len,
 		/*
 		 * We are not verifying data with metadata 0 or 64th-bit set
 		 */
-		if (md->metadata.io_num == 0 ||
-		    IS_UNMAP_IOSEQ(md->metadata.io_num)) {
+		unmapped_index = get_unmapped_index(offset, len);
+		if (md->metadata.io_num == 0 || (unmapped_index != -1)) {
 			offset += len;
 			buf += len;
 			continue;
@@ -129,10 +131,12 @@ get_unmapped_index(uint64_t offset, uint64_t len)
 	uint64_t o_start = offset;
 	uint64_t o_end = offset + len;
 
-	if (unmap_idx == 0)
-		return (-1);
-
 	mutex_enter(&unmap_mtx);
+	if (unmap_idx == 0) {
+		mutex_exit(&unmap_mtx);
+		return (-1);
+	}
+
 	for (i = 0; i < unmap_idx; i++) {
 		u_start = unmap_region[i][0];
 		u_end = u_start + unmap_region[i][1];
@@ -177,7 +181,7 @@ verify_unmapped_data(char *data, uint64_t offset, uint64_t len,
 	ASSERT(count);
 	data_off = f_off - offset;
 
-	for (i = 0; i < count; i++, data_off += sizeof (buf)) {
+	for (i = 0; (i < count && i < f_len); i++, data_off += sizeof (buf)) {
 		VERIFY0(memcmp(data + data_off, buf, sizeof (buf)));
 	}
 }
@@ -235,7 +239,7 @@ reader_thread(void *arg)
 	uint64_t vol_size = warg->active_size;
 	uint64_t block_size = warg->io_block_size;
 	metadata_desc_t *md;
-	int unmapped_index;
+	int unmapped_idx, last_unmapped_idx;
 
 	for (j = 0; j < 15; j++)
 		buf[j] = (char *)umem_alloc(sizeof (char)*(j+1)* block_size,
@@ -256,16 +260,17 @@ reader_thread(void *arg)
 		len = (idx + 1) * block_size;
 
 		memset(buf[idx], 0, len);
+		last_unmapped_idx = get_unmapped_index(offset, len);
 		err = uzfs_read_data(zv, buf[idx], offset, len, &md);
 		if (err != 0)
 			printf("RIO error at offset: %lu len: %lu err:%d\n",
 			    offset, len, err);
 
 		verify_data(buf[idx], offset, len, md, block_size);
-		unmapped_index = get_unmapped_index(offset, len);
-		if (unmapped_index != -1)
+		unmapped_idx = get_unmapped_index(offset, len);
+		if (unmapped_idx != -1 && unmapped_idx == last_unmapped_idx)
 			verify_unmapped_data(buf[idx], offset, len,
-			    unmapped_index);
+			    unmapped_idx);
 
 		if (buf[idx][0] != 0)
 			data_ios += (idx + 1);
@@ -376,17 +381,26 @@ writer_thread(void *arg)
 		    (write_metadata) ? &md : NULL, B_FALSE);
 		if (err != 0)
 			printf("WIO error at offset: %lu len: %lu\n", offset,
-			    (idx + 1) * block_size);
+			    len);
+
+		if (uzfs_test_id == 6) {
+			for (i = 0; i < (idx+1); i++) {
+				iodata[blk_offset+i] =
+				    (write_metadata) ? io_num : 0;
+			}
+		}
 
 		if (!(io_num%100)) {
 			if (unmap_idx < ARRAY_SIZE(unmap_region)) {
 				uint64_t object_size;
 				uint64_t uoff = 0, ulen = 0;
+				uint64_t end = vol_blocks * block_size;
 				dnode_t *dn = ((zvol_state_t *)zv)->zv_dn;
 				object_size =  (dn->dn_maxblkid + 1) *
 				    dn->dn_datablksz;
+				ulen = 5 * block_size;
 				if (object_size &&
-				    (object_size < (vol_blocks * block_size)) &&
+				    ((object_size + ulen) < end) &&
 				    (uzfs_random(2) == 0)) {
 					/*
 					 * Unmapping region which overlaps
@@ -396,37 +410,38 @@ writer_thread(void *arg)
 						uoff = object_size - block_size;
 					} else
 						uoff = object_size;
-					ulen = 5 * block_size;
+					idx = 4;
 				} else {
 					/*
 					 * Unmapping last written region
 					 */
 					uoff = offset;
-					ulen = (idx + 1) * block_size;
 				}
+				blk_offset = uoff/block_size;
+				ulen = (idx + 1) * block_size;
 				mutex_enter(mtx);
 				md.io_num = io_num = g_io_num++;
 				mutex_exit(mtx);
+				mutex_enter(&unmap_mtx);
 				err = uzfs_unmap_data(zv, uoff, ulen, &md,
 				    B_FALSE);
 				if (err != 0)
 					printf("UNMAP error at offset: %lu "
 					    "len: %lu err(%d)\n",
 					    uoff, ulen, err);
-				mutex_enter(&unmap_mtx);
 				unmap_region[unmap_idx][0] = uoff;
 				unmap_region[unmap_idx][1] = ulen;
+				unmap_region[unmap_idx][2] = io_num;
 				unmap_idx++;
 				mutex_exit(&unmap_mtx);
+				if (uzfs_test_id == 6) {
+					for (i = 0; i < (idx+1); i++) {
+						iodata[blk_offset+i] = io_num;
+					}
+				}
 			}
 		}
 
-		if (uzfs_test_id == 6) {
-			for (i = 0; i < (idx+1); i++) {
-				iodata[blk_offset+i] =
-				    (write_metadata) ? io_num : 0;
-			}
-		}
 		ios += (idx + 1);
 check_timeout:
 		zfs_range_unlock(rl);

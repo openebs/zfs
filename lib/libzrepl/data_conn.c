@@ -1312,7 +1312,7 @@ uzfs_zvol_rebuild_scanner_callback(off_t offset, size_t len,
 	else
 		hdr.opcode = ZVOL_OPCODE_HELPING_READ;
 
-	hdr.io_seq = metadata->io_num;
+	hdr.io_seq = GET_IOSEQ(metadata->io_num);
 	hdr.offset = offset;
 	hdr.len = len;
 	hdr.flags = ZVOL_OP_FLAG_REBUILD;
@@ -1624,7 +1624,7 @@ uzfs_send_reads(int fd, zvol_io_cmd_t *zio_cmd)
 	 * vector write.
 	 */
 	for (md = zio_cmd->metadata_desc; md != NULL; md = md->next) {
-		read_hdr.io_num = GET_IOSEQ(md->metadata.io_num);
+		read_hdr.io_num = md->metadata.io_num;
 		read_hdr.len = md->len;
 		rc = uzfs_zvol_socket_write(fd, (char *)&read_hdr,
 		    sizeof (read_hdr));

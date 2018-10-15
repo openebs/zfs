@@ -107,8 +107,10 @@ _uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 		if (metadata) {
 			error = uzfs_write_metadata(zv, offset, bytes,
 			    metadata, tx);
-			ret = error;
-			break;
+			if (error) {
+				ret = error;
+				break;
+			}
 		}
 
 		zvol_log_write(zv, tx, offset, bytes, sync, metadata);
@@ -128,16 +130,13 @@ _uzfs_unmap_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
     blk_metadata_t *metadata, boolean_t sync, boolean_t is_rebuild)
 {
 	int error = 0;
+	blk_metadata_t md;
 
-	if (!is_rebuild) {
-		metadata->io_num = CREATE_UNMAP_IOSEQ(metadata->io_num);
-	} else {
-		if (!IS_UNMAP_IOSEQ(metadata->io_num))
-			return (EINVAL);
-	}
+	memcpy(&md, metadata, sizeof (blk_metadata_t));
+	md.io_num = CREATE_UNMAP_IOSEQ(md.io_num);
 
 	error = dmu_free_long_range_impl(zv->zv_objset, zv->zv_dn, offset, len,
-	    metadata, zv);
+	    &md, zv);
 	if (error) {
 		LOG_ERR("Failed to free range %lu+%lu err:%d\n",
 		    offset, len, error);
@@ -259,7 +258,7 @@ uzfs_metadata_append(zvol_state_t *zv, blk_metadata_t *metadata, int n,
 			 * io number into one descriptor.
 			 * Otherwise create a new one.
 			 */
-			if (tail->metadata.io_num == metadata[i].io_num) {
+			if (tail->metadata.io_num == GET_IOSEQ(metadata[i].io_num)) {
 				tail->len += zv->zv_metavolblocksize;
 			} else {
 				new_md = kmem_alloc(sizeof (metadata_desc_t),
@@ -274,6 +273,7 @@ uzfs_metadata_append(zvol_state_t *zv, blk_metadata_t *metadata, int n,
 		if (new_md != NULL) {
 			new_md->next = NULL;
 			new_md->len = zv->zv_metavolblocksize;
+			metadata[i].io_num = GET_IOSEQ(metadata[i].io_num);
 			new_md->metadata = metadata[i];
 			tail = new_md;
 		}

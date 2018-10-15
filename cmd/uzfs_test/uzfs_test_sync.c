@@ -105,7 +105,7 @@ write_fn(void *zv, char *buf, int block_size, boolean_t is_unmap)
 		buf[0] = 0;
 	} else
 		err = uzfs_write_data(zv, buf, 0, block_size,
-		    (nometa == 1 ? NULL : &md), B_FALSE);
+		    (nometa == 1) ? NULL : &md, B_FALSE);
 	if (err != 0)
 		printf("IO error\n");
 

@@ -1079,7 +1079,8 @@ TEST(uZFSRebuildStart, TestStartRebuild) {
 		EXPECT_EQ(ZVOL_OP_STATUS_FAILED, ((zvol_io_hdr_t *)conn->conn_buf)->status);
 		EXPECT_EQ(2, zinfo->refcnt);
 	}
-
+	/* We are covering this code path from zrepl_rebuild test case */
+#if 0
 	/* rebuild for single replica case */
 	conn->conn_buf = NULL;
 	uzfs_zvol_set_rebuild_status(zinfo->main_zv,
@@ -1090,7 +1091,7 @@ TEST(uZFSRebuildStart, TestStartRebuild) {
 	EXPECT_EQ(ZVOL_REBUILDING_DONE, uzfs_zvol_get_rebuild_status(zinfo->main_zv));
 	EXPECT_EQ(ZVOL_STATUS_HEALTHY, uzfs_zvol_get_status(zinfo->main_zv));
 	EXPECT_EQ(2, zinfo->refcnt);
-
+#endif
 	/* rebuild in two replicas case with 'connect' failure */
 	conn->conn_buf = NULL;
 	uzfs_zvol_set_rebuild_status(zinfo->main_zv,

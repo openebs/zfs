@@ -1843,6 +1843,7 @@ open_zvol(int fd, zvol_info_t **zinfopp)
 		hdr.status = ZVOL_OP_STATUS_FAILED;
 		goto open_reply;
 	}
+
 	(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
 	if (zinfo->state != ZVOL_INFO_STATE_ONLINE) {
 		LOG_ERR("zvol %s is not online", open_data.volname);
@@ -2097,9 +2098,12 @@ exit:
 
 	taskq_wait(zinfo->uzfs_zvol_taskq);
 	reinitialize_zv_state(zinfo->main_zv);
+
+	(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
 	zinfo->is_io_receiver_created = 0;
 	(void) uzfs_zvol_release_internal_clone(zinfo->main_zv,
 	    &zinfo->snap_zv, &zinfo->clone_zv);
+	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 
 	zinfo->quiesce_requested = 0;
 	zinfo->quiesce_done = 1;

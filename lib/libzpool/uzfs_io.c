@@ -258,7 +258,8 @@ uzfs_metadata_append(zvol_state_t *zv, blk_metadata_t *metadata, int n,
 			 * io number into one descriptor.
 			 * Otherwise create a new one.
 			 */
-			if (tail->metadata.io_num == GET_IOSEQ(metadata[i].io_num)) {
+			if (tail->metadata.io_num ==
+			    GET_IOSEQ(metadata[i].io_num)) {
 				tail->len += zv->zv_metavolblocksize;
 			} else {
 				new_md = kmem_alloc(sizeof (metadata_desc_t),

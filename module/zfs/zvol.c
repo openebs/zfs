@@ -355,6 +355,26 @@ zvol_get_stats(objset_t *os, nvlist_t *nv)
 	return (SET_ERROR(error));
 }
 
+void
+zvol_size_changed(zvol_state_t *zv, uint64_t volsize)
+{
+#if defined(_KERNEL)
+	struct block_device *bdev;
+
+	ASSERT(MUTEX_HELD(&zv->zv_state_lock));
+
+	bdev = bdget_disk(zv->zv_disk, 0);
+	if (bdev == NULL)
+		return;
+
+	set_capacity(zv->zv_disk, volsize >> 9);
+	check_disk_size_change(zv->zv_disk, bdev);
+
+	bdput(bdev);
+#endif
+	zv->zv_volsize = volsize;
+}
+
 /*
  * Sanity check volume size.
  */
@@ -407,17 +427,31 @@ zvol_update_volsize(uint64_t volsize, objset_t *os)
 	return (error);
 }
 
+static int
+zvol_update_live_volsize(zvol_state_t *zv, uint64_t volsize)
+{
+	zvol_size_changed(zv, volsize);
+
+	/*
+	 * We should post a event here describing the expansion.  However,
+	 * the zfs_ereport_post() interface doesn't nicely support posting
+	 * events for zvols, it assumes events relate to vdevs or zios.
+	 */
+
+	return (0);
+}
+
 /*
- * Set ZFS_PROP_VOLSIZE set entry point.  Note that modifying the volume
- * size will result in a udev "change" event being generated.
+ * Set ZFS_PROP_VOLSIZE set entry point.
  */
 int
 zvol_set_volsize(const char *name, uint64_t volsize)
 {
+	zvol_state_t *zv = NULL;
 	objset_t *os = NULL;
-	struct gendisk *disk = NULL;
-	uint64_t readonly;
 	int error;
+	dmu_object_info_t *doi;
+	uint64_t readonly;
 	boolean_t owned = B_FALSE;
 
 	error = dsl_prop_get_integer(name,
@@ -427,8 +461,13 @@ zvol_set_volsize(const char *name, uint64_t volsize)
 	if (readonly)
 		return (SET_ERROR(EROFS));
 
-	zvol_state_t *zv = zvol_find_by_name(name, RW_READER);
-
+#if !defined(_KERNEL)
+	zvol_info_t *zinfo = uzfs_zinfo_lookup(name);
+	if (zinfo == NULL)
+		return (SET_ERROR(ENOENT));
+	zv = zinfo->main_zv;
+#else
+	zv = zvol_find_by_name(name, RW_READER);
 	ASSERT(zv == NULL || (MUTEX_HELD(&zv->zv_state_lock) &&
 	    RW_READ_HELD(&zv->zv_suspend_lock)));
 #endif
@@ -452,18 +491,16 @@ zvol_set_volsize(const char *name, uint64_t volsize)
 		os = zv->zv_objset;
 	}
 
-	dmu_object_info_t *doi = kmem_alloc(sizeof (*doi), KM_SLEEP);
+	doi = kmem_alloc(sizeof (dmu_object_info_t), KM_SLEEP);
 
 	if ((error = dmu_object_info(os, ZVOL_OBJ, doi)) ||
 	    (error = zvol_check_volsize(volsize, doi->doi_data_block_size)))
 		goto out;
 
 	error = zvol_update_volsize(volsize, os);
-	if (error == 0 && zv != NULL) {
-		zv->zv_volsize = volsize;
-		zv->zv_changed = 1;
-		disk = zv->zv_disk;
-	}
+
+	if (error == 0 && zv != NULL)
+		error = zvol_update_live_volsize(zv, volsize);
 out:
 	kmem_free(doi, sizeof (dmu_object_info_t));
 
@@ -483,10 +520,6 @@ out:
 	if (zv != NULL)
 		mutex_exit(&zv->zv_state_lock);
 #endif
-
-	if (disk != NULL)
-		revalidate_disk(disk);
-
 	return (SET_ERROR(error));
 }
 

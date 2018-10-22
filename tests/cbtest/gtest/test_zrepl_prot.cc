@@ -1259,6 +1259,7 @@ TEST(Misc, ZreplCheckpointInterval) {
 
 	transition_zvol_to_online(ioseq, control_fd, zvol_name_slow);
 	transition_zvol_to_online(ioseq, control_fd, zvol_name_fast);
+	sleep(5);
 
 	write_data_and_verify_resp(datasock_slow.fd(), ioseq, 0, 888);
 	write_data_and_verify_resp(datasock_fast.fd(), ioseq, 0, 888);
@@ -1553,6 +1554,7 @@ TEST(Snapshot, CreateAndDestroy) {
 	Zrepl zrepl;
 	Target target;
 	int rc, control_fd;
+	SocketFd datasock;
 	TestPool pool("snappool");
 	char *buf;
 	std::string vol_name = pool.getZvolName("vol");
@@ -1575,6 +1577,8 @@ TEST(Snapshot, CreateAndDestroy) {
 	ASSERT_GE(control_fd, 0);
 
 	do_handshake(vol_name, host, port, NULL, NULL, control_fd, ZVOL_OP_STATUS_OK);
+	do_data_connection(datasock.fd(), host, port, vol_name, 4096, 2);
+
 	// try to create snap of invalid zvol
 	hdr_out.version = REPLICA_VERSION;
 	hdr_out.opcode = ZVOL_OPCODE_SNAP_CREATE;
@@ -1616,6 +1620,7 @@ TEST(Snapshot, CreateAndDestroy) {
 
 	// create the snapshot
 	transition_zvol_to_online(ioseq, control_fd, vol_name);
+	sleep(5);
 	hdr_out.io_seq = 2;
 	hdr_out.len = snap_name.length() + 1;
 	rc = write(control_fd, &hdr_out, sizeof (hdr_out));
@@ -1677,7 +1682,9 @@ TEST(Snapshot, CreateAndDestroy) {
 	ASSERT_THROW(execCmd("zfs", std::string("list ") + snap_name),
 	    std::runtime_error);
 
+	datasock.graceful_close();
 	graceful_close(control_fd);
+	sleep(3);
 }
 
 /*

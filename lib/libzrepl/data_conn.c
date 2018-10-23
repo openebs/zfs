@@ -1242,6 +1242,7 @@ uzfs_zvol_rebuild_scanner_callback(off_t offset, size_t len,
 	 * replica. Degraded replica will take care of breaking the connection
 	 */
 	uzfs_zvol_worker(zio_cmd);
+	zinfo->rebuild_zv = NULL;
 	return (0);
 }
 

@@ -23,7 +23,7 @@ In addition to standard dependencies of ZFS on Linux project following
 packages need to be installed:
 
 ```bash
-sudo apt-get install libaio-dev libgtest-dev cmake libjemalloc-dev
+sudo apt-get install libaio-dev libgtest-dev cmake libjemalloc-dev libjson-c-dev
 ```
 
 Google test framework library does not have a binary package so it needs to be compiled manually:

@@ -13,6 +13,7 @@
 #include <uzfs_test.h>
 #include <uzfs_mgmt.h>
 #include <zrepl_mgmt.h>
+#include <json-c/json.h>
 
 char *tgt_port = "6060";
 char *tgt_port1 = "99159";
@@ -144,7 +145,7 @@ zrepl_utest_mgmt_hs_io_conn(char *volname, int mgmt_fd)
 	hdr.opcode = ZVOL_OPCODE_OPEN;
 	hdr.len = sizeof (open_data);
 	open_data.tgt_block_size = 4096;
-	open_data.timeout = 120;
+	open_data.timeout = 2;
 	strncpy(open_data.volname, volname, sizeof (open_data.volname));
 
 	rc = write(io_fd, (void *)&hdr, sizeof (zvol_io_hdr_t));
@@ -258,6 +259,126 @@ zrepl_utest_prepare_for_rebuild(char *healthy_vol, char *dw_vol,
 	printf("Replica helping rebuild is: %s\n", mgmt_ack->volname);
 	printf("Rebuilding IP address: %s\n", mgmt_ack->ip);
 	printf("Rebuilding Port: %d\n", mgmt_ack->port);
+	return (0);
+}
+
+static int
+sort_fn(const void *j1, const void *j2)
+{
+	json_object * const *jso1, * const *jso2;
+	struct json_object *jsnapname1, *jsnapname2;
+
+	jso1 = (json_object* const*)j1;
+	jso2 = (json_object* const*)j2;
+	if (!*jso1 && !*jso2)
+		return (0);
+	if (!*jso1)
+		return (-1);
+	if (!*jso2)
+		return (1);
+	json_object_object_get_ex(*jso1, "name", &jsnapname1);
+	json_object_object_get_ex(*jso2, "name", &jsnapname2);
+	return strcmp((char *)json_object_get_string(jsnapname1),
+	    (char *)json_object_get_string(jsnapname2));
+
+}
+
+static int
+compare_snap_list(char *json1, char *json2)
+{
+	int ret = 0;
+	int arrlen1, arrlen2, i;
+	struct json_object *jobj1 = NULL, *jobj2 = NULL;
+	struct json_object *jarr1 = NULL, *jarr2 = NULL;
+	struct json_object *jsnap1, *jsnap2, *jsnapname1, *jsnapname2;
+
+	jobj1 = json_tokener_parse(json1);
+	jobj2 = json_tokener_parse(json2);
+
+	json_object_object_get_ex(jobj1, "snapshot", &jarr1);
+	json_object_object_get_ex(jobj2, "snapshot", &jarr2);
+
+	arrlen1 = json_object_array_length(jarr1);
+	arrlen2 = json_object_array_length(jarr2);
+	printf("Array len for ds0 is %d\n", arrlen1);
+	printf("Array len for ds1 is %d\n", arrlen2);
+
+	if (arrlen1 != arrlen2) {
+		ret = -1;
+		goto exit;
+	}
+
+	json_object_array_sort(jarr1, sort_fn);
+	json_object_array_sort(jarr2, sort_fn);
+
+	for (i = 0; i < arrlen1; i++) {
+		jsnap1 = json_object_array_get_idx(jarr1, i);
+		jsnap2 = json_object_array_get_idx(jarr2, i);
+
+		json_object_object_get_ex(jsnap1, "name", &jsnapname1);
+		json_object_object_get_ex(jsnap2, "name", &jsnapname2);
+		ret = strcmp((char *)json_object_get_string(jsnapname1),
+		    (char *)json_object_get_string(jsnapname2));
+		if (ret != 0) {
+			ret = -1;
+			goto exit;
+		}
+	}
+exit:
+	json_object_put(jobj1);
+	json_object_put(jobj2);
+	return (ret);
+}
+
+int
+zrepl_utest_get_snaplist(char *volname, int fd,
+    struct zvol_snapshot_list **snap_list)
+{
+	int count = 0;
+	zvol_io_hdr_t hdr;
+	char *buf = NULL;
+
+	bzero(&hdr, sizeof (hdr));
+	hdr.version = REPLICA_VERSION;
+	hdr.opcode = ZVOL_OPCODE_SNAP_LIST;
+	hdr.len = strlen(volname) + 1;
+
+	printf("Get snap list for volume:%s\n", volname);
+	count = write(fd, (void *)&hdr, sizeof (hdr));
+	if (count == -1) {
+		printf("Snap list: sending hdr failed\n");
+		return (-1);
+	}
+
+	count = write(fd, volname, hdr.len);
+	if (count == -1) {
+		printf("Snap list: sending volname failed\n");
+		return (-1);
+	}
+
+	bzero(&hdr, sizeof (hdr));
+	count = read(fd, (void *)&hdr, sizeof (hdr));
+	if (count == -1) {
+		printf("Snap list: error in hdr read\n");
+		return (-1);
+	}
+
+	if (hdr.status != ZVOL_OP_STATUS_OK) {
+		printf("Snap list: response failed\n");
+		return (-1);
+	}
+
+	ASSERT(hdr.len >= sizeof (struct zvol_snapshot_list));
+
+	buf = (char *)malloc(hdr.len);
+	count = read(fd, (void *)buf, hdr.len);
+	if (count == -1) {
+		printf("Health status: error in statuc_ack read\n");
+		free(buf);
+		return (-1);
+	}
+
+	*snap_list = (struct zvol_snapshot_list *)buf;
 	return (0);
 }
 
@@ -501,7 +622,8 @@ writer_thread(void *arg)
 
 	io = kmem_alloc((sizeof (struct data_io) +
 	    warg->io_block_size), KM_SLEEP);
-	printf("Dataset generation start........... \n");
+	printf("Dataset generation start from offset:%ld........... \n",
+	    nbytes);
 	bzero(io, sizeof (struct data_io));
 	populate(io->buf, warg->io_block_size);
 
@@ -509,14 +631,14 @@ writer_thread(void *arg)
 	while (i < warg->max_iops) {
 		io->hdr.version = REPLICA_VERSION;
 		io->hdr.opcode = ZVOL_OPCODE_WRITE;
-		io->hdr.io_seq = io_seq++;
+		io->hdr.io_seq = i + 1;
 		io->hdr.len = sizeof (struct zvol_io_rw_hdr) +
 		    warg->io_block_size;
 		io->hdr.status = 0;
 		io->hdr.flags = 0;
 		io->hdr.offset = nbytes;
 		io->rw_hdr.len = warg->io_block_size;
-		io->rw_hdr.io_num = i + 1;
+		io->rw_hdr.io_num = io_seq++;
 
 		int bytes = sizeof (struct data_io) + warg->io_block_size;
 		char *p = (char *)io;
@@ -705,7 +827,7 @@ replica_data_verify_thread(void *arg)
 		}
 
 		read_bytes = hdr.len;
-		buf1 = kmem_alloc(read_bytes, KM_SLEEP);
+		buf1 = kmem_zalloc(read_bytes, KM_SLEEP);
 		p = buf1;
 
 		/* Read data from replica ds0(sfd) */
@@ -728,7 +850,7 @@ replica_data_verify_thread(void *arg)
 		}
 
 		read_bytes = hdr.len;
-		buf2 = kmem_alloc(read_bytes, KM_SLEEP);
+		buf2 = kmem_zalloc(read_bytes, KM_SLEEP);
 		p = buf2;
 
 		/* Read data from replica ds1(sfd1) */
@@ -1012,35 +1134,30 @@ exit:
  * Details:
  * - Two replicas, ds0 a healthy while ds1 will be downgrade replica
  * - Replica ds0 is marked as healthy replica in the beginning
- * - 10K IOs of size 4k pumped into ds0
- * - 5k IOs of size 4k (with same data) will be pumped into ds1
+ * - 1K IOs of size 4k pumped into ds0 starting from offset 0
+ * - Snapshot will be taken on ds0
+ * - ANother 1K IOs of size 4k pumped into ds0 starting from offset 1k * 4k
+ * - Another snapshot will be taken on ds0
  * - Trigger rebuild workflow on ds1 using IP + Rebuild_port of ds0
  * - Wait for ds1 to be marked healthy
  * - Now read each block from ds0 and ds1, compare IO_seq and data.
- *
- * =====Multiple Rebuild success case=====
- * Details:
- * - Two replicas ds0 and ds1 are healthy
- * - ds2 downgrade replica
- * - Trigger rebuild workflow on ds2 using IP + Rebuild_port of ds0 & ds1
- * - Rebuild will be triggered successfully on ds0 & ds1
- * - Wait till ds2 become healthy
- *
+ * - Also compare snap list on both replicas
+ * =====Rebuild ds1, ds2, and ds3=========
+ * - Rebuild ds1, ds2 and ds3 from ds0
  * =====Rebuild failure case=====
- * - Replicas ds0i, ds1 and ds2 are healthy
- * - ds3 downgrade replica
- * - Trigger rebuild workflow on ds3 using IP + Rebuild_port of ds0, ds1 and ds2
- * - Pass wrong IP address for ds2 so that connection got failed
- * - Rebuild will be triggered successfully on ds0 and ds1 but would fail on ds2
- * - Since rebuild would fail on ds2, all rebuild operation happening in
- *   parallel should be stopped and ds2 should be left in downgrade mode.
+ * - Write few more IOs to ds0 to make its checkpointed IO number largest
+ * - Disconnect data fd for all replicas
+ * - Reconnect data fd on all replicas
+ * - Trigger mesh rebuild on ds0 using ds1, ds2, and ds3 IP+Port info
+ * - Send wrong IP for one of replica in mesh rebuild to test failure case
+ * - Re-attempt rebuild on ds0 using correct IP+Port for success case
  */
 void
 zrepl_rebuild_test(void *arg)
 {
 	kmutex_t mtx;
 	kcondvar_t cv;
-	// int i;
+	int i;
 	int count, rc;
 	int ds0_mgmt_fd, ds1_mgmt_fd, ds2_mgmt_fd, ds3_mgmt_fd;
 	int  ds0_io_sfd, ds1_io_sfd;
@@ -1051,13 +1168,18 @@ zrepl_rebuild_test(void *arg)
 	kthread_t *reader_req;
 	kthread_t *writer;
 	kthread_t *writer_ack;
-	// mgmt_ack_t *p = NULL;
+	mgmt_ack_t *p = NULL;
 	mgmt_ack_t *mgmt_ack = NULL;
 	mgmt_ack_t *mgmt_ack_ds1 = NULL;
 	mgmt_ack_t *mgmt_ack_ds2 = NULL;
 	mgmt_ack_t *mgmt_ack_ds3 = NULL;
+	mgmt_ack_t *mgmt_ack_for_mesh_rebuild = NULL;
 	zrepl_status_ack_t status_ack;
-	worker_args_t writer_args, reader_args[2];
+	worker_args_t writer_args, reader_args;
+	struct zvol_snapshot_list *ds0_snaplist = NULL;
+	struct zvol_snapshot_list *ds1_snaplist = NULL;
+	struct zvol_snapshot_list *ds2_snaplist = NULL;
+	struct zvol_snapshot_list *ds3_snaplist = NULL;
 
 	io_block_size = 4096;
 	active_size = 0;
@@ -1082,23 +1204,14 @@ zrepl_rebuild_test(void *arg)
 	writer_args.start_offset = 0;
 	writer_args.rebuild_test = B_FALSE;
 
-	reader_args[0].threads_done = &threads_done;
-	reader_args[0].mtx = &mtx;
-	reader_args[0].cv = &cv;
-	reader_args[0].io_block_size = io_block_size;
-	reader_args[0].active_size = active_size;
-	reader_args[0].max_iops = max_iops;
-	reader_args[0].start_offset = 0;
-	reader_args[0].rebuild_test = B_FALSE;
-
-	reader_args[1].threads_done = &threads_done;
-	reader_args[1].mtx = &mtx;
-	reader_args[1].cv = &cv;
-	reader_args[1].io_block_size = io_block_size;
-	reader_args[1].active_size = active_size;
-	reader_args[1].max_iops = max_iops / 2;
-	reader_args[1].start_offset = 0;
-	reader_args[1].rebuild_test = B_FALSE;
+	reader_args.threads_done = &threads_done;
+	reader_args.mtx = &mtx;
+	reader_args.cv = &cv;
+	reader_args.io_block_size = io_block_size;
+	reader_args.active_size = active_size;
+	reader_args.max_iops = max_iops;
+	reader_args.start_offset = 0;
+	reader_args.rebuild_test = B_FALSE;
 
 	ds0_mgmt_fd = create_bind_listen_and_accept(tgt_port, B_TRUE, B_FALSE);
 	if (ds0_mgmt_fd == -1) {
@@ -1130,14 +1243,14 @@ zrepl_rebuild_test(void *arg)
 		goto exit;
 	}
 
-	writer_args.sfd[0] = reader_args[0].sfd[0] = ds0_io_sfd;
+	writer_args.sfd[0] = reader_args.sfd[0] = ds0_io_sfd;
 
 	/* Mgmt Handshake and IO-conn for replica ds1 */
 	ds1_io_sfd = zrepl_utest_mgmt_hs_io_conn(ds1, ds1_mgmt_fd);
 	if (ds1_io_sfd == -1) {
 		goto exit;
 	}
-	writer_args.sfd[1] = reader_args[1].sfd[0] = ds1_io_sfd;
+	writer_args.sfd[1] = reader_args.sfd[1] = ds1_io_sfd;
 
 	/* Mgmt Handshake and IO-conn for replica ds2 */
 	ds2_io_sfd = zrepl_utest_mgmt_hs_io_conn(ds2, ds2_mgmt_fd);
@@ -1186,7 +1299,12 @@ check_status:
 	}
 	printf("Volume:%s health status: HEALTHY\n", ds);
 
-	/* Write ack receiver thread  */
+	/*
+	 * Write 1000 blks starting from offset 0 to
+	 * ds0 and then take a snapshot test_snap
+	 */
+
+	/* Create write_ack receiver thread  */
 	mutex_enter(&mtx);
 	writer_ack = zk_thread_create(NULL, 0,
 	    (thread_func_t)write_ack_receiver_thread, &writer_args, 0, NULL,
@@ -1203,10 +1321,10 @@ check_status:
 		cv_wait(&cv, &mtx);
 	mutex_exit(&mtx);
 
-	/* Read ack receiver thread */
+	/* Create read_ack receiver thread */
 	mutex_enter(&mtx);
 	reader[0] = zk_thread_create(NULL, 0, (thread_func_t)reader_thread,
-	    &reader_args[0], 0, NULL, TS_RUN, 0, PTHREAD_CREATE_DETACHED);
+	    &reader_args, 0, NULL, TS_RUN, 0, PTHREAD_CREATE_DETACHED);
 	num_threads++;
 
 	/* Read data from ds0 for validation */
@@ -1223,6 +1341,60 @@ check_status:
 	/* Create a snapshot on ds0 */
 	rc = zrepl_utest_snap_create(ds0_mgmt_fd, ds0_io_sfd, ds,
 	    pool, "@test_snap");
+	if (rc == -1) {
+		printf("Snap_create: failed\n");
+		ASSERT(0);
+		goto exit;
+	}
+
+	/*
+	 * Write another 1000 blks starting from offset = (1000 * 4K)
+	 * to ds0 and then take a snapshot test_snap1
+	 */
+	writer_args.start_offset =
+	    writer_args.io_block_size * writer_args.max_iops;
+
+	/* Write_ack receiver thread  */
+	mutex_enter(&mtx);
+	writer_ack = zk_thread_create(NULL, 0,
+	    (thread_func_t)write_ack_receiver_thread, &writer_args, 0, NULL,
+	    TS_RUN, 0, PTHREAD_CREATE_DETACHED);
+	num_threads++;
+
+	/* Write data to ds0 */
+	writer = zk_thread_create(NULL, 0,
+	    (thread_func_t)writer_thread, &writer_args, 0, NULL,
+	    TS_RUN, 0, PTHREAD_CREATE_DETACHED);
+	num_threads++;
+
+	while (threads_done != num_threads)
+		cv_wait(&cv, &mtx);
+	mutex_exit(&mtx);
+
+	num_threads = threads_done = 0;
+
+	reader_args.max_iops = max_iops * 2;
+	/* Read_ack receiver thread */
+	mutex_enter(&mtx);
+	reader[0] = zk_thread_create(NULL, 0, (thread_func_t)reader_thread,
+	    &reader_args, 0, NULL, TS_RUN, 0, PTHREAD_CREATE_DETACHED);
+	num_threads++;
+
+	/* Read data from ds0 for validation */
+	reader_req = zk_thread_create(NULL, 0,
+	    (thread_func_t)read_request_sender_thread,
+	    &reader_args, 0, NULL, TS_RUN, 0, PTHREAD_CREATE_DETACHED);
+	num_threads++;
+
+	while (threads_done != num_threads)
+		cv_wait(&cv, &mtx);
+	mutex_exit(&mtx);
+
+	num_threads = threads_done = 0;
+
+	/* Create a snapshot on ds0 */
+	rc = zrepl_utest_snap_create(ds0_mgmt_fd, ds0_io_sfd, ds,
+	    pool, "@test_snap1");
 	if (rc == -1) {
 		printf("Snap_create: failed\n");
 		ASSERT(0);
@@ -1268,7 +1440,10 @@ status_check:
 	}
 	printf("Replica:%s is healthy now\n", ds1);
 
+	printf("Verifying data on replica:%s and replica:%s....\n", ds, ds1);
+
 	/* Verify if the data is same on both replica or not */
+	writer_args.max_iops = max_iops * 2;
 	writer = zk_thread_create(NULL, 0,
 	    (thread_func_t)replica_data_verify_thread, &writer_args, 0, NULL,
 	    TS_RUN, 0, PTHREAD_CREATE_DETACHED);
@@ -1277,43 +1452,33 @@ status_check:
 	while (threads_done != num_threads)
 		cv_wait(&cv, &mtx);
 	mutex_exit(&mtx);
-	cv_destroy(&cv);
-	mutex_destroy(&mtx);
-#if 0
-	/*
-	 * TODO: Rest part of this test case does not make any sense as IO
-	 * numbers are lesser on replica where we trigger mesh rebuild
-	 * which will be failed. Will fix it soon.
-	 */
-	/* Start rebuilding operation on ds2 from ds0 and ds1 */
 
-	/*
-	 * mgmt_ack has IP + Rebuild_port for ds0, copy it
-	 * to mgmt_ack_ds2, send ZVOL_OPCODE_PREPARE_FOR_REBUILD
-	 * op_code to healthy replicas ds1, get rebuild_io port
-	 * and ip. Copy it to mgmt_ack_ds2.
-	 */
-	mgmt_ack_ds2 = umem_alloc(sizeof (mgmt_ack_t) * 2, UMEM_NOFAIL);
+	num_threads = threads_done = 0;
+	printf("Verifying snapshots on replica:%s and replica:%s\n", ds, ds1);
+	rc = zrepl_utest_get_snaplist(ds, ds0_mgmt_fd, &ds0_snaplist);
+	if (rc == -1) {
+		goto exit;
+	}
+
+	rc = zrepl_utest_get_snaplist(ds1, ds1_mgmt_fd, &ds1_snaplist);
+	if (rc == -1) {
+		goto exit;
+	}
+
+	rc = compare_snap_list(ds0_snaplist->data, ds1_snaplist->data);
+	if (rc == -1) {
+		printf("Snap list mismatch, test case failed\n");
+		goto exit;
+	}
+
+	/* Start rebuilding operation on ds2 from ds0 */
+
+	mgmt_ack_ds2 = umem_alloc(sizeof (mgmt_ack_t), UMEM_NOFAIL);
 	p = mgmt_ack_ds2;
 	count = zrepl_utest_prepare_for_rebuild(ds, ds2, ds0_mgmt_fd, p);
 	if (count == -1) {
 		printf("Prepare_for_rebuild: sending hdr failed\n");
 		goto exit;
-	}
-	p++;
-	count = zrepl_utest_prepare_for_rebuild(ds1, ds2, ds1_mgmt_fd, p);
-	if (count == -1) {
-		printf("Prepare_for_rebuild: sending hdr failed\n");
-		goto exit;
-	}
-
-	p = mgmt_ack_ds2;
-	for (i = 0; i < 2; i++) {
-		printf("Replica being rebuild is: %s\n", p->dw_volname);
-		printf("Replica helping rebuild is: %s\n", p->volname);
-		printf("Rebuilding IP address: %s\n", p->ip);
-		printf("Rebuilding Port: %d\n", p->port);
-		p++;
 	}
 
 	/*
@@ -1321,7 +1486,7 @@ status_check:
 	 * by sharing IP and rebuild_Port info with ds2.
 	 */
 	rc = zrepl_utest_replica_rebuild_start(ds2_mgmt_fd, mgmt_ack_ds2,
-	    sizeof (mgmt_ack_t) * 2);
+	    sizeof (mgmt_ack_t));
 	if (rc == -1) {
 		goto exit;
 	}
@@ -1340,15 +1505,22 @@ status_check1:
 	}
 	printf("Replica:%s is healthy now\n", ds2);
 
-	/* Start rebuilding operation on ds3 from ds0, ds1 and ds2 */
+	printf("Verifying snapshots on replica:%s and replica:%s\n", ds, ds2);
 
-	/*
-	 * Copy mgmt_ack_ds2 to mgmt_ack_ds3, mgmt_ack_ds2 has
-	 * IP + rebuild_port info of ds0, ds1. Send
-	 * ZVOL_OPCODE_PREPARE_FOR_REBUILD op_code ds2.
-	 * Copy that too to mgmt_ack_ds3.
-	 */
-	mgmt_ack_ds3 = umem_alloc(sizeof (mgmt_ack_t) * 3, UMEM_NOFAIL);
+	rc = zrepl_utest_get_snaplist(ds2, ds2_mgmt_fd, &ds2_snaplist);
+	if (rc == -1) {
+		goto exit;
+	}
+
+	rc = compare_snap_list(ds0_snaplist->data, ds2_snaplist->data);
+	if (rc == -1) {
+		printf("Snap list mismatch, test case failed\n");
+		goto exit;
+	}
+
+	/* Start rebuilding operation on ds3 from ds0 */
+
+	mgmt_ack_ds3 = umem_alloc(sizeof (mgmt_ack_t), UMEM_NOFAIL);
 
 	p = mgmt_ack_ds3;
 	count = zrepl_utest_prepare_for_rebuild(ds, ds3, ds0_mgmt_fd, p);
@@ -1357,40 +1529,11 @@ status_check1:
 		goto exit;
 	}
 
-	p++;
-	count = zrepl_utest_prepare_for_rebuild(ds1, ds3, ds1_mgmt_fd, p);
-	if (count == -1) {
-		printf("Prepare_for_rebuild: sending hdr failed\n");
-		goto exit;
-	}
-	p++;
-	count = zrepl_utest_prepare_for_rebuild(ds2, ds3, ds2_mgmt_fd, p);
-	if (count == -1) {
-		printf("Prepare_for_rebuild: sending hdr failed\n");
-		goto exit;
-	}
-
-	int original_port = 0;
-	p = mgmt_ack_ds3;
-	for (i = 0; i < 3; i++) {
-		if (i == 2) {
-			/* For ds2, assign wrong port, so that rebuild fail */
-			original_port = p->port;
-			p->port = 9999;
-		}
-		printf("Replica being rebuild is: %s\n", p->dw_volname);
-		printf("Replica helping rebuild is: %s\n", p->volname);
-		printf("Rebuilding IP address: %s\n", p->ip);
-		printf("Rebuilding Port: %d\n", p->port);
-		p++;
-	}
-
 	/*
-	 * Start rebuild process on downgraded replica ds3
-	 * by sharing IP and rebuild_Port info with ds3.
+	 * Start rebuild process on downgraded replica ds3.
 	 */
 	rc = zrepl_utest_replica_rebuild_start(ds3_mgmt_fd, mgmt_ack_ds3,
-	    sizeof (mgmt_ack_t) * 3);
+	    sizeof (mgmt_ack_t));
 	if (rc == -1) {
 		goto exit;
 	}
@@ -1403,20 +1546,164 @@ status_check2:
 		goto exit;
 	}
 
-	if (status_ack.rebuild_status != ZVOL_REBUILDING_FAILED) {
+	if (status_ack.state != ZVOL_STATUS_HEALTHY) {
 		sleep(1);
 		goto status_check2;
 	}
 
-	printf("Rebuilding failed on Replica:%s\n", ds3);
+	printf("Replica:%s is healthy now\n", ds3);
+	printf("Verifying snapshots on replica:%s and replica:%s\n", ds, ds3);
+
+	rc = zrepl_utest_get_snaplist(ds3, ds3_mgmt_fd, &ds3_snaplist);
+	if (rc == -1) {
+		goto exit;
+	}
+
+	rc = compare_snap_list(ds0_snaplist->data, ds3_snaplist->data);
+	if (rc == -1) {
+		printf("Snap list mismatch, test case failed\n");
+		goto exit;
+	}
+
+	/*
+	 * Write 10 more block to ds0 so that
+	 * it have highest IO checkpoint number
+	 */
+	writer_args.start_offset =
+	    writer_args.io_block_size * writer_args.max_iops;
+
+	writer_args.max_iops = 10;
+	/* Write_ack receiver thread  */
+	mutex_enter(&mtx);
+	writer_ack = zk_thread_create(NULL, 0,
+	    (thread_func_t)write_ack_receiver_thread, &writer_args, 0, NULL,
+	    TS_RUN, 0, PTHREAD_CREATE_DETACHED);
+	num_threads++;
+
+	/* Write data to ds0 */
+	writer = zk_thread_create(NULL, 0,
+	    (thread_func_t)writer_thread, &writer_args, 0, NULL,
+	    TS_RUN, 0, PTHREAD_CREATE_DETACHED);
+	num_threads++;
+
+	while (threads_done != num_threads)
+		cv_wait(&cv, &mtx);
+	mutex_exit(&mtx);
+
+	num_threads = threads_done = 0;
+	sleep(10);
+
+	/* Close data_fd for all replicas */
+	if (ds0_io_sfd != -1)
+		close(ds0_io_sfd);
+
+	if (ds1_io_sfd != -1)
+		close(ds1_io_sfd);
+
+	if (ds2_io_sfd != -1)
+		close(ds2_io_sfd);
+
+	if (ds3_io_sfd != -1)
+		close(ds3_io_sfd);
+
+	sleep(5);
+
+	/* Establish data connection for all replicas */
+	ds0_io_sfd = zrepl_utest_mgmt_hs_io_conn(ds, ds0_mgmt_fd);
+	if (ds0_io_sfd == -1) {
+		goto exit;
+	}
+
+	writer_args.sfd[0] = reader_args.sfd[0] = ds0_io_sfd;
+
+	ds1_io_sfd = zrepl_utest_mgmt_hs_io_conn(ds1, ds1_mgmt_fd);
+	if (ds1_io_sfd == -1) {
+		goto exit;
+	}
+	writer_args.sfd[1] = reader_args.sfd[1] = ds1_io_sfd;
+
+	ds2_io_sfd = zrepl_utest_mgmt_hs_io_conn(ds2, ds2_mgmt_fd);
+	if (ds2_io_sfd == -1) {
+		goto exit;
+	}
+
+	ds3_io_sfd = zrepl_utest_mgmt_hs_io_conn(ds3, ds3_mgmt_fd);
+	if (ds3_io_sfd == -1) {
+		goto exit;
+	}
+
+	/* Start rebuilding operation on ds3 from ds0 */
+
+	mgmt_ack_for_mesh_rebuild = umem_alloc(sizeof (mgmt_ack_t) * 3,
+	    UMEM_NOFAIL);
+
+	p = mgmt_ack_for_mesh_rebuild;
+	count = zrepl_utest_prepare_for_rebuild(ds1, ds, ds1_mgmt_fd, p);
+	if (count == -1) {
+		printf("Prepare_for_rebuild: sending hdr failed\n");
+		goto exit;
+	}
+
+	p++;
+	count = zrepl_utest_prepare_for_rebuild(ds2, ds, ds2_mgmt_fd, p);
+	if (count == -1) {
+		printf("Prepare_for_rebuild: sending hdr failed\n");
+		goto exit;
+	}
+	p++;
+	count = zrepl_utest_prepare_for_rebuild(ds3, ds, ds3_mgmt_fd, p);
+	if (count == -1) {
+		printf("Prepare_for_rebuild: sending hdr failed\n");
+		goto exit;
+	}
+
+	int original_port = 0;
+	p = mgmt_ack_for_mesh_rebuild;
+	for (i = 0; i < 3; i++) {
+		if (i == 2) {
+			/* For ds3, assign wrong port, so that rebuild fail */
+			original_port = p->port;
+			p->port = 9999;
+		}
+		printf("Replica being rebuild is: %s\n", p->dw_volname);
+		printf("Replica helping rebuild is: %s\n", p->volname);
+		printf("Rebuilding IP address: %s\n", p->ip);
+		printf("Rebuilding Port: %d\n", p->port);
+		p++;
+	}
+
+	/*
+	 * Start rebuild process on downgraded replica ds1
+	 */
+	rc = zrepl_utest_replica_rebuild_start(ds0_mgmt_fd,
+	    mgmt_ack_for_mesh_rebuild,
+	    sizeof (mgmt_ack_t) * 3);
+	if (rc == -1) {
+		goto exit;
+	}
+	/*
+	 * Check rebuild status of ds0.
+	 */
+status_check3:
+	count = zrepl_utest_get_replica_status(ds, ds0_mgmt_fd, &status_ack);
+	if (count == -1) {
+		goto exit;
+	}
+
+	if (status_ack.rebuild_status != ZVOL_REBUILDING_FAILED) {
+		sleep(1);
+		goto status_check3;
+	}
+
+	printf("Rebuilding failed on Replica:%s\n", ds);
 	sleep(10);
 
 	printf("\n\n");
-	/* Lets retry to rebuild on ds3 with correct info */
-	p = mgmt_ack_ds3;
+	/* Lets retry to rebuild on ds0 with correct info */
+	p = mgmt_ack_for_mesh_rebuild;
 	for (i = 0; i < 3; i++) {
 		if (i == 2) {
-			/* For ds2, re-assign right port */
+			/* For ds3, re-assign right port */
 			p->port = original_port;
 		}
 		printf("Replica being rebuild is: %s\n", p->dw_volname);
@@ -1427,30 +1714,30 @@ status_check2:
 	}
 
 	/*
-	 * Start rebuild process on downgraded replica ds3
-	 * by sharing IP and rebuild_port info with ds3.
+	 * Start rebuild process on downgraded replica ds0
 	 */
-	rc = zrepl_utest_replica_rebuild_start(ds3_mgmt_fd, mgmt_ack_ds3,
+	rc = zrepl_utest_replica_rebuild_start(ds0_mgmt_fd,
+	    mgmt_ack_for_mesh_rebuild,
 	    sizeof (mgmt_ack_t) * 3);
 	if (rc == -1) {
 		goto exit;
 	}
 	/*
-	 * Check rebuild status of ds3.
+	 * Check rebuild status of ds0.
 	 */
-status_check3:
-	count = zrepl_utest_get_replica_status(ds3, ds3_mgmt_fd, &status_ack);
+status_check4:
+	count = zrepl_utest_get_replica_status(ds, ds0_mgmt_fd, &status_ack);
 	if (count == -1) {
 		goto exit;
 	}
 
 	if (status_ack.state != ZVOL_STATUS_HEALTHY) {
 		sleep(1);
-		goto status_check3;
+		goto status_check4;
 	}
 
-	printf("Replica:%s is healthy now\n", ds3);
-#endif
+	printf("Replica:%s is healthy now\n", ds);
+
 exit:
 	if (ds0_mgmt_fd != -1)
 		close(ds0_mgmt_fd);
@@ -1478,10 +1765,30 @@ exit:
 
 	if (mgmt_ack != NULL)
 		umem_free(mgmt_ack, sizeof (mgmt_ack_t));
+
 	if (mgmt_ack_ds1 != NULL)
 		umem_free(mgmt_ack_ds1, sizeof (mgmt_ack_t));
+
 	if (mgmt_ack_ds2 != NULL)
-		umem_free(mgmt_ack_ds2, sizeof (mgmt_ack_t) * 2);
+		umem_free(mgmt_ack_ds2, sizeof (mgmt_ack_t));
+
 	if (mgmt_ack_ds3 != NULL)
-		umem_free(mgmt_ack_ds3, sizeof (mgmt_ack_t) * 3);
+		umem_free(mgmt_ack_ds3, sizeof (mgmt_ack_t));
+
+	if (mgmt_ack_for_mesh_rebuild != NULL)
+		umem_free(mgmt_ack_for_mesh_rebuild, sizeof (mgmt_ack_t) * 3);
+
+	if (ds0_snaplist != NULL)
+		free(ds0_snaplist);
+
+	if (ds1_snaplist != NULL)
+		free(ds1_snaplist);
+
+	if (ds2_snaplist != NULL)
+		free(ds2_snaplist);
+
+	if (ds3_snaplist != NULL)
+		free(ds3_snaplist);
+	cv_destroy(&cv);
+	mutex_destroy(&mtx);
 }

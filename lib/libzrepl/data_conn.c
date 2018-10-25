@@ -1382,6 +1382,11 @@ read_socket:
 					    " %s, err(%d)", zinfo->name, rc);
 					goto exit;
 				}
+#if DEBUG
+				if (snap_zv != NULL)
+					LOG_INFO("Rebuilding from zv:%s\n",
+					    snap_zv->zv_name);
+#endif
 			}
 
 			zvol_state_t *zv = zinfo->main_zv;

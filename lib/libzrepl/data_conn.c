@@ -30,6 +30,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+#include <sys/dsl_destroy.h>
 #include <uzfs_io.h>
 #include <uzfs_rebuilding.h>
 #include <zrepl_mgmt.h>
@@ -1155,7 +1156,8 @@ uzfs_zvol_io_conn_acceptor(void *arg)
 			rc = 0;
 
 			if (events[i].data.fd == io_sfd) {
-				LOG_INFO("New data connection");
+				LOG_INFO("New data connection on fd %d",
+				    new_fd);
 				thrd_info = zk_thread_create(NULL, 0,
 				    (thread_func_t)io_receiver,
 				    (void *)new_fd, 0, NULL, TS_RUN, 0,
@@ -1270,6 +1272,35 @@ uzfs_zvol_send_zio_cmd(zvol_info_t *zinfo, zvol_io_hdr_t *hdrp,
 }
 
 /*
+ * Creates internal snapshot on given zv using current time as part of snapname.
+ * If snap already exists, waits and attempts to create again.
+ * Returns zv of snapshot in snap_zv.
+ */
+int
+uzfs_zvol_create_internal_snapshot(zvol_state_t *zv, zvol_state_t **snap_zv,
+    uint64_t io_num)
+{
+	int ret = 0;
+	char *snap_name;
+	time_t now;
+again:
+	now = time(NULL);
+	snap_name = kmem_asprintf("%s%llu.%llu", IO_DIFF_SNAPNAME, io_num, now);
+	ret = get_snapshot_zv(zv, snap_name, snap_zv, B_TRUE, B_FALSE);
+	if (ret == EEXIST) {
+		strfree(snap_name);
+		sleep(1);
+		LOG_INFO("Waiting to create internal snapshot");
+		goto again;
+	}
+	if (ret != 0)
+		LOG_ERR("Failed to get info about %s@%s",
+		    zv->zv_name, snap_name);
+	strfree(snap_name);
+	return (ret);
+}
+
+/*
  * Rebuild scanner function which after receiving
  * vol_name and IO number, will scan metadata and
  * read data and send across.
@@ -1292,7 +1323,7 @@ uzfs_zvol_rebuild_scanner(void *arg)
 	char		*payload = NULL;
 	uint64_t	checkpointed_io_seq = 0;
 	uint64_t	payload_size = 0;
-
+	char		*snap_name;
 
 	if ((rc = setsockopt(fd, SOL_SOCKET, SO_LINGER, &lo, sizeof (lo)))
 	    != 0) {
@@ -1404,8 +1435,14 @@ read_socket:
 				}
 				if (ZINFO_IS_DEGRADED(zinfo))
 					zv = zinfo->clone_zv;
-			} else {
-				ASSERT(all_snap_done == B_FALSE);
+
+				rc = uzfs_zvol_create_internal_snapshot(zv,
+				    &snap_zv, metadata.io_num);
+				if (rc != 0) {
+					LOG_ERR("internal snap create failed %s"
+					    " err(%d)", zinfo->name, rc);
+					goto exit;
+				}
 			}
 
 			rc = uzfs_get_io_diff(zv, &metadata,
@@ -1427,7 +1464,7 @@ read_socket:
 			 * Snapshot we were transferring was not
 			 * internal snapshot, send snap_done opcode
 			 */
-			if (snap_zv != NULL) {
+			if (snap_zv != NULL && all_snap_done == B_FALSE) {
 				rc = uzfs_zvol_get_last_committed_io_no(snap_zv,
 				    HEALTHY_IO_SEQNUM, &checkpointed_io_seq);
 				if (rc != 0) {
@@ -1451,6 +1488,15 @@ read_socket:
 				snap_zv = NULL;
 				goto read_socket;
 			} else {
+				if (snap_zv != NULL) {
+					snap_name = kmem_asprintf("%s",
+					    snap_zv->zv_name);
+					uzfs_close_dataset(snap_zv);
+					(void) dsl_destroy_snapshot(snap_name,
+					    B_FALSE);
+					strfree(snap_name);
+				}
+				snap_zv = NULL;
 				LOG_INFO("Rebuild process is over on zvol %s",
 				    zinfo->name);
 				goto exit;
@@ -1800,12 +1846,8 @@ open_zvol(int fd, zvol_info_t **zinfopp)
 	}
 	if (uzfs_update_metadata_granularity(zv,
 	    open_data.tgt_block_size) != 0) {
-		if (rele_dataset_on_error == 1)
-			uzfs_rele_dataset(zv);
 		LOG_ERR("Failed to set granularity of metadata");
-		hdr.status = ZVOL_OP_STATUS_FAILED;
-		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
-		goto open_reply;
+		goto error_ret;
 	}
 
 	if (zinfo->snap_zv == NULL) {
@@ -1813,15 +1855,20 @@ open_zvol(int fd, zvol_info_t **zinfopp)
 		/* Create clone for rebuild */
 		if (uzfs_zvol_get_or_create_internal_clone(zinfo->main_zv,
 		    &zinfo->snap_zv, &zinfo->clone_zv, NULL) != 0) {
-			if (rele_dataset_on_error == 1)
-				uzfs_rele_dataset(zv);
 			LOG_ERR("Failed to create clone for rebuild");
-			hdr.status = ZVOL_OP_STATUS_FAILED;
-			(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
-			goto open_reply;
+			goto error_ret;
 		}
 	}
 	ASSERT3P(zinfo->clone_zv, !=, NULL);
+	if (zinfo->clone_zv == NULL) {
+		LOG_ERR("Failed to get clone");
+error_ret:
+		if (rele_dataset_on_error == 1)
+			uzfs_rele_dataset(zv);
+		hdr.status = ZVOL_OP_STATUS_FAILED;
+		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
+		goto open_reply;
+	}
 	/*
 	 * TODO: Once we support multiple concurrent data connections for a
 	 * single zvol, we should probably check that the timeout is the same
@@ -1989,14 +2036,14 @@ exit:
 
 	taskq_wait(zinfo->uzfs_zvol_taskq);
 	reinitialize_zv_state(zinfo->main_zv);
-	zinfo->is_io_receiver_created = 0;
 	(void) uzfs_zvol_release_internal_clone(zinfo->main_zv,
 	    &zinfo->snap_zv, &zinfo->clone_zv);
 
 	zinfo->quiesce_requested = 0;
 	zinfo->quiesce_done = 1;
-	uzfs_zinfo_drop_refcnt(zinfo);
+	zinfo->is_io_receiver_created = 0;
 	zinfo->io_fd = -1;
+	uzfs_zinfo_drop_refcnt(zinfo);
 thread_exit:
 	close(fd);
 	LOG_INFO("Data connection closed on fd: %d", fd);

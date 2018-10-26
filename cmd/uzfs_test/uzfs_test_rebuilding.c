@@ -21,6 +21,7 @@
 
 #include <sys/zfs_context.h>
 #include <sys/spa.h>
+#include <sys/dsl_destroy.h>
 #include <sys/uzfs_zvol.h>
 #include <uzfs_mgmt.h>
 #include <uzfs_io.h>
@@ -28,6 +29,7 @@
 #include <uzfs_zap.h>
 #include <uzfs_rebuilding.h>
 #include <uzfs_test.h>
+#include <data_conn.h>
 #include <string.h>
 
 extern void make_vdev(char *path);
@@ -208,29 +210,6 @@ done:
 }
 
 static void
-check_snapshot(zvol_state_t *zv, blk_metadata_t *md, boolean_t err)
-{
-	objset_t *s_obj;
-	char *dataset;
-	int ret = 0;
-
-	dataset = kmem_asprintf("%s@%s%lu", zv->zv_name,
-	    IO_DIFF_SNAPNAME, md->io_num);
-
-	ret = dmu_objset_own(dataset, DMU_OST_ANY, B_TRUE, zv, &s_obj);
-	if ((ret != 0 && err) ||
-	    (!err && ret == 0)) {
-		printf("ret:%d\n", ret);
-		printf("snapshot %s %s\n", dataset,
-		    (err) ? "should not be removed" : "should be removed");
-		exit(1);
-	}
-
-	if (ret == 0)
-		dmu_objset_disown(s_obj, zv);
-}
-
-static void
 fetch_modified_data(void *arg)
 {
 	struct rebuilding_data *repl_data = arg;
@@ -241,11 +220,15 @@ fetch_modified_data(void *arg)
 	zvol_state_t *snap_zv = NULL;
 	size_t len;
 	int max_count = 4;
+	char *snap_name;
 
 	printf("fetching modified data\n");
 	md.io_num = repl_data->base_io;
 
 	len = r_data->zvol->zv_volsize / max_count;
+
+	uzfs_zvol_create_internal_snapshot(repl_data->zvol, &snap_zv,
+	    md.io_num);
 
 	for (offset = 0; offset < r_data->zvol->zv_volsize; ) {
 		end = offset + len;
@@ -259,9 +242,7 @@ fetch_modified_data(void *arg)
 			break;
 
 		offset += len;
-		if (offset != r_data->zvol->zv_volsize)
-			check_snapshot(repl_data->zvol, &md, B_TRUE);
-		else
+		if (offset == r_data->zvol->zv_volsize)
 			break;
 	}
 
@@ -270,7 +251,10 @@ fetch_modified_data(void *arg)
 		exit(1);
 	}
 
-	check_snapshot(repl_data->zvol, &md, B_FALSE);
+	snap_name = kmem_asprintf("%s", snap_zv->zv_name);
+	uzfs_close_dataset(snap_zv);
+	(void) dsl_destroy_snapshot(snap_name, B_FALSE);
+	strfree(snap_name);
 
 	printf("finished fetching modified data\n");
 

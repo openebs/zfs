@@ -79,7 +79,7 @@ uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *low, zvol_state_t *snap,
 	uint64_t metaobjectsize = (zv->zv_volsize / zv->zv_metavolblocksize) *
 	    zv->zv_volmetadatasize;
 	uint64_t metadatasize = zv->zv_volmetadatasize;
-	char *buf, *snap_name = NULL;
+	char *buf;
 	uint64_t i, read;
 	uint64_t offset, len, end;
 	int ret = 0;
@@ -89,7 +89,7 @@ uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *low, zvol_state_t *snap,
 	zvol_state_t *snap_zv;
 	metaobj_blk_offset_t snap_metablk;
 
-	if (!func || (lun_offset + lun_len) > zv->zv_volsize)
+	if (!func || (lun_offset + lun_len) > zv->zv_volsize || snap == NULL)
 		return (EINVAL);
 
 	get_zv_metaobj_block_details(&snap_metablk, zv, lun_offset, lun_len);
@@ -98,19 +98,7 @@ uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *low, zvol_state_t *snap,
 
 	if (end > metaobjectsize)
 		end = metaobjectsize;
-	if (snap == NULL) {
-		snap_name = kmem_asprintf("%s%llu", IO_DIFF_SNAPNAME,
-		    low->io_num);
-		ret = get_snapshot_zv(zv, snap_name, &snap_zv);
-		if (ret != 0) {
-			LOG_ERR("Failed to get info about %s@%s io_num %lu",
-			    zv->zv_name, snap_name, low->io_num);
-			strfree(snap_name);
-			return (ret);
-		}
-	} else {
-		snap_zv = snap;
-	}
+	snap_zv = snap;
 
 	metadata_read_chunk_size = (metadata_read_chunk_size / metadatasize) *
 	    metadatasize;
@@ -186,19 +174,6 @@ uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *low, zvol_state_t *snap,
 			if (ret != 0)
 				break;
 		}
-	}
-
-	if (snap == NULL) {
-		uzfs_close_dataset(snap_zv);
-
-		/*
-		 * TODO: if we failed to destroy snapshot here then
-		 * this should be handled separately from application.
-		 */
-		if (end == metaobjectsize)
-			destroy_snapshot_zv(zv, snap_name);
-
-		strfree(snap_name);
 	}
 	umem_free(buf, metadata_read_chunk_size);
 	return (ret);
@@ -359,7 +334,8 @@ uzfs_zvol_get_or_create_internal_clone(zvol_state_t *zv,
 	char *clonename = NULL;
 	char *clone_subname = NULL;
 
-	ret = get_snapshot_zv(zv, REBUILD_SNAPSHOT_SNAPNAME, snap_zv);
+	ret = get_snapshot_zv(zv, REBUILD_SNAPSHOT_SNAPNAME, snap_zv, B_FALSE,
+	    B_FALSE);
 	if (ret != 0) {
 		LOG_ERR("Failed to get info about %s@%s",
 		    zv->zv_name, REBUILD_SNAPSHOT_SNAPNAME);
@@ -391,27 +367,40 @@ uzfs_zvol_get_or_create_internal_clone(zvol_state_t *zv,
 				LOG_ERR("Failed to hold clone: %d", ret);
 				uzfs_close_dataset(*clone_zv);
 				*clone_zv = NULL;
+				/*
+				 * commenting out destroy clone for sake
+				 * of NOT to lose data
+				 */
+#if 0
 				/* Destroy clone */
 				ret = dsl_destroy_head(clonename);
 				if (ret != 0)
 					LOG_ERRNO("Rebuild_clone destroy "
 					    "failed on:%s with err:%d",
 					    zv->zv_name, ret);
+#endif
 				uzfs_close_dataset(*snap_zv);
+#if 0
 				destroy_snapshot_zv(zv,
 				    REBUILD_SNAPSHOT_SNAPNAME);
+#endif
 				*snap_zv = NULL;
 			}
 		} else {
 			uzfs_close_dataset(*snap_zv);
-			destroy_snapshot_zv(zv, REBUILD_SNAPSHOT_SNAPNAME);
+/*
+ *			destroy_snapshot_zv(zv, REBUILD_SNAPSHOT_SNAPNAME);
+ */
 			*snap_zv = NULL;
 			LOG_INFO("Clone:%s not able to open", clone_subname);
 		}
 	} else if (ret != 0) {
 		uzfs_close_dataset(*snap_zv);
-		destroy_snapshot_zv(zv, REBUILD_SNAPSHOT_SNAPNAME);
+/*
+ *		destroy_snapshot_zv(zv, REBUILD_SNAPSHOT_SNAPNAME);
+ */
 		*snap_zv = NULL;
+		LOG_INFO("Clone:%s from snap %s fails", clonename, snapname);
 	}
 
 	strfree(clone_subname);

@@ -871,13 +871,21 @@ uzfs_get_snap_zv_ionum(zvol_info_t *zinfo, uint64_t ionum,
 		}
 		if (internal_snapshot(snapname))
 			continue;
-		error = get_snapshot_zv(zv, snapname, &snap_zv);
-		if (error)
+		error = get_snapshot_zv(zv, snapname, &snap_zv, B_FALSE,
+		    B_TRUE);
+		if (error) {
+			LOG_ERR("err %d in getting snap %s", error, snapname);
 			break;
+		}
 		error = uzfs_zvol_get_last_committed_io_no(snap_zv,
 		    HEALTHY_IO_SEQNUM, &healthy_ionum);
-		if (error)
+		if (error) {
+			LOG_ERR("err %d in getting last commited for snap %s",
+			    error, snap_zv->zv_name);
+			uzfs_close_dataset(snap_zv);
+			snap_zv = NULL;
 			break;
+		}
 		if ((healthy_ionum > ionum) &&
 		    ((smallest_higher_snapzv == NULL) ||
 		    (smallest_higher_ionum > healthy_ionum))) {

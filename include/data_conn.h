@@ -71,9 +71,14 @@ void uzfs_zvol_rebuild_dw_replica(void *arg);
 void uzfs_zvol_rebuild_scanner(void *arg);
 void uzfs_update_ionum_interval(zvol_info_t *zinfo, uint32_t timeout);
 void uzfs_zvol_timer_thread(void);
+int uzfs_zvol_create_internal_snapshot(zvol_state_t *zv, zvol_state_t **snap_zv,
+    uint64_t io_num);
 
 void signal_fds_related_to_zinfo(zvol_info_t *zinfo);
 void quiesce_wait(zvol_info_t *zinfo, uint8_t delete_clone);
+
+int uzfs_zvol_create_internal_snapshot(zvol_state_t *zv, zvol_state_t **snap_zv,
+    uint64_t io_num);
 
 #ifdef __cplusplus
 }

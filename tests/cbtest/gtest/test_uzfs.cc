@@ -966,7 +966,7 @@ TEST(SnapCreate, SnapCreateSuccess) {
 	EXPECT_EQ(3999, ionum);
 }
 
-TEST(GetSnapFromIO, GetDestroySnap) {
+TEST(GetSnapFromIO, GetSnap) {
 	zvol_state_t *zv;
 	int ret;
 
@@ -997,6 +997,35 @@ TEST(GetSnapFromIO, GetDestroySnap) {
 	EXPECT_EQ(0, dsl_destroy_snapshot("pool1/vol1@snapb", B_FALSE));
 	EXPECT_EQ(0, dsl_destroy_snapshot("pool1/vol1@snapa", B_FALSE));
 	EXPECT_EQ(0, dsl_destroy_snapshot("pool1/vol1@snapc", B_FALSE));
+}
+
+TEST(GetSnapFromIO, CreateInternalSnap) {
+	zvol_state *zv1, *zv2;
+	int ret;
+	char *snap_name;
+
+	EXPECT_EQ(0, uzfs_zvol_create_internal_snapshot(zinfo->main_zv, &zv1, 100));
+	snap_name = kmem_asprintf("%s", strchr(zv1->zv_name, '@') + 1);
+	uzfs_close_dataset(zv1);
+
+	EXPECT_EQ(EEXIST, get_snapshot_zv(zinfo->main_zv, snap_name, &zv2, B_TRUE, B_FALSE));
+	get_snapshot_zv(zinfo->main_zv, snap_name + 1, &zv2, B_FALSE, B_FALSE);
+	ret = (zv2 == NULL) ? 0 : 1;
+	EXPECT_EQ(ret, 1);
+	strfree(snap_name);
+	snap_name = kmem_asprintf("%s", zv2->zv_name);
+	uzfs_close_dataset(zv2);
+
+	EXPECT_EQ(ENOENT, get_snapshot_zv(zinfo->main_zv, "snapz", &zv1, B_TRUE, B_TRUE));
+	get_snapshot_zv(zinfo->main_zv, "snapz", &zv1, B_FALSE, B_FALSE);
+	ret = (zv1 == NULL) ? 0 : 1;
+	EXPECT_EQ(ret, 1);
+	uzfs_close_dataset(zv1);
+
+	EXPECT_EQ(0, dsl_destroy_snapshot(snap_name, B_FALSE));
+	strfree(snap_name);
+
+	EXPECT_EQ(0, dsl_destroy_snapshot("pool1/vol1@snapz", B_FALSE));
 }
 
 /* Retrieve Snap dataset and IO number */

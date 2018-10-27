@@ -1333,7 +1333,7 @@ uzfs_zvol_rebuild_scanner(void *arg)
 read_socket:
 
 #if DEBUG
-	sleep(ztest_random(3));
+	sleep(rand() % 3);
 #endif
 	if ((zinfo != NULL) &&
 	    ((zinfo->state == ZVOL_INFO_STATE_OFFLINE) ||

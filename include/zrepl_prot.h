@@ -53,6 +53,8 @@ extern "C" {
 #define	ZVOL_OP_FLAG_REBUILD		0x01
 #define	ZVOL_OP_FLAG_READ_METADATA	0x02
 
+#define	SNAP_TIMEOUT	10 // snapshot command timeout in sec
+
 enum zvol_op_code {
 	// Used to obtain info about a zvol on mgmt connection
 	ZVOL_OPCODE_HANDSHAKE = 0,

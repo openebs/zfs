@@ -522,6 +522,21 @@ uzfs_zvol_handle_rebuild_snap_done(zvol_io_hdr_t *hdrp,
 	return (rc);
 }
 
+static inline void wait_snap_timeout(void)
+{
+	LOG_INFO("waiting for inflight snapshot\n");
+	/*
+	 * wait for any ongoing snapshot.
+	 * waiting 2 times of SNAP_TIMEOUT
+	 * to avoid any timing issue while
+	 * disconnecting the replica from the
+	 * controller, also within this time
+	 * degraded replica will change its
+	 * state to AFS also.
+	 */
+	sleep(SNAP_TIMEOUT * 2);
+}
+
 void
 uzfs_zvol_rebuild_dw_replica(void *arg)
 {
@@ -732,6 +747,8 @@ next_step:
 				zinfo->quiesce_requested = 1;
 			}
 			mutex_exit(&zinfo->main_zv->rebuild_mtx);
+
+			wait_snap_timeout();
 			/*
 			 * Wait for all outstanding IOs to be flushed
 			 * to disk before making further progress
@@ -1409,6 +1426,7 @@ read_socket:
 			    == 1)
 				sleep(5);
 #endif
+snap_reverify:
 			if (snap_zv == NULL) {
 				rc = uzfs_get_snap_zv_ionum(zinfo,
 				    hdr.checkpointed_io_seq, &snap_zv);
@@ -1432,10 +1450,12 @@ read_socket:
 			 * are no ongoing snapshots.
 			 */
 				if (all_snap_done == B_FALSE) {
+					all_snap_done = B_TRUE;
 					uzfs_zvol_send_zio_cmd(zinfo, &hdr,
 					    ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE,
 					    fd, NULL, 0, 0);
-					all_snap_done = B_TRUE;
+					wait_snap_timeout();
+					goto snap_reverify;
 				}
 				if (ZINFO_IS_DEGRADED(zinfo))
 					zv = zinfo->clone_zv;
@@ -1447,6 +1467,11 @@ read_socket:
 					    " err(%d)", zinfo->name, rc);
 					goto exit;
 				}
+			} else if (all_snap_done) {
+				LOG_INFO("Got a snapshot while switching "
+				    "to ALL_SNAP_DONE command for zv:%s\n",
+				    snap_zv->zv_name);
+				goto exit;
 			}
 
 			rc = uzfs_get_io_diff(zv, &metadata,

@@ -1746,7 +1746,8 @@ TEST(uZFSRebuild, TestRebuildComplete) {
 
 	uzfs_zvol_set_rebuild_status(zv, ZVOL_REBUILDING_INIT);
 	do_data_connection(data_conn_fd, "127.0.0.1", IO_SERVER_PORT, "vol1");
-
+	EXPECT_EQ(NULL, !zinfo->clone_zv);
+	EXPECT_EQ(NULL, !zinfo->snap_zv);
 	/*
 	 * thread helping rebuild will exit after writing
 	 * valid write IO and REBUILD_STEP_DONE, and reads
@@ -1761,6 +1762,9 @@ TEST(uZFSRebuild, TestRebuildComplete) {
 	while (zinfo->is_io_receiver_created)
 		sleep(2);
 	sleep(5);
+
+	EXPECT_EQ(NULL, zinfo->clone_zv);
+	EXPECT_EQ(NULL, zinfo->snap_zv);
 	memset(&zinfo->main_zv->rebuild_info, 0, sizeof (zvol_rebuild_info_t));
 }
 

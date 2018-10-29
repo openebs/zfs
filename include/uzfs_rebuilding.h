@@ -63,7 +63,8 @@ int compare_blk_metadata(blk_metadata_t *first_md, blk_metadata_t *second_md);
  * API to access data whose metadata is higer than base_metadata
  */
 int uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *base_metadata,
-    uzfs_get_io_diff_cb_t *cb_func, off_t offset, size_t len, void *arg);
+    zvol_state_t *snap_zv, uzfs_get_io_diff_cb_t *cb_func,
+    off_t offset, size_t len, void *arg);
 
 /*
  * uzfs_get_nonoverlapping_ondisk_blks will check on_disk metadata with
@@ -76,11 +77,14 @@ int uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *base_metadata,
 int uzfs_get_nonoverlapping_ondisk_blks(zvol_state_t *zv, uint64_t offset,
     uint64_t len, blk_metadata_t *incoming_md, void **list);
 int
-uzfs_zvol_create_snaprebuild_clone(zvol_state_t *zv,
-    zvol_state_t **snap_zv);
+uzfs_zvol_get_or_create_internal_clone(zvol_state_t *zv,
+    zvol_state_t **snap_zv, zvol_state_t **clone_zv, int *ret_val);
 int
-uzfs_zvol_destroy_snaprebuild_clone(zvol_state_t *zv,
-    zvol_state_t *snap_zv);
+uzfs_zvol_release_internal_clone(zvol_state_t *zv,
+    zvol_state_t **snap_zv, zvol_state_t **clone_zv);
+int
+uzfs_zvol_destroy_internal_clone(zvol_state_t *zv,
+    zvol_state_t **snap_zv, zvol_state_t **clone_zv);
 #ifdef __cplusplus
 }
 #endif

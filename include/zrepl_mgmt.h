@@ -72,6 +72,8 @@ struct zvol_io_cmd_s;
 #if DEBUG
 typedef struct inject_delay_s {
 	int helping_replica_rebuild_step;
+	int pre_uzfs_write_data;
+	int downgraded_replica_rebuild_size_set;
 } inject_delay_t;
 
 typedef struct inject_error_s {
@@ -93,7 +95,10 @@ typedef struct zvol_info_s {
 	/* Logical Unit related fields */
 	zvol_info_state_t	state;
 	char 		name[MAXPATHLEN];
-	zvol_state_t	*zv;
+	zvol_state_t	*main_zv; // original volume
+	zvol_state_t	*clone_zv; // cloned volume for rebuilding
+	zvol_state_t	*snap_zv; // snap volume from where clone is created
+	zvol_state_t    *rebuild_zv; // current snapshot which is rebuilding
 	uint64_t	refcnt;
 
 	union {
@@ -106,9 +111,24 @@ typedef struct zvol_info_s {
 
 	uint32_t	timeout;	/* iSCSI timeout val for this zvol */
 	uint64_t	zvol_guid;
+
+	/* Highest IO num of received write IOs */
 	uint64_t	running_ionum;
+
+	/* IO num that is stored to ZAP as healthy_ionum when vol is healthy */
+	uint64_t	stored_healthy_ionum;
+
+	/*
+	 * IO num that will be written to ZAP as healthy_ionum
+	 * This tells that all IOs lesser than this are committed to replica
+	 * So, running_ionum will be made as checkpointed_ionum and will be
+	 * stored to ZAP after 'update_ionum_interval' time period.
+	 */
 	uint64_t	checkpointed_ionum;
+
+	/* running_ionum that is stored to ZAP when vol is degraded */
 	uint64_t	degraded_checkpointed_ionum;
+
 	time_t		checkpointed_time;	/* time of the last chkpoint */
 	uint64_t	rebuild_cmd_queued_cnt;
 	uint64_t	rebuild_cmd_acked_cnt;
@@ -127,6 +147,7 @@ typedef struct zvol_info_s {
 	 */
 	pthread_mutex_t	zinfo_mutex;
 	pthread_cond_t	io_ack_cond;
+	pthread_mutex_t	zinfo_ionum_mutex;
 
 	/* All cmds after execution will go here for ack */
 	STAILQ_HEAD(, zvol_io_cmd_s)	complete_queue;
@@ -138,6 +159,11 @@ typedef struct zvol_info_s {
 
 	/* Will be used to singal ack-sender to exit */
 	uint8_t		conn_closed;
+
+	/* Rebuild flags to quiesce IOs */
+	uint8_t		quiesce_requested;
+	uint8_t		quiesce_done;
+
 	/* Pointer to mgmt connection for this zinfo */
 	void		*mgmt_conn;
 
@@ -175,7 +201,7 @@ typedef struct zinfo_fd_s {
 typedef struct zvol_io_cmd_s {
 	STAILQ_ENTRY(zvol_io_cmd_s) cmd_link;
 	zvol_io_hdr_t 	hdr;
-	void		*zv;
+	zvol_info_t	*zinfo;
 	void		*buf;
 	uint64_t	buf_len;
 	metadata_desc_t	*metadata_desc;
@@ -193,14 +219,19 @@ extern int uzfs_zinfo_init(void *zv, const char *ds_name,
 extern zvol_info_t *uzfs_zinfo_lookup(const char *name);
 extern void uzfs_zinfo_replay_zil_all(void);
 extern int uzfs_zinfo_destroy(const char *ds_name, spa_t *spa);
-uint64_t uzfs_zvol_get_last_committed_io_no(zvol_state_t *zv, char *key);
-void uzfs_zvol_store_last_committed_io_no(zvol_state_t *zv,
-    char *key, uint64_t io_seq);
+int uzfs_zvol_get_last_committed_io_no(zvol_state_t *, char *, uint64_t *);
+void uzfs_zinfo_store_last_committed_healthy_io_no(zvol_info_t *zinfo,
+    uint64_t io_seq);
+void uzfs_zinfo_store_last_committed_degraded_io_no(zvol_info_t *zv,
+    uint64_t io_seq);
 extern int set_socket_keepalive(int sfd);
 extern int create_and_bind(const char *port, int bind_needed,
     boolean_t nonblocking);
 int uzfs_zvol_name_compare(zvol_info_t *zv, const char *name);
 void shutdown_fds_related_to_zinfo(zvol_info_t *zinfo);
+
+extern void uzfs_zinfo_set_status(zvol_info_t *zinfo, zvol_status_t status);
+extern zvol_status_t uzfs_zinfo_get_status(zvol_info_t *zinfo);
 
 /*
  * API to drop refcnt on zinfo. If refcnt

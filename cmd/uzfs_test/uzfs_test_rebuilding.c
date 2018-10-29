@@ -238,6 +238,7 @@ fetch_modified_data(void *arg)
 	int err;
 	blk_metadata_t md;
 	off_t offset, end;
+	zvol_state_t *snap_zv = NULL;
 	size_t len;
 	int max_count = 4;
 
@@ -251,7 +252,7 @@ fetch_modified_data(void *arg)
 		if (end > r_data->zvol->zv_volsize)
 			len = r_data->zvol->zv_volsize - offset;
 
-		err = uzfs_get_io_diff(repl_data->zvol, &md,
+		err = uzfs_get_io_diff(repl_data->zvol, &md, snap_zv,
 		    uzfs_test_meta_diff_traverse_cb, offset, len,
 		    r_data);
 		if (err)
@@ -298,11 +299,11 @@ rebuild_replica_thread(void *arg)
 
 	uzfs_zvol_set_rebuild_status(to_zvol, ZVOL_REBUILDING_INIT);
 
-	latest_io = uzfs_zvol_get_last_committed_io_no(from_zvol,
-	    HEALTHY_IO_SEQNUM);
+	uzfs_zvol_get_last_committed_io_no(from_zvol,
+	    HEALTHY_IO_SEQNUM, &latest_io);
 	printf("io number... healthy replica:%lu degraded replica:%lu\n",
 	    latest_io, r_info->base_io_num);
-	uzfs_zvol_set_rebuild_status(to_zvol, ZVOL_REBUILDING_IN_PROGRESS);
+	uzfs_zvol_set_rebuild_status(to_zvol, ZVOL_REBUILDING_SNAP);
 
 	mutex_enter(&r_info->mtx);
 	cv_signal(&r_info->cv);
@@ -377,6 +378,25 @@ rebuild_replica_thread(void *arg)
 	mutex_exit(&r_info->mtx);
 
 	zk_thread_exit();
+}
+
+static void
+uzfs_zvol_store_last_committed_io_no(zvol_state_t *zv, char *key,
+    uint64_t io_seq)
+{
+	uzfs_zap_kv_t *kv_array[0];
+	uzfs_zap_kv_t zap;
+
+	if (io_seq == 0)
+		return;
+
+	zap.key = key;
+	zap.value = io_seq;
+	zap.size = sizeof (io_seq);
+
+	kv_array[0] = &zap;
+	VERIFY0(uzfs_update_zap_entries(zv,
+	    (const uzfs_zap_kv_t **) kv_array, 1));
 }
 
 static void
@@ -491,8 +511,8 @@ replica_writer_thread(void *arg)
 			 * and continue to update last_committed_io_number in
 			 * degraded replica.
 			 */
-			last_io_num = uzfs_zvol_get_last_committed_io_no(zvol2,
-			    HEALTHY_IO_SEQNUM);
+			uzfs_zvol_get_last_committed_io_no(zvol2,
+			    HEALTHY_IO_SEQNUM, &last_io_num);
 			rebuild_info.base_io_num = last_io_num;
 		} else if (now > replica_rebuild_start_time &&
 		    !rebuilding_started) {

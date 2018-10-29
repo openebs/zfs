@@ -20,6 +20,7 @@
  */
 
 #include <sys/dmu_objset.h>
+#include <sys/dsl_destroy.h>
 #include <sys/zap.h>
 #include <sys/dsl_prop.h>
 #include <sys/uzfs_zvol.h>
@@ -29,6 +30,7 @@
 #include <uzfs_mgmt.h>
 #include <uzfs_io.h>
 #include <uzfs_zap.h>
+#include <uzfs_rebuilding.h>
 
 static int uzfs_fd_rand = -1;
 kmutex_t zvol_list_mutex;
@@ -199,6 +201,7 @@ uzfs_zvol_create_meta(objset_t *os, uint64_t block_size,
     uint64_t meta_block_size, dmu_tx_t *tx)
 {
 	uint64_t metadatasize;
+	uint64_t io_seqnum = 0;
 	int error;
 
 	if (meta_block_size > block_size)
@@ -213,6 +216,14 @@ uzfs_zvol_create_meta(objset_t *os, uint64_t block_size,
 	    &metadatasize, tx);
 	if (error != 0)
 		return (error);
+
+	error = zap_update(os, ZVOL_ZAP_OBJ, HEALTHY_IO_SEQNUM, 8, 1,
+	    &io_seqnum, tx);
+	ASSERT(error == 0);
+
+	error = zap_update(os, ZVOL_ZAP_OBJ, DEGRADED_IO_SEQNUM, 8, 1,
+	    &io_seqnum, tx);
+	ASSERT(error == 0);
 
 	return (0);
 }
@@ -462,6 +473,26 @@ ret:
 	return (error);
 }
 
+/*
+ * This function is checked if volume is internally
+ * created cloned volume for rebuild purpose.
+ * Input: Volume name [pool/volume_name].
+ * Output: 0 if volume is internally created cloned volume.
+ * Otherwise non-zero value.
+ */
+int
+is_internally_created_clone_volume(const char *ds_name)
+{
+	size_t ds_len  = strlen(ds_name);
+	size_t pattern_len = strlen(REBUILD_SNAPSHOT_CLONENAME);
+
+	if (ds_len < pattern_len)
+		return (-1);
+
+	return (strcmp(ds_name + (ds_len - pattern_len),
+	    REBUILD_SNAPSHOT_CLONENAME));
+}
+
 /* uZFS Zvol create call back function */
 int
 uzfs_zvol_create_cb(const char *ds_name, void *arg)
@@ -474,6 +505,14 @@ uzfs_zvol_create_cb(const char *ds_name, void *arg)
 	if (strrchr(ds_name, '@') != NULL) {
 		return (0);
 	}
+
+	/*
+	 * Internally created cloned volume do not have target IP stored
+	 * infact they do not need to have zinfo and connection to target
+	 * as these are not meant for client/application.
+	 */
+	if (is_internally_created_clone_volume(ds_name) == 0)
+		return (0);
 
 	error = uzfs_dataset_zv_create(ds_name, &zv);
 	if (error) {
@@ -524,6 +563,61 @@ uzfs_zvol_create_minors(spa_t *spa, const char *name)
 	strncpy(pool_name, name, MAXNAMELEN);
 	dmu_objset_find(pool_name, uzfs_zvol_create_cb, NULL, DS_FIND_CHILDREN);
 	kmem_free(pool_name, MAXNAMELEN);
+}
+
+int
+get_snapshot_zv(zvol_state_t *zv, char *snap_name, zvol_state_t **snap_zv)
+{
+	char *dataset;
+	int ret = 0;
+
+	dataset = kmem_asprintf("%s@%s", strchr(zv->zv_name, '/') + 1,
+	    snap_name);
+
+	ret = uzfs_open_dataset(zv->zv_spa, dataset, snap_zv);
+	if (ret == ENOENT) {
+		ret = dmu_objset_snapshot_one(zv->zv_name, snap_name);
+		if (ret) {
+			LOG_ERR("Failed to create snapshot %s@%s: %d",
+			    zv->zv_name, snap_name, ret);
+			strfree(dataset);
+			return (ret);
+		}
+
+		ret = uzfs_open_dataset(zv->zv_spa, dataset, snap_zv);
+		if (ret == 0) {
+			ret = uzfs_hold_dataset(*snap_zv);
+			if (ret != 0) {
+				LOG_ERR("Failed to hold snapshot: %d", ret);
+				uzfs_close_dataset(*snap_zv);
+			}
+		}
+		else
+			LOG_ERR("Failed to open snapshot: %d", ret);
+	} else if (ret == 0) {
+		LOG_INFO("holding already available snapshot %s@%s",
+		    zv->zv_name, snap_name);
+		ret = uzfs_hold_dataset(*snap_zv);
+		if (ret != 0) {
+			LOG_ERR("Failed to hold already existing snapshot: %d",
+			    ret);
+			uzfs_close_dataset(*snap_zv);
+		}
+	} else
+		LOG_ERR("Failed to open snapshot: %d", ret);
+
+	strfree(dataset);
+	return (ret);
+}
+
+void
+destroy_snapshot_zv(zvol_state_t *zv, char *snap_name)
+{
+	char *dataset;
+
+	dataset = kmem_asprintf("%s@%s", zv->zv_name, snap_name);
+	(void) dsl_destroy_snapshot(dataset, B_FALSE);
+	strfree(dataset);
 }
 
 /* uZFS Zvol destroy call back function */

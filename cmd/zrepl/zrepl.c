@@ -145,6 +145,8 @@ main(int argc, char **argv)
 	io_receiver = uzfs_zvol_io_receiver;
 	rebuild_scanner = uzfs_zvol_rebuild_scanner;
 
+	SLIST_INIT(&uzfs_mgmt_conns);
+
 	rc = uzfs_init();
 	if (rc != 0) {
 		LOG_ERR("initialization errored: %d", rc);
@@ -165,6 +167,9 @@ main(int argc, char **argv)
 		goto initialize_error;
 	}
 
+	SLIST_INIT(&uzfs_mgmt_conns);
+	mutex_init(&conn_list_mtx, NULL, MUTEX_DEFAULT, NULL);
+	mutex_init(&async_tasks_mtx, NULL, MUTEX_DEFAULT, NULL);
 	zrepl_svc_run();
 	zrepl_monitor_errors();
 

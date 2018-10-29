@@ -12,6 +12,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <uzfs_rebuilding.h>
 
 #define	ZVOL_THREAD_STACKSIZE (2 * 1024 * 1024)
 
@@ -282,9 +283,9 @@ uzfs_zinfo_lookup(const char *name)
 static void
 uzfs_zinfo_init_mutex(zvol_info_t *zinfo)
 {
-
 	(void) pthread_mutex_init(&zinfo->zinfo_mutex, NULL);
 	(void) pthread_cond_init(&zinfo->io_ack_cond, NULL);
+	(void) pthread_mutex_init(&zinfo->zinfo_ionum_mutex, NULL);
 }
 
 static void
@@ -293,6 +294,7 @@ uzfs_zinfo_destroy_mutex(zvol_info_t *zinfo)
 
 	(void) pthread_mutex_destroy(&zinfo->zinfo_mutex);
 	(void) pthread_cond_destroy(&zinfo->io_ack_cond);
+	(void) pthread_mutex_destroy(&zinfo->zinfo_ionum_mutex);
 }
 
 int
@@ -301,22 +303,30 @@ uzfs_zinfo_destroy(const char *name, spa_t *spa)
 	zvol_info_t	*zinfo = NULL;
 	zvol_info_t    *zt = NULL;
 	int namelen = ((name) ? strlen(name) : 0);
-	zvol_state_t  *zv;
+	zvol_state_t  *clone_zv = NULL;
+	zvol_state_t  *snap_zv = NULL;
+	zvol_state_t  *main_zv;
+	int destroyed = 0;
 
 	mutex_enter(&zvol_list_mutex);
 
 	/*  clear out all zvols for this spa_t */
 	if (name == NULL) {
 		SLIST_FOREACH_SAFE(zinfo, &zvol_list, zinfo_next, zt) {
-			if (strncmp(spa_name(spa),
-			    zinfo->name, strlen(spa_name(spa))) == 0) {
+			if (strcmp(spa_name(spa),
+			    spa_name(zinfo->main_zv->zv_spa)) == 0) {
 				SLIST_REMOVE(&zvol_list, zinfo, zvol_info_s,
 				    zinfo_next);
 
 				mutex_exit(&zvol_list_mutex);
-				zv = zinfo->zv;
+				main_zv = zinfo->main_zv;
+				clone_zv = zinfo->clone_zv;
+				snap_zv = zinfo->snap_zv;
 				uzfs_mark_offline_and_free_zinfo(zinfo);
-				uzfs_close_dataset(zv);
+				(void) uzfs_zvol_release_internal_clone(
+				    main_zv, &snap_zv, &clone_zv);
+				uzfs_close_dataset(main_zv);
+				destroyed++;
 				mutex_enter(&zvol_list_mutex);
 			}
 		}
@@ -330,15 +340,22 @@ uzfs_zinfo_destroy(const char *name, spa_t *spa)
 				    zinfo_next);
 
 				mutex_exit(&zvol_list_mutex);
-				zv = zinfo->zv;
+				main_zv = zinfo->main_zv;
+				clone_zv = zinfo->clone_zv;
+				snap_zv = zinfo->snap_zv;
 				uzfs_mark_offline_and_free_zinfo(zinfo);
-				uzfs_close_dataset(zv);
-				mutex_enter(&zvol_list_mutex);
-				break;
+				(void) uzfs_zvol_release_internal_clone(
+				    main_zv, &snap_zv, &clone_zv);
+				uzfs_close_dataset(main_zv);
+				destroyed++;
+				goto end;
 			}
 		}
 	}
 	mutex_exit(&zvol_list_mutex);
+end:
+	LOG_INFO("Destroy for pool: %s vol: %s, destroyed: %d", (spa == NULL) ?
+	    "null" : spa_name(spa), (name == NULL) ? "null" : name, destroyed);
 	return (0);
 }
 
@@ -350,6 +367,8 @@ uzfs_zinfo_init(void *zv, const char *ds_name, nvlist_t *create_props)
 	zinfo =	kmem_zalloc(sizeof (zvol_info_t), KM_SLEEP);
 	bzero(zinfo, sizeof (zvol_info_t));
 	ASSERT(zinfo != NULL);
+	ASSERT(zinfo->clone_zv == NULL);
+	ASSERT(zinfo->snap_zv == NULL);
 
 	zinfo->uzfs_zvol_taskq = taskq_create("replica", boot_ncpus,
 	    defclsyspri, boot_ncpus, INT_MAX,
@@ -362,9 +381,9 @@ uzfs_zinfo_init(void *zv, const char *ds_name, nvlist_t *create_props)
 	uzfs_zinfo_init_mutex(zinfo);
 
 	strlcpy(zinfo->name, ds_name, MAXNAMELEN);
-	zinfo->zv = zv;
+	zinfo->main_zv = zv;
 	zinfo->state = ZVOL_INFO_STATE_ONLINE;
-	/* iSCSI target will overwrite this value during handshake */
+	/* iSCSI target will overwrite this value (in sec) during handshake */
 	zinfo->update_ionum_interval = 6000;
 	/* Update zvol list */
 	uzfs_insert_zinfo_list(zinfo);
@@ -389,24 +408,33 @@ uzfs_zinfo_free(zvol_info_t *zinfo)
 	return (0);
 }
 
-uint64_t
-uzfs_zvol_get_last_committed_io_no(zvol_state_t *zv, char *key)
+int
+uzfs_zvol_get_last_committed_io_no(zvol_state_t *zv, char *key, uint64_t *ionum)
 {
 	uzfs_zap_kv_t zap;
+	int error;
+
 	zap.key = key;
 	zap.value = 0;
 	zap.size = sizeof (uint64_t);
 
-	uzfs_read_zap_entry(zv, &zap);
-	return (zap.value);
+	error = uzfs_read_zap_entry(zv, &zap);
+	if (ionum != NULL)
+		*ionum = zap.value;
+
+	return (error);
 }
 
-void
-uzfs_zvol_store_last_committed_io_no(zvol_state_t *zv, char *key,
+static void
+uzfs_zvol_store_kv_pair(zvol_state_t *zv, char *key,
     uint64_t io_seq)
 {
 	uzfs_zap_kv_t *kv_array[0];
 	uzfs_zap_kv_t zap;
+
+	if (io_seq == 0)
+		return;
+
 	zap.key = key;
 	zap.value = io_seq;
 	zap.size = sizeof (io_seq);
@@ -482,25 +510,30 @@ uzfs_dump_zvol_stats(nvlist_t **stat)
 		    "online" : "offline");
 
 		nvlist_add_string(nv, "zvol status",
-		    (zinfo->zv->zv_status == ZVOL_STATUS_HEALTHY) ?
+		    (zinfo->main_zv->zv_status == ZVOL_STATUS_HEALTHY) ?
 		    "healthy" : "degraded");
 		nvlist_add_uint64(nv, "rebuild_bytes",
-		    zinfo->zv->rebuild_info.rebuild_bytes);
+		    zinfo->main_zv->rebuild_info.rebuild_bytes);
 		nvlist_add_uint64(nv, "rebuild count",
-		    zinfo->zv->rebuild_info.rebuild_cnt);
+		    zinfo->main_zv->rebuild_info.rebuild_cnt);
 		nvlist_add_uint64(nv, "rebuild done count",
-		    zinfo->zv->rebuild_info.rebuild_done_cnt);
+		    zinfo->main_zv->rebuild_info.rebuild_done_cnt);
 		nvlist_add_uint64(nv, "rebuild failed count",
-		    zinfo->zv->rebuild_info.rebuild_failed_cnt);
-		switch (zinfo->zv->rebuild_info.zv_rebuild_status) {
+		    zinfo->main_zv->rebuild_info.rebuild_failed_cnt);
+		switch (zinfo->main_zv->rebuild_info.zv_rebuild_status) {
 			case ZVOL_REBUILDING_INIT:
 				nvlist_add_string(nv, "rebuild status",
 				    "ZVOL_REBUILDING_INIT");
 				break;
 
-			case ZVOL_REBUILDING_IN_PROGRESS:
+			case ZVOL_REBUILDING_SNAP:
 				nvlist_add_string(nv, "rebuild status",
-				    "ZVOL_REBUILDING_IN_PROGRESS");
+				    "ZVOL_REBUILDING_SNAP");
+				break;
+
+			case ZVOL_REBUILDING_AFS:
+				nvlist_add_string(nv, "rebuild status",
+				    "ZVOL_REBUILDING_AFS");
 				break;
 
 			case ZVOL_REBUILDING_DONE:
@@ -519,7 +552,7 @@ uzfs_dump_zvol_stats(nvlist_t **stat)
 				break;
 		}
 
-		mutex_enter(&zinfo->zv->rebuild_mtx);
+		mutex_enter(&zinfo->main_zv->rebuild_mtx);
 		TAILQ_FOREACH(r_stats, &zinfo->rebuild_stats, stat_next) {
 			rebuild_count++;
 		}
@@ -563,7 +596,7 @@ uzfs_dump_zvol_stats(nvlist_t **stat)
 			}
 			i++;
 		}
-		mutex_exit(&zinfo->zv->rebuild_mtx);
+		mutex_exit(&zinfo->main_zv->rebuild_mtx);
 		nvlist_add_nvlist_array(nv, "Rebuild stats", nrebuild_stats, i);
 		while (i)
 			nvlist_free(nrebuild_stats[--i]);
@@ -575,4 +608,47 @@ uzfs_dump_zvol_stats(nvlist_t **stat)
 	}
 	(void) mutex_exit(&zvol_list_mutex);
 	*stat = zstats;
+}
+
+void
+uzfs_zinfo_store_last_committed_degraded_io_no(zvol_info_t *zinfo,
+    uint64_t io_seq)
+{
+	uzfs_zvol_store_kv_pair(zinfo->main_zv,
+	    DEGRADED_IO_SEQNUM, io_seq);
+}
+
+/*
+ * Stores given io_seq as healthy_io_seqnum if previously committed is
+ * less than given io_seq.
+ * Updates in-memory committed io_num.
+ */
+void
+uzfs_zinfo_store_last_committed_healthy_io_no(zvol_info_t *zinfo,
+    uint64_t io_seq)
+{
+	if (io_seq == 0)
+		return;
+
+	pthread_mutex_lock(&zinfo->zinfo_ionum_mutex);
+	if (zinfo->stored_healthy_ionum > io_seq) {
+		pthread_mutex_unlock(&zinfo->zinfo_ionum_mutex);
+		return;
+	}
+	zinfo->stored_healthy_ionum = io_seq;
+	uzfs_zvol_store_kv_pair(zinfo->main_zv,
+	    HEALTHY_IO_SEQNUM, io_seq);
+	pthread_mutex_unlock(&zinfo->zinfo_ionum_mutex);
+}
+
+void
+uzfs_zinfo_set_status(zvol_info_t *zinfo, zvol_status_t status)
+{
+	uzfs_zvol_set_status(zinfo->main_zv, status);
+}
+
+zvol_status_t
+uzfs_zinfo_get_status(zvol_info_t *zinfo)
+{
+	return (uzfs_zvol_get_status(zinfo->main_zv));
 }

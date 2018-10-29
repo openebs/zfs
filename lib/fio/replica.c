@@ -645,7 +645,7 @@ static enum fio_q_status fio_repl_queue(struct thread_data *td,
 	hdr.len = io_u->xfer_buflen;
 	hdr.status = 0;
 	hdr.flags = 0;
-	hdr.checkpointed_io_seq = 0;
+	hdr.version = REPLICA_VERSION;
 
 	if (io_u->ddir == DDIR_WRITE) {
 		hdr.opcode = ZVOL_OPCODE_WRITE;

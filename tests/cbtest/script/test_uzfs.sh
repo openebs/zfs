@@ -784,10 +784,11 @@ EOF
 	LD_LIBRARY_PATH=$SRC_PATH/lib/fio/.libs $FIO_SRCDIR/fio $TMPDIR/test.fio
 	[ $? -eq 0 ] || log_fail "Fio test run failed"
 
+	sleep 5
 	# test pool destroy
 	# XXX Bug: we must destroy volumes before pool. If not then EBUSY
-	log_must $ZFS destroy -r $fio_pool/vol1
-	log_must $ZFS destroy -r $fio_pool/vol2
+	log_must $ZFS destroy -R $fio_pool/vol1
+	log_must $ZFS destroy -R $fio_pool/vol2
 	log_must destroy_pool $fio_pool
 	log_must rm $TMPDIR/test.fio
 	log_must sudo losetup -d /dev/fake-dev;

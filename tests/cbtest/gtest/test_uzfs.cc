@@ -2378,7 +2378,7 @@ TEST(MgmtThreadTest, SnapCreateFailedReplicaInRebuildInitState) {
 	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
 	mgmt_thread_test_case(14);
 	EXPECT_EQ(status, ZVOL_OP_STATUS_FAILED);
-	EXPECT_NE(ZVOL_REBUILDING_ERRORED,
+	EXPECT_EQ(ZVOL_REBUILDING_INIT,
 	    uzfs_zvol_get_rebuild_status(zinfo->main_zv));
 }
 
@@ -2393,7 +2393,7 @@ TEST(MgmtThreadTest, SnapCreateFailedReplicaInRebuildSnapState) {
 	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
 	mgmt_thread_test_case(14);
 	EXPECT_EQ(status, ZVOL_OP_STATUS_FAILED);
-	EXPECT_NE(ZVOL_REBUILDING_ERRORED,
+	EXPECT_EQ(ZVOL_REBUILDING_SNAP,
 	    uzfs_zvol_get_rebuild_status(zinfo->main_zv));
 }
 

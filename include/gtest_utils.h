@@ -8,6 +8,7 @@
 #include <netinet/tcp.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <zrepl_prot.h>
 
 /* Prints errno string if cond is not true */
 #define	ASSERT_ERRNO(fname, cond)	do { \
@@ -25,6 +26,32 @@ std::string getCmdPath(std::string zfsCmd);
 int verify_buf(void *buf, int len, const char *pattern);
 void init_buf(void *buf, int len, const char *pattern);
 size_t strlcpy(char *dst, const char *src, size_t len);
+
+/*
+ * Send header for data write. Leave write of actual data to the caller.
+ * len is real length - including metadata headers.
+ */
+void write_data_start(int data_fd, int &ioseq, size_t offset, int len);
+
+/*
+ * Write data at given offset with io_num through data connection
+ */
+void write_data(int data_fd, int &ioseq, void *buf, size_t offset,
+    int len, uint64_t io_num);
+
+/*
+ * Write data at given offset and io_num
+ * Updates io_seq of volume
+ */
+void write_data_and_verify_resp(int data_fd, int &ioseq, char *buf,
+    size_t offset, uint64_t len, uint64_t io_num);
+
+/*
+ * Send command to read data and read reply header.
+ * Reading payload is left to the caller.
+ */
+void read_data_start(int data_fd, int &ioseq, size_t offset, int len,
+    zvol_io_hdr_t *hdr_inp, struct zvol_io_rw_hdr *rw_hdr, int flags = 0);
 
 /*
  * Class which creates a vdev file in /tmp which can be used for pool creation.

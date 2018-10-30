@@ -166,67 +166,6 @@ retry:
 }
 
 /*
- * Send header for data write. Leave write of actual data to the caller.
- * len is real length - including metadata headers.
- */
-static void write_data_start(int data_fd, int &ioseq, size_t offset, int len) {
-	zvol_io_hdr_t hdr_out = {0};
-	int rc;
-
-	hdr_out.version = REPLICA_VERSION;
-	hdr_out.opcode = ZVOL_OPCODE_WRITE;
-	hdr_out.status = ZVOL_OP_STATUS_OK;
-	hdr_out.io_seq = ++ioseq;
-	hdr_out.offset = offset;
-	hdr_out.len = len;
-
-	rc = write(data_fd, &hdr_out, sizeof (hdr_out));
-	ASSERT_EQ(rc, sizeof (hdr_out));
-}
-
-static void write_data(int data_fd, int &ioseq, void *buf, size_t offset,
-    int len, uint64_t io_num) {
-	struct zvol_io_rw_hdr write_hdr;
-	int rc;
-
-	write_data_start(data_fd, ioseq, offset, sizeof (write_hdr) + len);
-
-	write_hdr.len = len;
-	write_hdr.io_num = io_num;
-	rc = write(data_fd, &write_hdr, sizeof (write_hdr));
-	ASSERT_EQ(rc, sizeof (write_hdr));
-	rc = write(data_fd, buf, len);
-	ASSERT_EQ(rc, len);
-}
-
-
-/*
- * Send command to read data and read reply header. Reading payload is
- * left to the caller.
- */
-static void read_data_start(int data_fd, int &ioseq, size_t offset, int len,
-    zvol_io_hdr_t *hdr_inp, int flags = 0) {
-	zvol_io_hdr_t hdr_out = {0};
-	int rc;
-
-	hdr_out.version = REPLICA_VERSION;
-	hdr_out.opcode = ZVOL_OPCODE_READ;
-	hdr_out.status = ZVOL_OP_STATUS_OK;
-	hdr_out.io_seq = ++ioseq;
-	hdr_out.offset = offset;
-	hdr_out.len = len;
-	hdr_out.flags = flags;
-
-	rc = write(data_fd, &hdr_out, sizeof (hdr_out));
-	ASSERT_EQ(rc, sizeof (hdr_out));
-	rc = read(data_fd, hdr_inp, sizeof (*hdr_inp));
-	ASSERT_EQ(rc, sizeof (*hdr_inp));
-	ASSERT_EQ(hdr_inp->opcode, ZVOL_OPCODE_READ);
-	ASSERT_EQ(hdr_inp->io_seq, ioseq);
-	ASSERT_EQ(hdr_inp->offset, offset);
-}
-
-/*
  * Read 3 blocks of 4096 size at offset 0
  * Compares the io_num with expected value (hardcoded) and data
  */
@@ -239,23 +178,23 @@ static void read_data_and_verify_resp(int data_fd, int &ioseq) {
 	int len = 4096;
 
 	/* read all blocks at once and check IO nums */
-	read_data_start(data_fd, ioseq, 0, 3 * sizeof (buf), &hdr_in);
+	read_data_start(data_fd, ioseq, 0, 3 * sizeof (buf), &hdr_in, &read_hdr);
 	ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
 	ASSERT_EQ(hdr_in.len, 2 * sizeof (read_hdr) + 3 * sizeof (buf));
-
-	rc = read(data_fd, &read_hdr, sizeof (read_hdr));
-	ASSERT_ERRNO("read", rc >= 0);
-	ASSERT_EQ(rc, sizeof (read_hdr));
 	ASSERT_EQ(read_hdr.io_num, 123);
 	ASSERT_EQ(read_hdr.len, 2 * sizeof (buf));
+
 	rc = read(data_fd, buf, sizeof (buf));
 	ASSERT_ERRNO("read", rc >= 0);
 	ASSERT_EQ(rc, sizeof (buf));
+
 	rc = verify_buf(buf, sizeof (buf), "cStor-data");
 	ASSERT_EQ(rc, 0);
+
 	rc = read(data_fd, buf, sizeof (buf));
 	ASSERT_ERRNO("read", rc >= 0);
 	ASSERT_EQ(rc, sizeof (buf));
+
 	rc = verify_buf(buf, sizeof (buf), "cStor-data");
 	ASSERT_EQ(rc, 0);
 
@@ -264,9 +203,11 @@ static void read_data_and_verify_resp(int data_fd, int &ioseq) {
 	ASSERT_EQ(rc, sizeof (read_hdr));
 	ASSERT_EQ(read_hdr.io_num, 124);
 	ASSERT_EQ(read_hdr.len, sizeof (buf));
+
 	rc = read(data_fd, buf, read_hdr.len);
 	ASSERT_ERRNO("read", rc >= 0);
 	ASSERT_EQ(rc, read_hdr.len);
+
 	rc = verify_buf(buf, sizeof (buf), "cStor-data");
 	ASSERT_EQ(rc, 0);
 }
@@ -315,33 +256,6 @@ static void write_two_chunks_and_verify_resp(int data_fd, int &ioseq,
 	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_WRITE);
 	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
 	EXPECT_EQ(hdr_in.io_seq, ioseq);
-}
-
-/*
- * Writes data block of size 4096 at given offset and io_num
- * Updates io_seq of volume
- */
-static void write_data_and_verify_resp(int data_fd, int &ioseq, size_t offset,
-    uint64_t io_num, int blocksize=4096) {
-	zvol_io_hdr_t hdr_in;
-	struct zvol_io_rw_hdr read_hdr;
-	int rc;
-	struct zvol_io_rw_hdr write_hdr;
-	char *buf;
-
-	buf = (char *)malloc(blocksize);
-	init_buf(buf, blocksize, "cStor-data");
-	write_data(data_fd, ioseq, buf, offset, blocksize, io_num);
-	free(buf);
-
-	rc = read(data_fd, &hdr_in, sizeof (hdr_in));
-	ASSERT_ERRNO("read", rc >= 0);
-	ASSERT_EQ(rc, sizeof (hdr_in));
-	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_WRITE);
-	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
-	EXPECT_EQ(hdr_in.io_seq, ioseq);
-	EXPECT_EQ(hdr_in.offset, offset);
-	ASSERT_EQ(hdr_in.len, sizeof (write_hdr) + blocksize);
 }
 
 static void get_zvol_status(std::string zvol_name, int &ioseq, int control_fd,
@@ -806,11 +720,14 @@ TEST_F(ZreplDataTest, WrongVersion) {
  * and test that read returns two metadata chunks.
  */
 TEST_F(ZreplDataTest, WriteAndReadBlocksWithIonum) {
-	write_data_and_verify_resp(m_datasock1.fd(), m_ioseq1, 0, 123);
+	char buf[4096];
+
+	init_buf(buf, sizeof (buf), "cStor-data");
+	write_data_and_verify_resp(m_datasock1.fd(), m_ioseq1, buf, 0, sizeof (buf), 123);
 	write_two_chunks_and_verify_resp(m_datasock1.fd(), m_ioseq1, 4096);
 	read_data_and_verify_resp(m_datasock1.fd(), m_ioseq1);
 
-	write_data_and_verify_resp(m_datasock2.fd(), m_ioseq2, 0, 123);
+	write_data_and_verify_resp(m_datasock2.fd(), m_ioseq2, buf, 0, sizeof (buf), 123);
 	write_two_chunks_and_verify_resp(m_datasock2.fd(), m_ioseq2, 4096);
 	read_data_and_verify_resp(m_datasock2.fd(), m_ioseq2);
 	m_datasock1.graceful_close();
@@ -827,15 +744,12 @@ TEST_F(ZreplDataTest, ReadBlockWithoutMeta) {
 	size_t offset = ZVOL_SIZE - 2 * sizeof (buf);
 
 	for (int i = 0; i < 2; i++) {
-		read_data_start(m_datasock1.fd(), m_ioseq1, offset, sizeof (buf), &hdr_in);
+		read_data_start(m_datasock1.fd(), m_ioseq1, offset, sizeof (buf), &hdr_in, &read_hdr);
 		ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
 		ASSERT_EQ(hdr_in.len, sizeof (read_hdr) + sizeof (buf));
-
-		rc = read(m_datasock1.fd(), &read_hdr, sizeof (read_hdr));
-		ASSERT_ERRNO("read", rc >= 0);
-		ASSERT_EQ(rc, sizeof (read_hdr));
 		ASSERT_EQ(read_hdr.io_num, 0);
 		ASSERT_EQ(read_hdr.len, sizeof (buf));
+
 		rc = read(m_datasock1.fd(), buf, read_hdr.len);
 		ASSERT_ERRNO("read", rc >= 0);
 		ASSERT_EQ(rc, read_hdr.len);
@@ -915,12 +829,12 @@ TEST_F(ZreplDataTest, ReadInvalidOffset) {
 	int rc;
 
 	// unaligned offset
-	read_data_start(m_datasock1.fd(), m_ioseq1, 33, 4096, &hdr_in);
+	read_data_start(m_datasock1.fd(), m_ioseq1, 33, 4096, &hdr_in, NULL);
 	ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_FAILED);
 	ASSERT_EQ(hdr_in.len, 0);
 
 	// offset past the end of zvol
-	read_data_start(m_datasock1.fd(), m_ioseq1, ZVOL_SIZE + 4096, 4096, &hdr_in);
+	read_data_start(m_datasock1.fd(), m_ioseq1, ZVOL_SIZE + 4096, 4096, &hdr_in, NULL);
 	ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_FAILED);
 	ASSERT_EQ(hdr_in.len, 0);
 	m_datasock1.graceful_close();
@@ -933,12 +847,12 @@ TEST_F(ZreplDataTest, ReadInvalidLength) {
 	int rc;
 
 	// unaligned length
-	read_data_start(m_datasock1.fd(), m_ioseq1, 0, 4097, &hdr_in);
+	read_data_start(m_datasock1.fd(), m_ioseq1, 0, 4097, &hdr_in, NULL);
 	ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_FAILED);
 	ASSERT_EQ(hdr_in.len, 0);
 
 	// length past the end of zvol
-	read_data_start(m_datasock1.fd(), m_ioseq1, ZVOL_SIZE - 4096, 2 * 4096, &hdr_in);
+	read_data_start(m_datasock1.fd(), m_ioseq1, ZVOL_SIZE - 4096, 2 * 4096, &hdr_in, NULL);
 	ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_FAILED);
 	ASSERT_EQ(hdr_in.len, 0);
 	m_datasock1.graceful_close();
@@ -1006,8 +920,10 @@ TEST_F(ZreplDataTest, RebuildFlag) {
 	char buf[4096];
 	int rc;
 
+	init_buf(buf, sizeof (buf), "cStor-data");
+
 	/* write a data block with known ionum */
-	write_data_and_verify_resp(m_datasock1.fd(), m_ioseq1, 0, 654);
+	write_data_and_verify_resp(m_datasock1.fd(), m_ioseq1, buf, 0, sizeof (buf), 654);
 
 	/* Get zvol status before rebuild */
 	get_zvol_status(m_zvol_name1, m_ioseq1, m_control_fd1, ZVOL_STATUS_DEGRADED, ZVOL_REBUILDING_INIT);
@@ -1020,20 +936,19 @@ TEST_F(ZreplDataTest, RebuildFlag) {
 	get_zvol_status(m_zvol_name1, m_ioseq1, m_control_fd1, ZVOL_STATUS_HEALTHY, ZVOL_REBUILDING_DONE);
 
 	/* read the block without rebuild flag */
-	read_data_start(m_datasock1.fd(), m_ioseq1, 0, sizeof (buf), &hdr_in, 0);
+	read_data_start(m_datasock1.fd(), m_ioseq1, 0, sizeof (buf), &hdr_in, &read_hdr);
 	ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
 	ASSERT_EQ(hdr_in.len, sizeof (read_hdr) + sizeof (buf));
-	rc = read(m_datasock1.fd(), &read_hdr, sizeof (read_hdr));
-	ASSERT_ERRNO("read", rc >= 0);
-	ASSERT_EQ(rc, sizeof (read_hdr));
 	ASSERT_EQ(read_hdr.io_num, 0);
 	ASSERT_EQ(read_hdr.len, sizeof (buf));
+
+	memset(buf, 0, sizeof (buf));
 	rc = read(m_datasock1.fd(), buf, sizeof (buf));
 	ASSERT_ERRNO("read", rc >= 0);
 	ASSERT_EQ(rc, sizeof (buf));
 
 	/* read the block with rebuild flag */
-	read_data_start(m_datasock1.fd(), m_ioseq1, 0, sizeof (buf), &hdr_in, ZVOL_OP_FLAG_REBUILD);
+	read_data_start(m_datasock1.fd(), m_ioseq1, 0, sizeof (buf), &hdr_in, NULL, ZVOL_OP_FLAG_REBUILD);
 	ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_FAILED);
 	m_datasock1.graceful_close();
 	m_datasock2.graceful_close();
@@ -1053,18 +968,19 @@ TEST_F(ZreplDataTest, ReadMetaDataFlag) {
 	char buf[4096];
 	int rc;
 
+	init_buf(buf, sizeof (buf), "cStor-data");
+
 	/* write a data block with known ionum */
-	write_data_and_verify_resp(m_datasock1.fd(), m_ioseq1, 0, 654);
+	write_data_and_verify_resp(m_datasock1.fd(), m_ioseq1, buf, 0, sizeof (buf), 654);
 
 	/* read the block with ZVOL_OP_FLAG_READ_METADATA flag */
-	read_data_start(m_datasock1.fd(), m_ioseq1, 0, sizeof (buf), &hdr_in, ZVOL_OP_FLAG_READ_METADATA);
+	read_data_start(m_datasock1.fd(), m_ioseq1, 0, sizeof (buf), &hdr_in, &read_hdr, ZVOL_OP_FLAG_READ_METADATA);
 	ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
 	ASSERT_EQ(hdr_in.len, sizeof (read_hdr) + sizeof (buf));
-	rc = read(m_datasock1.fd(), &read_hdr, sizeof (read_hdr));
-	ASSERT_ERRNO("read", rc >= 0);
-	ASSERT_EQ(rc, sizeof (read_hdr));
 	ASSERT_EQ(read_hdr.io_num, 654);
 	ASSERT_EQ(read_hdr.len, sizeof (buf));
+
+	memset(buf, 0, sizeof (buf));
 	rc = read(m_datasock1.fd(), buf, sizeof (buf));
 	ASSERT_ERRNO("read", rc >= 0);
 	ASSERT_EQ(rc, sizeof (buf));
@@ -1251,8 +1167,9 @@ TEST(Misc, ZreplCheckpointInterval) {
 	do_data_connection(datasock_fast.fd(), host_fast, port_fast, zvol_name_fast,
 	    4096, 2);
 
-	write_data_and_verify_resp(datasock_slow.fd(), ioseq, 0, 555);
-	write_data_and_verify_resp(datasock_fast.fd(), ioseq, 0, 555);
+	init_buf(buf, sizeof (buf), "cStor-data");
+	write_data_and_verify_resp(datasock_slow.fd(), ioseq, buf, 0, sizeof (buf), 555);
+	write_data_and_verify_resp(datasock_fast.fd(), ioseq, buf, 0, sizeof (buf), 555);
 
 	/* we are updating io_seq for degraded mode in every 5 seconds */
 	sleep(7);	// sleep more than 5 seconds
@@ -1261,18 +1178,17 @@ TEST(Misc, ZreplCheckpointInterval) {
 	transition_zvol_to_online(ioseq, control_fd, zvol_name_fast);
 	sleep(5);
 
-	write_data_and_verify_resp(datasock_slow.fd(), ioseq, 0, 888);
-	write_data_and_verify_resp(datasock_fast.fd(), ioseq, 0, 888);
+	write_data_and_verify_resp(datasock_slow.fd(), ioseq, buf, 0, sizeof (buf), 888);
+	write_data_and_verify_resp(datasock_fast.fd(), ioseq, buf, 0, sizeof (buf), 888);
 
 	/* read the block without ZVOL_OP_FLAG_READ_METADATA flag in healthy state */
-	read_data_start(datasock_slow.fd(), ioseq, 0, sizeof (buf), &hdr_in, 0);
+	read_data_start(datasock_slow.fd(), ioseq, 0, sizeof (buf), &hdr_in, &read_hdr, 0);
 	ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
 	ASSERT_EQ(hdr_in.len, sizeof (read_hdr) + sizeof (buf));
-	rc = read(datasock_slow.fd(), &read_hdr, sizeof (read_hdr));
-	ASSERT_ERRNO("read", rc >= 0);
-	ASSERT_EQ(rc, sizeof (read_hdr));
 	ASSERT_EQ(read_hdr.io_num, 0);
 	ASSERT_EQ(read_hdr.len, sizeof (buf));
+
+	memset(buf, 0, sizeof (buf));
 	rc = read(datasock_slow.fd(), buf, sizeof (buf));
 	ASSERT_ERRNO("read", rc >= 0);
 	ASSERT_EQ(rc, sizeof (buf));
@@ -1371,31 +1287,37 @@ Zrepl *ZreplBlockSizeTest::m_zrepl = nullptr;
  */
 TEST_F(ZreplBlockSizeTest, SetMetaBlockSize) {
 	SocketFd datasock1, datasock2;
+	char buf[4096];
 
+	init_buf(buf, sizeof (buf), "cStor-data");
 	do_data_connection(datasock1.fd(), m_host, m_port, m_zvol_name, 4096);
-	write_data_and_verify_resp(datasock1.fd(), m_ioseq, 0, 1);
+	write_data_and_verify_resp(datasock1.fd(), m_ioseq, buf, 0, sizeof (buf), 1);
 	datasock1.graceful_close();
 	sleep(5);
 	do_data_connection(datasock2.fd(), m_host, m_port, m_zvol_name, 4096);
-	write_data_and_verify_resp(datasock2.fd(), m_ioseq, 0, 1);
+	write_data_and_verify_resp(datasock2.fd(), m_ioseq, buf, 0, sizeof (buf), 1);
 	datasock2.graceful_close();
 	sleep(5);
 }
 
 TEST_F(ZreplBlockSizeTest, SetMetaBlockSizeSmallerThanBlockSize) {
 	SocketFd datasock;
+	char buf[4096];
 
+	init_buf(buf, sizeof (buf), "cStor-data");
 	do_data_connection(datasock.fd(), m_host, m_port, m_zvol_name, 512);
-	write_data_and_verify_resp(datasock.fd(), m_ioseq, 0, 1, 512);
+	write_data_and_verify_resp(datasock.fd(), m_ioseq, buf, 0, sizeof (buf), 1);
 	datasock.graceful_close();
 	sleep(5);
 }
 
 TEST_F(ZreplBlockSizeTest, SetMetaBlockSizeBiggerThanBlockSize) {
 	SocketFd datasock;
+	char buf[8192];
 
+	init_buf(buf, sizeof (buf), "cStor-data");
 	do_data_connection(datasock.fd(), m_host, m_port, m_zvol_name, 8192);
-	write_data_and_verify_resp(datasock.fd(), m_ioseq, 0, 1, 8192);
+	write_data_and_verify_resp(datasock.fd(), m_ioseq, buf, 0, sizeof (buf), 1);
 	datasock.graceful_close();
 	sleep(5);
 }
@@ -1411,9 +1333,11 @@ TEST_F(ZreplBlockSizeTest, SetMetaBlockSizeUnaligned) {
 
 TEST_F(ZreplBlockSizeTest, SetDifferentMetaBlockSizes) {
 	SocketFd datasock1, datasock2;
+	char buf[4096];
 
+	init_buf(buf, sizeof (buf), "cStor-data");
 	do_data_connection(datasock1.fd(), m_host, m_port, m_zvol_name, 4096);
-	write_data_and_verify_resp(datasock1.fd(), m_ioseq, 0, 1);
+	write_data_and_verify_resp(datasock1.fd(), m_ioseq, buf, 0, sizeof (buf), 1);
 	datasock1.graceful_close();
 	sleep(5);
 	do_data_connection(datasock2.fd(), m_host, m_port, m_zvol_name, 512, 120,
@@ -1436,12 +1360,14 @@ TEST(DiskReplaceTest, SpareReplacement) {
 	Vdev vdev2("vdev2");
 	Vdev spare("spare");
 	TestPool pool("rplcpool");
+	char buf[4096];
 
 	zrepl.start();
 	vdev2.create();
 	spare.create();
 	pool.create();
 	pool.createZvol("vol", "-o io.openebs:targetip=127.0.0.1");
+	init_buf(buf, sizeof (buf), "cStor-data");
 
 	rc = target.listen();
 	ASSERT_GE(rc, 0);
@@ -1450,27 +1376,27 @@ TEST(DiskReplaceTest, SpareReplacement) {
 	do_handshake(pool.getZvolName("vol"), host, port, NULL, NULL, control_fd,
 	    ZVOL_OP_STATUS_OK);
 	do_data_connection(datasock.fd(), host, port, pool.getZvolName("vol"));
-	write_data_and_verify_resp(datasock.fd(), ioseq, 0, 10);
+	write_data_and_verify_resp(datasock.fd(), ioseq, buf, 0, sizeof (buf), 10);
 
 	// construct mirrored pool with a spare
 	execCmd("zpool", std::string("attach ") + pool.m_name + " " +
 	    pool.m_vdev->m_path + " " + vdev2.m_path);
-	write_data_and_verify_resp(datasock.fd(), ioseq, 0, 10);
+	write_data_and_verify_resp(datasock.fd(), ioseq, buf, 0, sizeof (buf), 10);
 	execCmd("zpool", std::string("add ") + pool.m_name + " spare " +
 	    spare.m_path);
-	write_data_and_verify_resp(datasock.fd(), ioseq, 0, 10);
+	write_data_and_verify_resp(datasock.fd(), ioseq, buf, 0, sizeof (buf), 10);
 	ASSERT_STREQ(getPoolState(pool.m_name).c_str(), "ONLINE");
 
 	// fail one of the disks in the mirror
 	execCmd("zpool", std::string("offline ") + pool.m_name + " " +
 	    vdev2.m_path);
-	write_data_and_verify_resp(datasock.fd(), ioseq, 0, 10);
+	write_data_and_verify_resp(datasock.fd(), ioseq, buf, 0, sizeof (buf), 10);
 	ASSERT_STREQ(getPoolState(pool.m_name).c_str(), "DEGRADED");
 
 	// replace failed disk by the spare and remove it from mirror
 	execCmd("zpool", std::string("replace ") + pool.m_name + " " +
 	    vdev2.m_path + " " + spare.m_path);
-	write_data_and_verify_resp(datasock.fd(), ioseq, 0, 10);
+	write_data_and_verify_resp(datasock.fd(), ioseq, buf, 0, sizeof (buf), 10);
 	execCmd("zpool", std::string("detach ") + pool.m_name + " " +
 	    vdev2.m_path);
 	ASSERT_STREQ(getPoolState(pool.m_name).c_str(), "ONLINE");
@@ -1836,6 +1762,7 @@ TEST(ZvolStatsTest, StatsZvol) {
 	uint64_t val1, val2;
 	TestPool pool("statspool");
 	std::string zvolname = pool.getZvolName("vol");
+	char buf[4096];
 
 	zrepl.start();
 	pool.create();
@@ -1850,10 +1777,10 @@ TEST(ZvolStatsTest, StatsZvol) {
 
 	// get "used" before
 	get_used(control_fd, zvolname, &val1);
-
+	init_buf(buf, sizeof (buf), "cStor-data");
 	do_data_connection(datasock.fd(), host, port, zvolname, 4096);
 	for (int i = 0; i < 100; i++) {
-		write_data_and_verify_resp(datasock.fd(), ioseq, 4096 * i, i + 1);
+		write_data_and_verify_resp(datasock.fd(), ioseq, buf, 4096 * i, sizeof (buf), i + 1);
 	}
 	datasock.graceful_close();
 	sleep(5);

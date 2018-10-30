@@ -250,3 +250,106 @@ GtestUtils::SocketFd::graceful_close()
 		m_fd = -1;
 	}
 }
+
+/*
+ * Send header for data write. Leave write of actual data to the caller.
+ * len is real length - including metadata headers.
+ */
+void
+GtestUtils::write_data_start(int data_fd, int &ioseq, size_t offset, int len)
+{
+	zvol_io_hdr_t hdr_out = {0};
+	int rc;
+
+	hdr_out.version = REPLICA_VERSION;
+	hdr_out.opcode = ZVOL_OPCODE_WRITE;
+	hdr_out.status = ZVOL_OP_STATUS_OK;
+	hdr_out.io_seq = ++ioseq;
+	hdr_out.offset = offset;
+	hdr_out.len = len;
+
+	rc = write(data_fd, &hdr_out, sizeof (hdr_out));
+	ASSERT_EQ(rc, sizeof (hdr_out));
+}
+
+/*
+ * Write data at given offset with io_num through data connection
+ */
+void
+GtestUtils::write_data(int data_fd, int &ioseq, void *buf, size_t offset,
+    int len, uint64_t io_num)
+{
+	struct zvol_io_rw_hdr write_hdr;
+	int rc;
+
+	write_data_start(data_fd, ioseq, offset, sizeof (write_hdr) + len);
+
+	write_hdr.len = len;
+	write_hdr.io_num = io_num;
+
+	rc = write(data_fd, &write_hdr, sizeof (write_hdr));
+	ASSERT_EQ(rc, sizeof (write_hdr));
+
+	rc = write(data_fd, buf, len);
+	ASSERT_EQ(rc, len);
+}
+
+/*
+ * Write data at given offset and io_num
+ * Updates io_seq of volume
+ */
+void
+GtestUtils::write_data_and_verify_resp(int data_fd, int &ioseq, char *buf,
+    size_t offset, uint64_t len, uint64_t io_num)
+{
+	zvol_io_hdr_t hdr_in;
+	struct zvol_io_rw_hdr read_hdr;
+	int rc;
+	struct zvol_io_rw_hdr write_hdr;
+
+	write_data(data_fd, ioseq, buf, offset, len, io_num);
+
+	rc = read(data_fd, &hdr_in, sizeof (hdr_in));
+	ASSERT_ERRNO("read", rc >= 0);
+	ASSERT_EQ(rc, sizeof (hdr_in));
+	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_WRITE);
+	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
+	EXPECT_EQ(hdr_in.io_seq, ioseq);
+	EXPECT_EQ(hdr_in.offset, offset);
+	ASSERT_EQ(hdr_in.len, sizeof (write_hdr) + len);
+}
+
+/*
+ * Send command to read data and read reply header.
+ * Reading payload is left to the caller.
+ */
+void
+GtestUtils::read_data_start(int data_fd, int &ioseq, size_t offset, int len,
+    zvol_io_hdr_t *hdr_inp, struct zvol_io_rw_hdr *rw_hdr, int flags)
+{
+	zvol_io_hdr_t hdr_out = {0};
+	int rc;
+
+	hdr_out.version = REPLICA_VERSION;
+	hdr_out.opcode = ZVOL_OPCODE_READ;
+	hdr_out.status = ZVOL_OP_STATUS_OK;
+	hdr_out.io_seq = ++ioseq;
+	hdr_out.offset = offset;
+	hdr_out.len = len;
+	hdr_out.flags = flags;
+
+	rc = write(data_fd, &hdr_out, sizeof (hdr_out));
+	ASSERT_EQ(rc, sizeof (hdr_out));
+
+	rc = read(data_fd, hdr_inp, sizeof (*hdr_inp));
+	ASSERT_EQ(rc, sizeof (*hdr_inp));
+	ASSERT_EQ(hdr_inp->opcode, ZVOL_OPCODE_READ);
+	ASSERT_EQ(hdr_inp->io_seq, ioseq);
+	ASSERT_EQ(hdr_inp->offset, offset);
+
+	if (rw_hdr && (hdr_inp->status == ZVOL_OP_STATUS_OK)) {
+		rc = read(data_fd, rw_hdr, sizeof (*rw_hdr));
+		ASSERT_ERRNO("read", rc >= 0);
+		ASSERT_EQ(rc, sizeof (*rw_hdr));
+	}
+}

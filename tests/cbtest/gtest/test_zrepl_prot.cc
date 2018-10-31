@@ -1014,8 +1014,7 @@ TEST_F(ZreplDataTest, RebuildFlag) {
 	/* transition the zvol to online state */
 	transition_zvol_to_online(m_ioseq1, m_control_fd1, m_zvol_name1);
 
-	sleep(5);
-
+	sleep(2 * SNAP_TIMEOUT + 5);
 	/* Get zvol status after rebuild */
 	get_zvol_status(m_zvol_name1, m_ioseq1, m_control_fd1, ZVOL_STATUS_HEALTHY, ZVOL_REBUILDING_DONE);
 
@@ -1259,7 +1258,7 @@ TEST(Misc, ZreplCheckpointInterval) {
 
 	transition_zvol_to_online(ioseq, control_fd, zvol_name_slow);
 	transition_zvol_to_online(ioseq, control_fd, zvol_name_fast);
-	sleep(5);
+	sleep(2 * SNAP_TIMEOUT + 5);
 
 	write_data_and_verify_resp(datasock_slow.fd(), ioseq, 0, 888);
 	write_data_and_verify_resp(datasock_fast.fd(), ioseq, 0, 888);
@@ -1620,7 +1619,8 @@ TEST(Snapshot, CreateAndDestroy) {
 
 	// create the snapshot
 	transition_zvol_to_online(ioseq, control_fd, vol_name);
-	sleep(5);
+	sleep(2 * SNAP_TIMEOUT + 5);
+
 	hdr_out.io_seq = 2;
 	hdr_out.len = snap_name.length() + 1;
 	rc = write(control_fd, &hdr_out, sizeof (hdr_out));

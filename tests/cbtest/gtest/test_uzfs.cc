@@ -396,6 +396,7 @@ uzfs_mock_rebuild_scanner_rebuild_comp(void *arg)
 	EXPECT_EQ(hdr.status, ZVOL_OP_STATUS_OK);
 
 exit:
+	printf("exiting uzfs_mock_rebuild_scanner_rebuild_comp\n");
 	shutdown(fd, SHUT_RDWR);
 	close(fd);
 	pthread_mutex_lock(&done_thread_count_mtx);
@@ -519,6 +520,7 @@ uzfs_mock_rebuild_scanner_snap_rebuild_related(void *arg)
 #endif
 
 exit:
+	printf("exiting uzfs_mock_rebuild_scanner_snap_rebuild_related\n");
 	shutdown(fd, SHUT_RDWR);
 	close(fd);
 

@@ -736,7 +736,7 @@ next_step:
 			if (state != ZVOL_REBUILDING_AFS) {
 				ASSERT(state == ZVOL_REBUILDING_SNAP);
 				uzfs_zvol_set_rebuild_status(zinfo->main_zv,
-				    ZVOL_REBUILDING_AFS);
+				    ZVOL_REBUILDING_AFS_TRANS);
 				if (start_rebuild_from_clone == 0)
 					start_rebuild_from_clone = 1;
 				/*
@@ -748,7 +748,6 @@ next_step:
 			}
 			mutex_exit(&zinfo->main_zv->rebuild_mtx);
 
-			wait_snap_timeout();
 			/*
 			 * Wait for all outstanding IOs to be flushed
 			 * to disk before making further progress
@@ -757,6 +756,9 @@ next_step:
 
 			if (start_rebuild_from_clone == 1) {
 				start_rebuild_from_clone = 2;
+				wait_snap_timeout();
+				uzfs_zvol_set_rebuild_status(zinfo->main_zv,
+				    ZVOL_REBUILDING_AFS);
 				rc = uzfs_zinfo_rebuild_from_clone(zinfo);
 				if (rc != 0) {
 					LOG_ERR("Rebuild from clone for vol %s "
@@ -767,6 +769,7 @@ next_step:
 				LOG_INFO("Rebuild started from clone for vol "
 				    "%s", zinfo->name);
 			}
+
 			continue;
 		}
 		ASSERT((hdr.opcode == ZVOL_OPCODE_READ) &&
@@ -1450,10 +1453,10 @@ snap_reverify:
 			 * are no ongoing snapshots.
 			 */
 				if (all_snap_done == B_FALSE) {
-					all_snap_done = B_TRUE;
 					uzfs_zvol_send_zio_cmd(zinfo, &hdr,
 					    ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE,
 					    fd, NULL, 0, 0);
+					all_snap_done = B_TRUE;
 					wait_snap_timeout();
 					goto snap_reverify;
 				}

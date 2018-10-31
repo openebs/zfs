@@ -1430,7 +1430,8 @@ process_message(uzfs_mgmt_conn_t *conn)
 		if (uzfs_zvol_get_status(zinfo->main_zv) !=
 		    ZVOL_STATUS_HEALTHY) {
 			if (hdrp->opcode == ZVOL_OPCODE_SNAP_CREATE &&
-			    ZVOL_IS_REBUILDING_AFS(zinfo->main_zv)) {
+			    (ZVOL_IS_REBUILDING_AFS(zinfo->main_zv) ||
+			    ZVOL_IS_REBUILDING_AFS_TRANS(zinfo->main_zv))) {
 				LOG_INFO("zvol %s is not healthy and rebuild"
 				"is going on, can't take the %s snapshot,"
 				"erroring out the rebuild", zvol_name, snap);

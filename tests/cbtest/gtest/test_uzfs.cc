@@ -2206,7 +2206,9 @@ TEST(VolumeNameCompare, VolumeNameCompareTest) {
 	EXPECT_EQ(0, uzfs_zvol_name_compare(zinfo, "vol1"));
 }
 
+/* Global variable to check if status of op */
 zvol_op_status_t status;
+
 void mock_tgt_thread(void *arg)
 {
 	int			rc = 0;
@@ -2598,8 +2600,54 @@ TEST(MgmtThreadTest, SnapCreateFailureWrongVolName) {
 	EXPECT_EQ(status, ZVOL_OP_STATUS_FAILED);
 }
 
+/* Snapshot create failure, replica is not healthy & rebuild is in INIT state */
+TEST(MgmtThreadTest, SnapCreateFailedReplicaInRebuildInitState) {
+	uzfs_zvol_set_status(zinfo->main_zv, ZVOL_STATUS_DEGRADED);
+	uzfs_zvol_set_rebuild_status(zinfo->main_zv, ZVOL_REBUILDING_INIT);
+
+	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+	mgmt_thread_test_case(14);
+	EXPECT_EQ(status, ZVOL_OP_STATUS_FAILED);
+	EXPECT_EQ(ZVOL_REBUILDING_INIT,
+	    uzfs_zvol_get_rebuild_status(zinfo->main_zv));
+}
+
+/*
+ * Snapshot create failure, replica is not healthy
+ * and rebuild is in rebuild_snap state
+ */
+TEST(MgmtThreadTest, SnapCreateFailedReplicaInRebuildSnapState) {
+	uzfs_zvol_set_status(zinfo->main_zv, ZVOL_STATUS_DEGRADED);
+	uzfs_zvol_set_rebuild_status(zinfo->main_zv, ZVOL_REBUILDING_SNAP);
+
+	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+	mgmt_thread_test_case(14);
+	EXPECT_EQ(status, ZVOL_OP_STATUS_FAILED);
+	EXPECT_EQ(ZVOL_REBUILDING_SNAP,
+	    uzfs_zvol_get_rebuild_status(zinfo->main_zv));
+}
+
+
+/*
+ * Snapshot create failure, replica is not healthy
+ * and rebuild is in rebuild_afs state
+ */
+TEST(MgmtThreadTest, SnapCreateFailedReplicaInRebuildAfsState) {
+	uzfs_zvol_set_status(zinfo->main_zv, ZVOL_STATUS_DEGRADED);
+	uzfs_zvol_set_rebuild_status(zinfo->main_zv, ZVOL_REBUILDING_AFS);
+
+	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+	mgmt_thread_test_case(14);
+	EXPECT_EQ(status, ZVOL_OP_STATUS_FAILED);
+	EXPECT_EQ(ZVOL_REBUILDING_ERRORED,
+	    uzfs_zvol_get_rebuild_status(zinfo->main_zv));
+}
+
 /* Snapshot create success */
 TEST(MgmtThreadTest, SnapCreateSuccess) {
+	uzfs_zvol_set_status(zinfo->main_zv, ZVOL_STATUS_HEALTHY);
+	uzfs_zvol_set_rebuild_status(zinfo->main_zv, ZVOL_REBUILDING_DONE);
+
 	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
 	mgmt_thread_test_case(14);
 	EXPECT_EQ(status, ZVOL_OP_STATUS_OK);

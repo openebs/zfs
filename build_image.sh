@@ -1,6 +1,13 @@
 #!/bin/bash
 set -e
 
+pwd
+make clean
+sh autogen.sh
+./configure --enable-uzfs=yes --with-config=user --with-jemalloc
+make clean
+make
+
 BUILD_DATE=$(date +'%Y%m%d%H%M%S')
 REPO_NAME="openebs/cstor-base"
 

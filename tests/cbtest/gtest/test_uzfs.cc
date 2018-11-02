@@ -480,7 +480,7 @@ verify_app_io_read_write(int fd, zvol_info_t *zinfo)
 	int rc;
 	char write_buf[4096] = { 0 }, read_buf[4096] = { 0 };
 	char *cbuf;
-	int ioseq, clen;
+	uint64_t ioseq, clen;
 	uint64_t io_num;
 	int len = 4096;
 	zvol_state_t *read_zv;
@@ -1422,7 +1422,7 @@ TEST(uZFSRebuildStart, TestStartRebuild) {
 }
 
 void
-create_rebuild_args(rebuild_thread_arg_t **r)
+create_rebuild_args(rebuild_thread_arg_t **r, std::string helping_vol = "vol2")
 {
 	rebuild_thread_arg_t *rebuild_args;
 	int rcvsize = 30;
@@ -1444,7 +1444,7 @@ create_rebuild_args(rebuild_thread_arg_t **r)
 	rc = uzfs_zvol_get_ip(rebuild_args->ip, MAX_IP_LEN);
 	EXPECT_NE(rc, -1);
 	
-	GtestUtils::strlcpy(rebuild_args->zvol_name, "vol2", MAXNAMELEN);
+	GtestUtils::strlcpy(rebuild_args->zvol_name, helping_vol.c_str(), MAXNAMELEN);
 	*r = rebuild_args;
 }
 
@@ -1835,14 +1835,14 @@ retry:
 
 void execute_rebuild_test_case(const char *s, int test_case,
     zvol_rebuild_status_t status, zvol_rebuild_status_t verify_status,
-    int verify_refcnt = 2)
+    int verify_refcnt = 2, std::string helping_vol="vol2")
 {
 	kthread_t *thrd;
 	rebuild_thread_arg_t *rebuild_args;
 
 	done_thread_count = 0;
 	rebuild_test_case = test_case;
-	create_rebuild_args(&rebuild_args);
+	create_rebuild_args(&rebuild_args, helping_vol);
 	zinfo->main_zv->zv_status = ZVOL_STATUS_DEGRADED;
 	memset(&zinfo->main_zv->rebuild_info, 0, sizeof (zvol_rebuild_info_t));
 	zinfo->main_zv->rebuild_info.rebuild_cnt = 1;
@@ -1854,16 +1854,195 @@ void execute_rebuild_test_case(const char *s, int test_case,
 	zk_thread_join(thrd->t_tid);
 
 	/* wait for rebuild thread to exit */
-	while (1) {
+	while (1 && test_case != 15) {
 		if(rebuild_test_case != 0)
 			sleep(1);
 		else
 			break;
 	}
 
-	EXPECT_EQ(verify_refcnt, zinfo->refcnt);
+	while (test_case == 15) {
+		if ((ZVOL_REBUILDING_DONE !=
+		    uzfs_zvol_get_rebuild_status(zinfo->main_zv)) &&
+		    (ZVOL_REBUILDING_FAILED !=
+		    uzfs_zvol_get_rebuild_status(zinfo->main_zv)))
+			sleep(1);
+		else
+			break;
+	}
 
-	EXPECT_EQ(verify_status, uzfs_zvol_get_rebuild_status(zinfo->main_zv));
+	if (test_case != 15) {
+		EXPECT_EQ(verify_refcnt, zinfo->refcnt);
+		EXPECT_EQ(verify_status, uzfs_zvol_get_rebuild_status(zinfo->main_zv));
+	}
+}
+
+typedef struct replica_writes_io_s {
+	int r1_fd;
+	int r2_fd;
+	uint64_t io_num;
+	uint64_t start_offset;
+	uint64_t total_len;
+	uint64_t write_cnt;
+	uint64_t read_cnt;
+} replica_writes_io_t;
+
+void send_ios_to_replicas(void *arg)
+{
+	replica_writes_io_t *wargs = (replica_writes_io_t *)arg;
+	char wbuf[4096];
+	time_t now;
+	char *cbuf;
+	int clen;
+	uint64_t offset, end;
+	uint64_t count, max_count;
+	uint64_t ioseq = 0;
+
+	max_count = (wargs->total_len / 4096) - 1;
+	ASSERT0(wargs->total_len % 4096);
+	count = 0;
+	end = wargs->start_offset + wargs->total_len;
+
+	while (offset < end) {
+		now = time(0);
+		cbuf = ctime(&now);
+		clen = strlen(cbuf) - 1;
+
+		offset = wargs->start_offset + count++ * sizeof (wbuf);
+
+		for (int i = 0; i < sizeof (wbuf); i += clen) {
+			memcpy(wbuf + i, cbuf, clen);
+		}
+
+		if (wargs->r1_fd != -1)
+			GtestUtils::write_data_and_verify_resp(wargs->r1_fd, ioseq, wbuf, offset, sizeof (wbuf), wargs->io_num);
+
+		if (wargs->r2_fd != -1)
+			GtestUtils::write_data_and_verify_resp(wargs->r2_fd, --ioseq, wbuf, offset, sizeof (wbuf), wargs->io_num);
+		wargs->write_cnt++;
+		wargs->io_num++;
+	}
+	zk_thread_exit();
+}
+
+void verify_ios_from_two_replica(void *arg)
+{
+	replica_writes_io_t *wargs = (replica_writes_io_t *)arg;
+	char rbuf1[4096], rbuf2[4096];
+	uint64_t offset, end;
+	uint64_t count, max_count;
+	uint64_t ioseq = 0;
+	struct zvol_io_rw_hdr rw_hdr1, rw_hdr2;
+	zvol_io_hdr_t hdr_in;
+	int rc;
+
+	max_count = (wargs->total_len / 4096) - 1;
+	ASSERT0(wargs->total_len % 4096);
+	count = 0;
+	end = wargs->start_offset + wargs->total_len;
+
+	while (offset < end) {
+		offset = wargs->start_offset + count++ * 4096;
+
+		// read from R1
+		memset(&hdr_in, 0, sizeof (hdr_in));
+		memset(&rw_hdr1, 0, sizeof (rw_hdr1));
+		GtestUtils::read_data_start(wargs->r1_fd, ioseq, offset, sizeof (rbuf1), &hdr_in, &rw_hdr1, ZVOL_OP_FLAG_READ_METADATA);
+		ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
+		ASSERT_EQ(hdr_in.len, sizeof (rw_hdr1) + sizeof (rbuf1));
+		ASSERT_EQ(rw_hdr1.len, sizeof (rbuf1));
+
+		memset(rbuf1, 0, sizeof (rbuf1));
+		rc = read(wargs->r1_fd, rbuf1, sizeof (rbuf1));
+		ASSERT_ERRNO("read", rc >= 0);
+		ASSERT_EQ(rc, sizeof (rbuf1));
+
+
+		// read from R2
+		memset(&hdr_in, 0, sizeof (hdr_in));
+		memset(&rw_hdr2, 0, sizeof (rw_hdr2));
+		GtestUtils::read_data_start(wargs->r2_fd, ioseq, offset, sizeof (rbuf2), &hdr_in, &rw_hdr2, ZVOL_OP_FLAG_READ_METADATA);
+		ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
+		ASSERT_EQ(hdr_in.len, sizeof (rw_hdr2) + sizeof (rbuf2));
+		ASSERT_EQ(rw_hdr2.len, sizeof (rbuf2));
+
+		memset(rbuf2, 0, sizeof (rbuf1));
+		rc = read(wargs->r2_fd, rbuf2, sizeof (rbuf2));
+		ASSERT_ERRNO("read", rc >= 0);
+		ASSERT_EQ(rc, sizeof (rbuf2));
+
+		EXPECT_EQ(memcmp(rbuf1, rbuf2, sizeof (rbuf1)), 0);
+		wargs->read_cnt++;
+		wargs->io_num++;
+	}
+	zk_thread_exit();
+}
+
+TEST(uZFSRebuild, TestErroredRebuild) {
+	replica_writes_io_t wargs = { 0 };
+	kthread_t *writer_thread, *reader_thread;
+	uint64_t total_ios = 100;
+
+	ASSERT0(total_ios % 4);
+
+	io_receiver = &uzfs_zvol_io_receiver;
+	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
+	dw_replica_fn = &uzfs_zvol_rebuild_dw_replica;
+
+	zinfo->main_zv->zv_status = ZVOL_STATUS_DEGRADED;
+	do_data_connection(wargs.r1_fd, "127.0.0.1", IO_SERVER_PORT, "vol1");
+	do_data_connection(wargs.r2_fd, "127.0.0.1", IO_SERVER_PORT, "vol3");
+
+	wargs.io_num = 100000000;
+	wargs.start_offset = 0;
+	wargs.total_len = total_ios *4096;
+	writer_thread = zk_thread_create(NULL, 0,
+	    send_ios_to_replicas, &wargs, 0, NULL, TS_RUN,
+	    0, 0);
+
+	zk_thread_join(writer_thread->t_tid);
+
+	zvol_rebuild_step_size = ((total_ios/10) + 1) * 4096;
+	inject_error.delay.downgraded_replica_rebuild_error_io = (total_ios) / 4;
+	execute_rebuild_test_case("errored rebuild with data conn", 15,
+	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED, 4, "vol3");
+	close(wargs.r1_fd);
+	wargs.r1_fd = -1;
+	sleep(10);
+
+	wargs.start_offset = (total_ios / 2) * 4096;
+	wargs.total_len = (total_ios) *4096;
+	writer_thread = zk_thread_create(NULL, 0,
+	    send_ios_to_replicas, &wargs, 0, NULL, TS_RUN,
+	    0, 0);
+	zk_thread_join(writer_thread->t_tid);
+
+	do_data_connection(wargs.r1_fd, "127.0.0.1", IO_SERVER_PORT, "vol1");
+	sleep(2);
+
+	wargs.start_offset = (total_ios * 3 * 4096) / 4;
+	wargs.total_len = (total_ios) *4096;
+	writer_thread = zk_thread_create(NULL, 0,
+	    send_ios_to_replicas, &wargs, 0, NULL, TS_RUN,
+	    0, 0);
+
+	zvol_rebuild_step_size =  (10 * 1024ULL * 1024ULL * 1024ULL);
+	inject_error.delay.downgraded_replica_rebuild_error_io = 0;
+	execute_rebuild_test_case("complete rebuild with data conn", 15,
+	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_DONE, 6, "vol3");
+
+	zk_thread_join(writer_thread->t_tid);
+
+	wargs.start_offset = 0;
+	wargs.total_len = (2 * total_ios) *4096;
+	reader_thread = zk_thread_create(NULL, 0,
+	    verify_ios_from_two_replica, &wargs, 0, NULL, TS_RUN,
+	    0, 0);
+	zk_thread_join(writer_thread->t_tid);
+
+	close(wargs.r1_fd);
+	close(wargs.r2_fd);
+	sleep(10);
 }
 
 TEST(uZFSRebuild, TestAppIO) {

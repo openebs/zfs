@@ -74,6 +74,7 @@ typedef struct inject_delay_s {
 	int pre_uzfs_write_data;
 	int downgraded_replica_rebuild_size_set;
 	int io_receiver_exit;
+	uint64_t downgraded_replica_rebuild_error_io;
 } inject_delay_t;
 
 typedef struct inject_error_s {

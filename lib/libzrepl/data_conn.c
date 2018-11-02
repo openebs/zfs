@@ -242,7 +242,8 @@ uzfs_submit_writes(zvol_info_t *zinfo, zvol_io_cmd_t *zio_cmd)
 
 #ifdef DEBUG
 	if (is_rebuild) {
-		ASSERT(ZVOL_IS_REBUILDING(zinfo->main_zv));
+		ASSERT(ZVOL_IS_REBUILDING(zinfo->main_zv) ||
+		    (zinfo->main_zv->rebuild_info.rebuild_cnt > 1));
 		ASSERT(ZINFO_IS_DEGRADED(zinfo));
 	}
 #endif
@@ -680,6 +681,15 @@ next_step:
 		if (rc != 0)
 			goto exit;
 
+#ifdef DEBUG
+		if (inject_error.delay.downgraded_replica_rebuild_error_io > 0) {
+			inject_error.delay.downgraded_replica_rebuild_error_io--;
+			if (inject_error.delay.downgraded_replica_rebuild_error_io == 1) {
+				rc = -1;
+				goto exit;
+			}
+		}
+#endif
 		if (hdr.status != ZVOL_OP_STATUS_OK) {
 			LOG_ERR("received err in rebuild.. for %s..",
 			    zinfo->name);

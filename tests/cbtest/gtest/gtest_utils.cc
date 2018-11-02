@@ -256,7 +256,7 @@ GtestUtils::SocketFd::graceful_close()
  * len is real length - including metadata headers.
  */
 void
-GtestUtils::write_data_start(int data_fd, int &ioseq, size_t offset, int len)
+GtestUtils::write_data_start(int data_fd, uint64_t &ioseq, size_t offset, int len)
 {
 	zvol_io_hdr_t hdr_out = {0};
 	int rc;
@@ -276,7 +276,7 @@ GtestUtils::write_data_start(int data_fd, int &ioseq, size_t offset, int len)
  * Write data at given offset with io_num through data connection
  */
 void
-GtestUtils::write_data(int data_fd, int &ioseq, void *buf, size_t offset,
+GtestUtils::write_data(int data_fd, uint64_t &ioseq, void *buf, size_t offset,
     int len, uint64_t io_num)
 {
 	struct zvol_io_rw_hdr write_hdr;
@@ -299,7 +299,7 @@ GtestUtils::write_data(int data_fd, int &ioseq, void *buf, size_t offset,
  * Updates io_seq of volume
  */
 void
-GtestUtils::write_data_and_verify_resp(int data_fd, int &ioseq, char *buf,
+GtestUtils::write_data_and_verify_resp(int data_fd, uint64_t &ioseq, char *buf,
     size_t offset, uint64_t len, uint64_t io_num)
 {
 	zvol_io_hdr_t hdr_in;
@@ -324,7 +324,7 @@ GtestUtils::write_data_and_verify_resp(int data_fd, int &ioseq, char *buf,
  * Reading payload is left to the caller.
  */
 void
-GtestUtils::read_data_start(int data_fd, int &ioseq, size_t offset, int len,
+GtestUtils::read_data_start(int data_fd, uint64_t &ioseq, size_t offset, int len,
     zvol_io_hdr_t *hdr_inp, struct zvol_io_rw_hdr *rw_hdr, int flags)
 {
 	zvol_io_hdr_t hdr_out = {0};

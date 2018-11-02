@@ -169,7 +169,7 @@ retry:
  * Read 3 blocks of 4096 size at offset 0
  * Compares the io_num with expected value (hardcoded) and data
  */
-static void read_data_and_verify_resp(int data_fd, int &ioseq) {
+static void read_data_and_verify_resp(int data_fd, uint64_t &ioseq) {
 	zvol_io_hdr_t hdr_in;
 	struct zvol_io_rw_hdr read_hdr;
 	int rc;
@@ -217,7 +217,7 @@ static void read_data_and_verify_resp(int data_fd, int &ioseq) {
  * hardcoded offset
  * Verifies the resp of write IO
  */
-static void write_two_chunks_and_verify_resp(int data_fd, int &ioseq,
+static void write_two_chunks_and_verify_resp(int data_fd, uint64_t &ioseq,
     size_t offset) {
 	zvol_io_hdr_t hdr_in;
 	struct zvol_io_rw_hdr read_hdr;
@@ -258,7 +258,7 @@ static void write_two_chunks_and_verify_resp(int data_fd, int &ioseq,
 	EXPECT_EQ(hdr_in.io_seq, ioseq);
 }
 
-static void get_zvol_status(std::string zvol_name, int &ioseq, int control_fd,
+static void get_zvol_status(std::string zvol_name, uint64_t &ioseq, int control_fd,
     int state, int rebuild_status)
 {
 	zvol_io_hdr_t hdr_in, hdr_out = {0};
@@ -289,7 +289,7 @@ static void get_zvol_status(std::string zvol_name, int &ioseq, int control_fd,
 	EXPECT_EQ(status.rebuild_status, rebuild_status);
 }
 
-static void transition_zvol_to_online(int &ioseq, int control_fd,
+static void transition_zvol_to_online(uint64_t &ioseq, int control_fd,
     std::string zvol_name)
 {
 	zvol_io_hdr_t hdr_in, hdr_out = {0};
@@ -682,8 +682,8 @@ protected:
 
 	SocketFd m_datasock1;
 	SocketFd m_datasock2;
-	int	m_ioseq1;
-	int	m_ioseq2;
+	uint64_t m_ioseq1;
+	uint64_t m_ioseq2;
 };
 
 int ZreplDataTest::m_control_fd1 = -1;
@@ -1130,7 +1130,7 @@ TEST(Misc, ZreplCheckpointInterval) {
 	std::string zvol_name_slow, zvol_name_fast;
 	int	rc, control_fd;
 	SocketFd datasock_slow, datasock_fast;
-	int	ioseq = 0;
+	uint64_t ioseq = 0;
 	std::string host_slow, host_fast;
 	uint16_t port_slow, port_fast;
 	uint64_t ionum_slow, ionum_fast;
@@ -1276,7 +1276,8 @@ protected:
 	uint16_t m_port;
 	std::string m_host;
 	std::string m_zvol_name;
-	int	m_ioseq, m_control_fd;
+	uint64_t m_ioseq;
+	int	 m_control_fd;
 };
 
 TestPool *ZreplBlockSizeTest::m_pool = nullptr;
@@ -1356,7 +1357,7 @@ TEST(DiskReplaceTest, SpareReplacement) {
 	SocketFd datasock;
 	std::string host;
 	uint16_t port;
-	int ioseq;
+	uint64_t ioseq;
 	Vdev vdev2("vdev2");
 	Vdev spare("spare");
 	TestPool pool("rplcpool");
@@ -1487,7 +1488,7 @@ TEST(Snapshot, CreateAndDestroy) {
 	std::string snap_name = pool.getZvolName("vol@snap");
 	std::string bad_snap_name = pool.getZvolName("vol");
 	std::string unknown_snap_name = pool.getZvolName("unknown@snap");
-	int ioseq;
+	uint64_t ioseq;
 	std::string host;
 	uint16_t port;
 	struct zvol_snapshot_list *snaplist;
@@ -1756,7 +1757,7 @@ TEST(ZvolStatsTest, StatsZvol) {
 	Target target;
 	int rc, control_fd;
 	SocketFd datasock;
-	int ioseq = 0;
+	uint64_t ioseq = 0;
 	std::string host;
 	uint16_t port;
 	uint64_t val1, val2;

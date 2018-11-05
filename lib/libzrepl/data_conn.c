@@ -733,7 +733,8 @@ next_step:
 			 */
 			zvol_rebuild_status_t state;
 			state = uzfs_zvol_get_rebuild_status(zinfo->main_zv);
-			if (state != ZVOL_REBUILDING_AFS) {
+			if (state != ZVOL_REBUILDING_AFS &&
+			    state != ZVOL_REBUILDING_AFS_TRANS) {
 				ASSERT(state == ZVOL_REBUILDING_SNAP);
 				uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 				    ZVOL_REBUILDING_AFS_TRANS);
@@ -1472,7 +1473,7 @@ snap_reverify:
 				}
 			} else if (all_snap_done) {
 				LOG_INFO("Got a snapshot while switching "
-				    "to ALL_SNAP_DONE command for zv:%s\n",
+				    "to ALL_SNAP_DONE command for zv:%s",
 				    snap_zv->zv_name);
 				goto exit;
 			}

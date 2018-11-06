@@ -652,7 +652,7 @@ uzfs_append_snapshot_properties(nvlist_t *nv, struct json_object *robj,
 }
 
 /* Returns TRUE if given is name of internally created snapshot */
-static boolean_t
+boolean_t
 internal_snapshot(char *snap)
 {
 	if ((strcmp(snap, REBUILD_SNAPSHOT_SNAPNAME) == 0) ||

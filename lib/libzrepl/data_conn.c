@@ -1450,9 +1450,8 @@ snap_reverify:
 			zvol_state_t *zv = zinfo->main_zv;
 			if (snap_zv == NULL) {
 			/*
-			 * which means there is no user snapshot of given
-			 * io_num, but, TODO: we need to make sure that there
-			 * are no ongoing snapshots.
+			 * which means there is no user snapshot
+			 * of given io_num.
 			 */
 				if (all_snap_done == B_FALSE) {
 					uzfs_zvol_send_zio_cmd(zinfo, &hdr,
@@ -1555,6 +1554,9 @@ exit:
 	} else {
 		if (snap_zv != NULL) {
 			snap_name = kmem_asprintf("%s", snap_zv->zv_name);
+			char *snap = strchr(snap_name, '@');
+			snap++;
+			VERIFY3P(internal_snapshot(snap), ==, B_TRUE);
 			LOG_INFO("closing snap on conn break %s", snap_name);
 			uzfs_close_dataset(snap_zv);
 			rc = dsl_destroy_snapshot(snap_name, B_FALSE);

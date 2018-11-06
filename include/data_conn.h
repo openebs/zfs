@@ -52,6 +52,7 @@ extern void (*io_receiver)(void *arg);
 extern void (*rebuild_scanner)(void *arg);
 
 extern void uzfs_zvol_io_receiver(void *);
+extern boolean_t internal_snapshot(char *snap);
 
 extern uint16_t io_server_port;
 extern uint16_t rebuild_io_server_port;

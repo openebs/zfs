@@ -1430,10 +1430,11 @@ read_socket:
 			    == 1)
 				sleep(5);
 #endif
+			uint64_t cio_seq = hdr.checkpointed_io_seq;
 snap_reverify:
 			if (snap_zv == NULL) {
 				rc = uzfs_get_snap_zv_ionum(zinfo,
-				    hdr.checkpointed_io_seq, &snap_zv);
+				    cio_seq, &snap_zv);
 				if (rc != 0) {
 					LOG_ERR("Snap retrieve failed on zvol"
 					    " %s, err(%d)", zinfo->name, rc);

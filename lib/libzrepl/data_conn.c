@@ -749,17 +749,17 @@ next_step:
 			}
 			mutex_exit(&zinfo->main_zv->rebuild_mtx);
 
-			/*
-			 * Wait for all outstanding IOs to be flushed
-			 * to disk before making further progress
-			 */
-			quiesce_wait(zinfo, 0);
-
 			if (start_rebuild_from_clone == 1) {
 				start_rebuild_from_clone = 2;
 				wait_snap_timeout();
 				uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 				    ZVOL_REBUILDING_AFS);
+				/*
+				 * Wait for all outstanding IOs to be flushed
+				 * to disk before making further progress
+				 */
+				quiesce_wait(zinfo, 0);
+
 				rc = uzfs_zinfo_rebuild_from_clone(zinfo);
 				if (rc != 0) {
 					LOG_ERR("Rebuild from clone for vol %s "

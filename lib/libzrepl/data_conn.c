@@ -1476,6 +1476,7 @@ snap_reverify:
 				LOG_INFO("Got a snapshot while switching "
 				    "to ALL_SNAP_DONE command for zv:%s",
 				    snap_zv->zv_name);
+				all_snap_done = B_FALSE;
 				goto exit;
 			}
 

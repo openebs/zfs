@@ -48,7 +48,7 @@ extern int uzfs_hold_dataset(zvol_state_t *zv);
 extern void uzfs_rele_dataset(zvol_state_t *zv);
 int get_snapshot_zv(zvol_state_t *zv, const char *snap_name,
     zvol_state_t **snap_zv, boolean_t fail_exists, boolean_t fail_notexists);
-extern void destroy_snapshot_zv(zvol_state_t *zv, char *snap_name);
+extern int destroy_snapshot_zv(zvol_state_t *zv, char *snap_name);
 
 int uzfs_pool_create(const char *name, char *path, spa_t **spa);
 #ifdef __cplusplus

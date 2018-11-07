@@ -1483,8 +1483,8 @@ read_socket:
 				rc = uzfs_zvol_get_last_committed_io_no(snap_zv,
 				    HEALTHY_IO_SEQNUM, &checkpointed_io_seq);
 				if (rc != 0) {
-					LOG_ERR("Unable to get checkpointed"
-					    " num on zvol:%s", zinfo->name);
+					LOG_ERR("Unable to get checkpointed num"
+					    " on zvol:%s %d", zinfo->name, rc);
 					goto exit;
 				}
 
@@ -1509,8 +1509,11 @@ read_socket:
 					    snap_zv->zv_name);
 					LOG_INFO("closing snap %s", snap_name);
 					uzfs_close_dataset(snap_zv);
-					(void) dsl_destroy_snapshot(snap_name,
+					rc = dsl_destroy_snapshot(snap_name,
 					    B_FALSE);
+					if (rc != 0)
+						LOG_ERR("snapdestroyfail %s %d",
+						    snap_name, rc);
 					strfree(snap_name);
 				}
 				snap_zv = NULL;
@@ -1531,12 +1534,13 @@ exit:
 		snap_zv = NULL;
 	} else {
 		if (snap_zv != NULL) {
-			snap_name = kmem_asprintf("%s",
-			    snap_zv->zv_name);
+			snap_name = kmem_asprintf("%s", snap_zv->zv_name);
 			LOG_INFO("closing snap on conn break %s", snap_name);
 			uzfs_close_dataset(snap_zv);
-			(void) dsl_destroy_snapshot(snap_name,
-			    B_FALSE);
+			rc = dsl_destroy_snapshot(snap_name, B_FALSE);
+			if (rc != 0)
+				LOG_ERR("snap destroy fail %s err: %d",
+				    snap_name, rc);
 			strfree(snap_name);
 		}
 		snap_zv = NULL;

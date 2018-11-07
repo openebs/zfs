@@ -635,14 +635,16 @@ get_snapshot_zv(zvol_state_t *zv, const char *snap_name, zvol_state_t **snap_zv,
 	return (ret);
 }
 
-void
+int
 destroy_snapshot_zv(zvol_state_t *zv, char *snap_name)
 {
 	char *dataset;
+	int ret;
 
 	dataset = kmem_asprintf("%s@%s", zv->zv_name, snap_name);
-	(void) dsl_destroy_snapshot(dataset, B_FALSE);
+	ret = dsl_destroy_snapshot(dataset, B_FALSE);
 	strfree(dataset);
+	return (ret);
 }
 
 /* uZFS Zvol destroy call back function */

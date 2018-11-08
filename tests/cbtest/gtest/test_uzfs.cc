@@ -440,7 +440,7 @@ verify_rebuild_io(int rebuild_fd, zvol_info_t *zinfo)
 	send_buf = (char *)malloc(rebuild_hdr.len);
 	write_buf = send_buf + sizeof (struct zvol_io_rw_hdr);
 
-	for (int i = 0; i < len; i += clen) {
+	for (int i = 0; (i + clen) < len; i += clen) {
 		memcpy(write_buf + i, cbuf, clen);
 	}
 
@@ -467,7 +467,7 @@ verify_rebuild_io(int rebuild_fd, zvol_info_t *zinfo)
 	uzfs_read_data(zinfo->main_zv, read_buf, rebuild_hdr.offset, rw_hdr->len, &md);
 	EXPECT_EQ(NULL, md->next);
 	EXPECT_EQ(md->metadata.io_num, rw_hdr->io_num);
-	EXPECT_EQ(memcmp(write_buf, read_buf, sizeof (read_buf)), 0);
+	EXPECT_EQ(memcmp(write_buf, read_buf, rw_hdr->len), 0);
 	FREE_METADATA_LIST(md);
 
         free(send_buf);
@@ -510,7 +510,7 @@ verify_app_io_read_write(int fd, zvol_info_t *zinfo)
 	cbuf = ctime(&now);
 	clen = strlen(cbuf) - 1;
 
-	for (int i = 0; i < sizeof (write_buf); i += clen) {
+	for (int i = 0; (i + clen) < sizeof (write_buf); i += clen) {
 		memcpy(write_buf + i, cbuf, clen);
 	}
 

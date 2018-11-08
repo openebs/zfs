@@ -17,6 +17,7 @@ mkdir -p ./docker/zfs/lib
 cp cmd/zrepl/.libs/zrepl ./docker/zfs/bin
 cp cmd/zpool/.libs/zpool ./docker/zfs/bin
 cp cmd/zfs/.libs/zfs ./docker/zfs/bin
+cp cmd/zstreamdump/.libs/zstreamdump ./docker/zfs/bin
 
 cp lib/libzrepl/.libs/*.so* ./docker/zfs/lib
 cp lib/libzpool/.libs/*.so* ./docker/zfs/lib

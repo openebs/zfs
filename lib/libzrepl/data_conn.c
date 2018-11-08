@@ -682,9 +682,9 @@ next_step:
 			goto exit;
 
 #ifdef DEBUG
-		if (inject_error.delay.dw_replica_rebuild_error_io > 0) {
-			inject_error.delay.dw_replica_rebuild_error_io--;
-			if (inject_error.delay.dw_replica_rebuild_error_io ==
+		if (inject_rebuild_error.dw_replica_rebuild_error_io > 0) {
+			inject_rebuild_error.dw_replica_rebuild_error_io--;
+			if (inject_rebuild_error.dw_replica_rebuild_error_io ==
 			    1) {
 				rc = -1;
 				goto exit;

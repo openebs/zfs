@@ -27,6 +27,7 @@ extern int zfs_autoimport_disable;
 
 #if DEBUG
 inject_error_t	inject_error;
+inject_rebuild_error_t inject_rebuild_error;
 #endif
 
 kthread_t	*conn_accpt_thread;

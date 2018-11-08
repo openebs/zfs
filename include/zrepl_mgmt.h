@@ -74,7 +74,6 @@ typedef struct inject_delay_s {
 	int pre_uzfs_write_data;
 	int downgraded_replica_rebuild_size_set;
 	int io_receiver_exit;
-	uint64_t dw_replica_rebuild_error_io;
 } inject_delay_t;
 
 typedef struct inject_error_s {
@@ -82,6 +81,12 @@ typedef struct inject_error_s {
 } inject_error_t;
 
 extern inject_error_t inject_error;
+
+typedef struct inject_rebuild_error_s {
+	uint64_t dw_replica_rebuild_error_io;
+} inject_rebuild_error_t;
+
+extern inject_rebuild_error_t inject_rebuild_error;
 #endif
 
 typedef enum zvol_info_state_e {

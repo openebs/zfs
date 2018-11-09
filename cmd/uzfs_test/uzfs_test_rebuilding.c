@@ -21,8 +21,10 @@
 
 #include <sys/zfs_context.h>
 #include <sys/spa.h>
+#include <sys/dsl_destroy.h>
 #include <sys/uzfs_zvol.h>
 #include <uzfs_mgmt.h>
+#include <data_conn.h>
 #include <uzfs_io.h>
 #include <zrepl_mgmt.h>
 #include <uzfs_zap.h>
@@ -217,18 +219,24 @@ fetch_modified_data(void *arg)
 	off_t offset, end;
 	size_t len;
 	int max_count = 4;
+	zvol_state_t *snap_zv = NULL;
+	char *snap_name;
+	int rc;
 
 	printf("fetching modified data\n");
 	md.io_num = repl_data->base_io;
 
 	len = r_data->zvol->zv_volsize / max_count;
 
+	uzfs_zvol_create_internal_snapshot(repl_data->zvol, &snap_zv,
+	    md.io_num);
+
 	for (offset = 0; offset < r_data->zvol->zv_volsize; ) {
 		end = offset + len;
 		if (end > r_data->zvol->zv_volsize)
 			len = r_data->zvol->zv_volsize - offset;
 
-		err = uzfs_get_io_diff(repl_data->zvol, &md,
+		err = uzfs_get_io_diff(repl_data->zvol, &md, snap_zv,
 		    uzfs_test_meta_diff_traverse_cb, offset, len,
 		    r_data);
 		if (err)
@@ -237,6 +245,16 @@ fetch_modified_data(void *arg)
 		offset += len;
 		if (offset == r_data->zvol->zv_volsize)
 			break;
+	}
+
+	if (snap_zv != NULL) {
+		snap_name = kmem_asprintf("%s", snap_zv->zv_name);
+		uzfs_close_dataset(snap_zv);
+		rc = dsl_destroy_snapshot(snap_name, B_FALSE);
+		if (rc != 0)
+			LOG_ERR("snap destroy failed %s %d", snap_name, rc);
+		strfree(snap_name);
+		snap_zv = NULL;
 	}
 
 	if (err) {

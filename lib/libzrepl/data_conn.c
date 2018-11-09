@@ -30,6 +30,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+#include <sys/dsl_destroy.h>
 #include <uzfs_io.h>
 #include <uzfs_rebuilding.h>
 #include <zrepl_mgmt.h>
@@ -1016,6 +1017,35 @@ uzfs_zvol_rebuild_scanner_callback(off_t offset, size_t len,
 }
 
 /*
+ * Creates internal snapshot on given zv using current time as part of snapname.
+ * If snap already exists, waits and attempts to create again.
+ * Returns zv of snapshot in snap_zv.
+ */
+int
+uzfs_zvol_create_internal_snapshot(zvol_state_t *zv, zvol_state_t **snap_zv,
+    uint64_t io_num)
+{
+	int ret = 0;
+	char *snap_name;
+	time_t now;
+again:
+	now = time(NULL);
+	snap_name = kmem_asprintf("%s%llu.%llu", IO_DIFF_SNAPNAME, io_num, now);
+	ret = get_snapshot_zv(zv, snap_name, snap_zv, B_TRUE, B_FALSE);
+	if (ret == EEXIST) {
+		strfree(snap_name);
+		sleep(1);
+		LOG_INFO("Waiting to create internal snapshot");
+		goto again;
+	}
+	if (ret != 0)
+		LOG_ERR("Failed to get info about %s@%s",
+		    zv->zv_name, snap_name);
+	strfree(snap_name);
+	return (ret);
+}
+
+/*
  * Rebuild scanner function which after receiving
  * vol_name and IO number, will scan metadata and
  * read data and send across.
@@ -1034,6 +1064,8 @@ uzfs_zvol_rebuild_scanner(void *arg)
 	uint64_t	rebuild_req_len;
 	zvol_io_cmd_t	*zio_cmd;
 	struct linger	lo = { 1, 0 };
+	zvol_state_t	*snap_zv = NULL;
+	char *snap_name = NULL;
 
 	if ((rc = setsockopt(fd, SOL_SOCKET, SO_LINGER, &lo, sizeof (lo)))
 	    != 0) {
@@ -1110,12 +1142,22 @@ read_socket:
 			    "Rebuild Req offset: %ld, Rebuild Req length: %ld",
 			    metadata.io_num, rebuild_req_offset,
 			    rebuild_req_len);
+
+			rc = 0;
+			if (snap_zv == NULL)
+				rc = uzfs_zvol_create_internal_snapshot(
+				    zinfo->zv, &snap_zv, metadata.io_num);
+			if (rc != 0) {
+				LOG_ERR("internal snap create failed %s ",
+				    "err(%d)", zinfo->name, rc);
+				goto exit;
+			}
 #if DEBUG
 			if (inject_error.delay.helping_replica_rebuild_step
 			    == 1)
 				sleep(5);
 #endif
-			rc = uzfs_get_io_diff(zinfo->zv, &metadata,
+			rc = uzfs_get_io_diff(zinfo->zv, &metadata, snap_zv,
 			    uzfs_zvol_rebuild_scanner_callback,
 			    rebuild_req_offset, rebuild_req_len, &warg);
 			if (rc != 0) {
@@ -1146,6 +1188,17 @@ read_socket:
 	}
 
 exit:
+	if (snap_zv != NULL) {
+		snap_name = kmem_asprintf("%s", snap_zv->zv_name);
+		LOG_INFO("closing snap %s", snap_name);
+		uzfs_close_dataset(snap_zv);
+		rc = dsl_destroy_snapshot(snap_name, B_FALSE);
+		if (rc != 0)
+			LOG_ERR("snap destroy failed %s %d", snap_name, rc);
+		strfree(snap_name);
+		snap_zv = NULL;
+	}
+
 	if (zinfo != NULL) {
 		LOG_INFO("Closing rebuild connection for zvol %s", zinfo->name);
 		remove_pending_cmds_to_ack(fd, zinfo);

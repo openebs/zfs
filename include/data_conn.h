@@ -73,7 +73,9 @@ void uzfs_update_ionum_interval(zvol_info_t *zinfo, uint32_t timeout);
 void uzfs_zvol_timer_thread(void);
 
 void signal_fds_related_to_zinfo(zvol_info_t *zinfo);
-
+int
+uzfs_zvol_create_internal_snapshot(zvol_state_t *zv, zvol_state_t **snap_zv,
+    uint64_t io_num);
 #ifdef __cplusplus
 }
 #endif

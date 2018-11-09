@@ -857,6 +857,13 @@ cleanup_uzfs_test()
 		log_must $ZPOOL import $pool_name -d $TMPDIR
 	fi
 
+	internal_snap_count=`$ZFS list -t all | grep io_snap | wc -l`
+	if [ $internal_snap_count != 0 ]; then
+		echo "internal snapshots still exists"
+		$ZFS list -t all
+		exit 1
+	fi
+
 	log_must $ZPOOL destroy $pool_name 2> /dev/null
 	log_must $ZPOOL labelclear -f $TMPDIR/$vdev_file 2> /dev/null
 	log_must dd if=/dev/zero of=$TMPDIR/$vdev_file bs=1M count=100

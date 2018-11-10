@@ -309,12 +309,6 @@ main(int argc, char *argv[])
 	}
 
 	fletcher_4_init();
-	int fp = -1;
-	fp = open("/tmp/adump", O_RDWR|O_CREAT|O_APPEND, O_RDWR);
-	if (fp == -1) {
-		printf("errored\n");
-		exit(1);
-	}
 
 	send_stream = stdin;
 	while (read_hdr(drr, &zc)) {

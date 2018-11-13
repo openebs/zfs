@@ -68,7 +68,8 @@ usage(void)
 	(void) fprintf(stderr, "\t -d -- dump contents of blocks modified, "
 	    "implies verbose\n");
 #ifdef	_UZFS
-	(void) fprintf(stderr, "\t -w -- create dump files per object\n");
+	(void) fprintf(stderr, "\t -w -- create dump files(object_number.dump)"
+	    " for object (use `-w -1` to dump all the objects)\n");
 #endif
 	exit(1);
 }
@@ -111,6 +112,7 @@ ssread(void *buf, size_t len, zio_cksum_t *cksum)
 #ifdef	_UZFS
 int object_fd = -1;
 uint64_t last_object;
+boolean_t dump_all_objects = B_FALSE;
 
 static int
 dump_object_to_file(uint64_t object, char *buf, uint64_t len)
@@ -251,6 +253,7 @@ main(int argc, char *argv[])
 	boolean_t first = B_TRUE;
 #ifdef	_UZFS
 	boolean_t dump_object = B_FALSE;
+	uint64_t d_obj = 0;
 #endif
 
 	/*
@@ -264,7 +267,7 @@ main(int argc, char *argv[])
 	zio_cksum_t pcksum = { { 0 } };
 
 #ifdef	_UZFS
-	while ((c = getopt(argc, argv, ":vCdw")) != -1) {
+	while ((c = getopt(argc, argv, ":vCdw:")) != -1) {
 #else
 	while ((c = getopt(argc, argv, ":vCd")) != -1) {
 #endif
@@ -285,6 +288,9 @@ main(int argc, char *argv[])
 #ifdef	_UZFS
 		case 'w':
 			dump_object = B_TRUE;
+			d_obj = strtoul(optarg, NULL, 10);
+			if (d_obj == -1ULL)
+				dump_all_objects = B_TRUE;
 			break;
 #endif
 		case ':':
@@ -548,7 +554,8 @@ main(int argc, char *argv[])
 			/*
 			 * dump object data to a file
 			 */
-			if (dump_object == B_TRUE) {
+			if (dump_object == B_TRUE &&
+			    (dump_all_objects || drrw->drr_object == d_obj)) {
 				if (dump_object_to_file(drrw->drr_object,
 				    buf, payload_size) == -1) {
 					fprintf(stderr, "Failed to dump "
@@ -680,6 +687,11 @@ main(int argc, char *argv[])
 	}
 	free(buf);
 	fletcher_4_fini();
+
+#ifdef	_UZFS
+	if (dump_object == B_TRUE && object_fd != -1)
+		close(object_fd);
+#endif
 
 	/* Print final summary */
 

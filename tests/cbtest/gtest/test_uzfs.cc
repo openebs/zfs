@@ -71,7 +71,6 @@ extern uint64_t zvol_rebuild_step_size;
 void (*dw_replica_fn)(void *);
 #if DEBUG
 inject_error_t inject_error;
-inject_rebuild_error_t inject_rebuild_error;
 #endif
 
 void
@@ -2004,7 +2003,7 @@ TEST(uZFSRebuild, TestErroredRebuild) {
 	zk_thread_join(writer_thread->t_tid);
 
 	zvol_rebuild_step_size = ((total_ios/10) + 1) * 4096;
-	inject_rebuild_error.dw_replica_rebuild_error_io = (total_ios) / 4;
+	inject_error.inject_rebuild_error.dw_replica_rebuild_error_io = (total_ios) / 4;
 	execute_rebuild_test_case("errored rebuild with data conn", 15,
 	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED, 4, "vol3");
 	close(wargs.r1_fd);
@@ -2028,7 +2027,7 @@ TEST(uZFSRebuild, TestErroredRebuild) {
 	    0, 0);
 
 	zvol_rebuild_step_size =  (10 * 1024ULL * 1024ULL * 1024ULL);
-	inject_rebuild_error.dw_replica_rebuild_error_io = 0;
+	inject_error.inject_rebuild_error.dw_replica_rebuild_error_io = 0;
 	execute_rebuild_test_case("complete rebuild with data conn", 15,
 	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_DONE, 6, "vol3");
 

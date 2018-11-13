@@ -29,7 +29,6 @@
 
 #if DEBUG
 inject_error_t	inject_error;
-inject_rebuild_error_t inject_rebuild_error;
 #endif
 
 #define	GET_NEXT_CHUNK(chunk_io, offset, len, end)		\

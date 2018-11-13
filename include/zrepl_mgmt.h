@@ -76,17 +76,16 @@ typedef struct inject_delay_s {
 	int io_receiver_exit;
 } inject_delay_t;
 
-typedef struct inject_error_s {
-	inject_delay_t delay;
-} inject_error_t;
-
-extern inject_error_t inject_error;
-
 typedef struct inject_rebuild_error_s {
 	uint64_t dw_replica_rebuild_error_io;
 } inject_rebuild_error_t;
 
-extern inject_rebuild_error_t inject_rebuild_error;
+typedef struct inject_error_s {
+	inject_delay_t delay;
+	inject_rebuild_error_t inject_rebuild_error;
+} inject_error_t;
+
+extern inject_error_t inject_error;
 #endif
 
 typedef enum zvol_info_state_e {

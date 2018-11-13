@@ -67,6 +67,10 @@ usage(void)
 	(void) fprintf(stderr, "\t -C -- suppress checksum verification\n");
 	(void) fprintf(stderr, "\t -d -- dump contents of blocks modified, "
 	    "implies verbose\n");
+#ifdef	_UZFS
+	(void) fprintf(stderr, "\t -w -- create dump files(object_number.dump)"
+	    " for object (use `-w -1` to dump all the objects)\n");
+#endif
 	exit(1);
 }
 
@@ -104,6 +108,34 @@ ssread(void *buf, size_t len, zio_cksum_t *cksum)
 	total_stream_len += len;
 	return (outlen);
 }
+
+#ifdef	_UZFS
+int object_fd = -1;
+uint64_t last_object;
+boolean_t dump_all_objects = B_FALSE;
+
+static int
+dump_object_to_file(uint64_t object, char *buf, uint64_t len)
+{
+	char object_file[32];
+
+	if (object_fd == -1 || last_object != object) {
+		snprintf(object_file, sizeof (object_file),
+		    "%lu.dump", object);
+		if (object_fd != -1)
+			close(object_fd);
+		object_fd = open(object_file, O_RDWR|O_CREAT|O_APPEND, O_RDWR);
+		if (object_fd == -1) {
+			fprintf(stderr, "Failed to open object dump "
+			    "file '%s' err:%d\n", object_file, errno);
+			return (errno);
+		}
+		last_object = object;
+	}
+
+	return (write(object_fd, buf, len));
+}
+#endif
 
 static size_t
 read_hdr(dmu_replay_record_t *drr, zio_cksum_t *cksum)
@@ -219,6 +251,11 @@ main(int argc, char *argv[])
 	boolean_t verbose = B_FALSE;
 	boolean_t very_verbose = B_FALSE;
 	boolean_t first = B_TRUE;
+#ifdef	_UZFS
+	boolean_t dump_object = B_FALSE;
+	uint64_t d_obj = 0;
+#endif
+
 	/*
 	 * dump flag controls whether the contents of any modified data blocks
 	 * are printed to the console during processing of the stream. Warning:
@@ -229,7 +266,11 @@ main(int argc, char *argv[])
 	zio_cksum_t zc = { { 0 } };
 	zio_cksum_t pcksum = { { 0 } };
 
+#ifdef	_UZFS
+	while ((c = getopt(argc, argv, ":vCdw:")) != -1) {
+#else
 	while ((c = getopt(argc, argv, ":vCd")) != -1) {
+#endif
 		switch (c) {
 		case 'C':
 			do_cksum = B_FALSE;
@@ -244,6 +285,14 @@ main(int argc, char *argv[])
 			verbose = B_TRUE;
 			very_verbose = B_TRUE;
 			break;
+#ifdef	_UZFS
+		case 'w':
+			dump_object = B_TRUE;
+			d_obj = strtoul(optarg, NULL, 10);
+			if (d_obj == -1ULL)
+				dump_all_objects = B_TRUE;
+			break;
+#endif
 		case ':':
 			(void) fprintf(stderr,
 			    "missing argument for '%c' option\n", optopt);
@@ -266,6 +315,7 @@ main(int argc, char *argv[])
 	}
 
 	fletcher_4_init();
+
 	send_stream = stdin;
 	while (read_hdr(drr, &zc)) {
 
@@ -499,6 +549,21 @@ main(int argc, char *argv[])
 			 * Read the contents of the block in from STDIN to buf
 			 */
 			(void) ssread(buf, payload_size, &zc);
+
+#ifdef	_UZFS
+			/*
+			 * dump object data to a file
+			 */
+			if (dump_object == B_TRUE &&
+			    (dump_all_objects || drrw->drr_object == d_obj)) {
+				if (dump_object_to_file(drrw->drr_object,
+				    buf, payload_size) == -1) {
+					fprintf(stderr, "Failed to dump "
+					    "object:%lu\n", drrw->drr_object);
+					exit(1);
+				}
+			}
+#endif
 			/*
 			 * If in dump mode
 			 */
@@ -622,6 +687,11 @@ main(int argc, char *argv[])
 	}
 	free(buf);
 	fletcher_4_fini();
+
+#ifdef	_UZFS
+	if (dump_object == B_TRUE && object_fd != -1)
+		close(object_fd);
+#endif
 
 	/* Print final summary */
 

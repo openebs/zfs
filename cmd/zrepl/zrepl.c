@@ -144,6 +144,7 @@ main(int argc, char **argv)
 
 	io_receiver = uzfs_zvol_io_receiver;
 	rebuild_scanner = uzfs_zvol_rebuild_scanner;
+	dw_replica_fn = uzfs_zvol_rebuild_dw_replica;
 
 	SLIST_INIT(&uzfs_mgmt_conns);
 

@@ -1129,7 +1129,7 @@ ret_error:
 		strlcpy(thrd_arg->ip, mack->ip, MAX_IP_LEN);
 		strlcpy(thrd_arg->zvol_name, mack->volname, MAXNAMELEN);
 		thrd_info = zk_thread_create(NULL, 0,
-		    uzfs_zvol_rebuild_dw_replica, thrd_arg, 0, NULL, TS_RUN, 0,
+		    dw_replica_fn, thrd_arg, 0, NULL, TS_RUN, 0,
 		    PTHREAD_CREATE_DETACHED);
 		VERIFY3P(thrd_info, !=, NULL);
 	}
@@ -1247,7 +1247,7 @@ handle_start_rebuild_req(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 		zinfo->quiesce_requested = 1;
 		mutex_exit(&zinfo->main_zv->rebuild_mtx);
 
-		quiesce_wait(zinfo, 0);
+		quiesce_wait(zinfo);
 		rc = uzfs_zinfo_rebuild_from_clone(zinfo);
 		if (rc != 0) {
 			LOG_ERR("Rebuild from clone for vol %s "

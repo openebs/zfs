@@ -25,7 +25,7 @@
 #include <sys/spa.h>
 
 typedef struct {
-	char *key; 	/* zap key to update */
+	char *key;	/* zap key to update */
 	uint64_t value;	/* value to update against zap key */
 	size_t size;	/* size of value */
 } uzfs_zap_kv_t;

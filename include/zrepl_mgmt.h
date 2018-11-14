@@ -74,6 +74,7 @@ typedef struct inject_delay_s {
 	int pre_uzfs_write_data;
 	int downgraded_replica_rebuild_size_set;
 	int io_receiver_exit;
+	int helping_replica_rebuild_complete;
 } inject_delay_t;
 
 typedef struct inject_rebuild_error_s {
@@ -102,7 +103,7 @@ typedef struct zvol_info_s {
 	char 		name[MAXPATHLEN];
 	zvol_state_t	*main_zv; // original volume
 	zvol_state_t	*clone_zv; // cloned volume for rebuilding
-	zvol_state_t	*snap_zv; // snap volume from where clone is created
+	zvol_state_t	*snapshot_zv; // snap volume from where clone is created
 	zvol_state_t    *rebuild_zv; // current snapshot which is rebuilding
 	uint64_t	refcnt;
 
@@ -229,8 +230,9 @@ extern int uzfs_zinfo_destroy(const char *ds_name, spa_t *spa);
 int uzfs_zvol_get_last_committed_io_no(zvol_state_t *, char *, uint64_t *);
 void uzfs_zinfo_store_last_committed_healthy_io_no(zvol_info_t *zinfo,
     uint64_t io_seq);
-void uzfs_zinfo_store_last_committed_degraded_io_no(zvol_info_t *zv,
+void uzfs_zinfo_store_last_committed_degraded_io_no(zvol_info_t *zinfo,
     uint64_t io_seq);
+int uzfs_zvol_get_kv_pair(zvol_state_t *zv, char *key, uint64_t *ionum);
 extern int set_socket_keepalive(int sfd);
 extern int create_and_bind(const char *port, int bind_needed,
     boolean_t nonblocking);
@@ -239,6 +241,10 @@ void shutdown_fds_related_to_zinfo(zvol_info_t *zinfo);
 
 extern void uzfs_zinfo_set_status(zvol_info_t *zinfo, zvol_status_t status);
 extern zvol_status_t uzfs_zinfo_get_status(zvol_info_t *zinfo);
+void uzfs_zvol_store_kv_pair(zvol_state_t *, char *, uint64_t);
+int uzfs_zvol_destroy_snapshot_clone(zvol_state_t *zv, zvol_state_t *snap_zv,
+    zvol_state_t *clone_zv);
+int uzfs_zinfo_destroy_internal_clone(zvol_info_t *zv);
 
 /*
  * API to drop refcnt on zinfo. If refcnt

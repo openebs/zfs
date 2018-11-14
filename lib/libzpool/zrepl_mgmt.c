@@ -4,6 +4,7 @@
 #include <sys/zfs_rlock.h>
 #include <sys/uzfs_zvol.h>
 #include <sys/dnode.h>
+#include <sys/dsl_destroy.h>
 #include <zrepl_mgmt.h>
 #include <uzfs_mgmt.h>
 #include <uzfs_zap.h>
@@ -201,6 +202,8 @@ shutdown_fds_related_to_zinfo(zvol_info_t *zinfo)
 static void
 uzfs_mark_offline_and_free_zinfo(zvol_info_t *zinfo)
 {
+	zvol_state_t *snap_zv, *clone_zv;
+
 	shutdown_fds_related_to_zinfo(zinfo);
 	(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
 	zinfo->state = ZVOL_INFO_STATE_OFFLINE;
@@ -218,8 +221,16 @@ uzfs_mark_offline_and_free_zinfo(zvol_info_t *zinfo)
 		    " zero on zvol:%s", zinfo->refcnt, zinfo->name);
 		sleep(5);
 	}
-	(void) uzfs_zvol_release_internal_clone(
-	    zinfo->main_zv, &zinfo->snap_zv, &zinfo->clone_zv);
+
+	(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
+	snap_zv = zinfo->snapshot_zv;
+	clone_zv = zinfo->clone_zv;
+	zinfo->snapshot_zv = NULL;
+	zinfo->clone_zv = NULL;
+	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
+
+	(void) uzfs_zvol_release_internal_clone(zinfo->main_zv, snap_zv,
+	    clone_zv);
 
 	LOG_INFO("Freeing zvol %s", zinfo->name);
 	(void) uzfs_zinfo_free(zinfo);
@@ -231,7 +242,6 @@ uzfs_zvol_name_compare(zvol_info_t *zv, const char *name)
 
 	char *p;
 	int pathlen, namelen;
-
 	if (name == NULL)
 		return (-1);
 
@@ -359,7 +369,7 @@ uzfs_zinfo_init(void *zv, const char *ds_name, nvlist_t *create_props)
 	bzero(zinfo, sizeof (zvol_info_t));
 	ASSERT(zinfo != NULL);
 	ASSERT(zinfo->clone_zv == NULL);
-	ASSERT(zinfo->snap_zv == NULL);
+	ASSERT(zinfo->snapshot_zv == NULL);
 
 	zinfo->uzfs_zvol_taskq = taskq_create("replica", boot_ncpus,
 	    defclsyspri, boot_ncpus, INT_MAX,
@@ -398,7 +408,7 @@ uzfs_zinfo_free(zvol_info_t *zinfo)
 }
 
 int
-uzfs_zvol_get_last_committed_io_no(zvol_state_t *zv, char *key, uint64_t *ionum)
+uzfs_zvol_get_kv_pair(zvol_state_t *zv, char *key, uint64_t *ionum)
 {
 	uzfs_zap_kv_t zap;
 	int error;
@@ -414,7 +424,7 @@ uzfs_zvol_get_last_committed_io_no(zvol_state_t *zv, char *key, uint64_t *ionum)
 	return (error);
 }
 
-static void
+void
 uzfs_zvol_store_kv_pair(zvol_state_t *zv, char *key,
     uint64_t io_seq)
 {
@@ -431,6 +441,12 @@ uzfs_zvol_store_kv_pair(zvol_state_t *zv, char *key,
 	kv_array[0] = &zap;
 	VERIFY0(uzfs_update_zap_entries(zv,
 	    (const uzfs_zap_kv_t **) kv_array, 1));
+}
+
+int
+uzfs_zvol_get_last_committed_io_no(zvol_state_t *zv, char *key, uint64_t *ionum)
+{
+	return (uzfs_zvol_get_kv_pair(zv, key, ionum));
 }
 
 void
@@ -474,4 +490,76 @@ zvol_status_t
 uzfs_zinfo_get_status(zvol_info_t *zinfo)
 {
 	return (uzfs_zvol_get_status(zinfo->main_zv));
+}
+
+int
+uzfs_zvol_destroy_snapshot_clone(zvol_state_t *zv, zvol_state_t *snap_zv,
+    zvol_state_t *clone_zv)
+{
+	int ret = 0;
+	int ret1 = 0;
+	char *clonename;
+
+	clonename = kmem_asprintf("%s/%s_%s", spa_name(zv->zv_spa),
+	    strchr(zv->zv_name, '/') + 1,
+	    REBUILD_SNAPSHOT_CLONENAME);
+
+	LOG_INFO("Destroying %s and %s(%s) on:%s", snap_zv->zv_name,
+	    clone_zv->zv_name, clonename, zv->zv_name);
+
+	uzfs_zvol_release_internal_clone(zv, snap_zv, clone_zv);
+
+// try_clone_delete_again:
+	/* Destroy clone */
+	ret = dsl_destroy_head(clonename);
+	if (ret != 0) {
+		LOG_ERR("Rebuild_clone destroy failed on:%s"
+		    " with err:%d", zv->zv_name, ret);
+//		sleep(1);
+//		goto try_clone_delete_again;
+	}
+
+// try_snap_delete_again:
+	/* Destroy snapshot */
+	ret1 = destroy_snapshot_zv(zv, REBUILD_SNAPSHOT_SNAPNAME);
+	if (ret1 != 0) {
+		LOG_ERR("Rebuild_snap destroy failed on:%s"
+		    " with err:%d", zv->zv_name, ret1);
+		ret = ret1;
+//		sleep(1);
+//		goto try_snap_delete_again;
+	}
+
+	strfree(clonename);
+
+	return (ret);
+}
+
+/*
+ * This API is used to delete internal
+ * cloned volume and backing snapshot.
+ */
+int
+uzfs_zinfo_destroy_internal_clone(zvol_info_t *zinfo)
+{
+	int ret = 0;
+	zvol_state_t *snap_zv, *clone_zv;
+
+	(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
+	snap_zv = zinfo->snapshot_zv;
+	clone_zv = zinfo->clone_zv;
+
+	if (snap_zv == NULL) {
+		ASSERT(clone_zv == NULL);
+		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
+		return (ret);
+	}
+
+	zinfo->snapshot_zv = NULL;
+	zinfo->clone_zv = NULL;
+	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
+
+	ret = uzfs_zvol_destroy_snapshot_clone(zinfo->main_zv, snap_zv,
+	    clone_zv);
+	return (ret);
 }

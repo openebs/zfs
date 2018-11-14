@@ -927,9 +927,9 @@ TEST_F(ZreplDataTest, RebuildFlag) {
 
 	/* Get zvol status before rebuild */
 	get_zvol_status(m_zvol_name1, m_ioseq1, m_control_fd1, ZVOL_STATUS_DEGRADED, ZVOL_REBUILDING_INIT);
+
 	/* transition the zvol to online state */
 	transition_zvol_to_online(m_ioseq1, m_control_fd1, m_zvol_name1);
-
 	sleep(5);
 
 	/* Get zvol status after rebuild */

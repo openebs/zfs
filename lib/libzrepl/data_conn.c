@@ -89,7 +89,7 @@ zio_cmd_alloc(zvol_io_hdr_t *hdr, int fd)
 }
 
 void
-quiesce_wait(zvol_info_t *zinfo, uint8_t delete_clone)
+quiesce_wait(zvol_info_t *zinfo)
 {
 	while (1) {
 		if (zinfo->quiesce_done ||
@@ -97,10 +97,6 @@ quiesce_wait(zvol_info_t *zinfo, uint8_t delete_clone)
 		    zinfo->uzfs_zvol_taskq)) {
 			zinfo->quiesce_done = 1;
 			zinfo->quiesce_requested = 0;
-			if (delete_clone)
-				uzfs_zvol_destroy_internal_clone(zinfo->main_zv,
-				    &zinfo->snap_zv, &zinfo->clone_zv);
-
 			return;
 		}
 		else
@@ -483,7 +479,7 @@ uzfs_zvol_remove_from_fd_list(zvol_info_t *zinfo, int fd)
 	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 }
 
-static int
+int
 uzfs_zvol_handle_rebuild_snap_done(zvol_io_hdr_t *hdrp,
     int sfd, zvol_info_t *zinfo)
 {
@@ -750,7 +746,7 @@ next_step:
 			 * Wait for all outstanding IOs to be flushed
 			 * to disk before making further progress
 			 */
-			quiesce_wait(zinfo, 0);
+			quiesce_wait(zinfo);
 
 			if (start_rebuild_from_clone == 1) {
 				start_rebuild_from_clone = 2;
@@ -810,21 +806,8 @@ exit:
 		if (zinfo->main_zv->rebuild_info.rebuild_failed_cnt != 0)
 			uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 			    ZVOL_REBUILDING_FAILED);
-		else {
-			/* Mark replica healthy now */
-			uzfs_zvol_set_rebuild_status(zinfo->main_zv,
-			    ZVOL_REBUILDING_DONE);
-			uzfs_zvol_set_status(zinfo->main_zv,
-			    ZVOL_STATUS_HEALTHY);
-			uzfs_update_ionum_interval(zinfo, 0);
-			/*
-			 * Lets ask io_receiver thread to flush
-			 * all outstanding IOs in taskq
-			 */
-			zinfo->quiesce_done = 0;
-			zinfo->quiesce_requested = 1;
+		else
 			wquiesce = 1;
-		}
 	}
 	mutex_exit(&zinfo->main_zv->rebuild_mtx);
 
@@ -832,8 +815,28 @@ exit:
 	 * Wait for all outstanding IOs to be flushed
 	 * to disk before making further progress
 	 */
-	if (wquiesce)
-		quiesce_wait(zinfo, 1);
+	if (wquiesce) {
+		/*
+		 * Lets ask io_receiver thread to flush
+		 * all outstanding IOs in taskq
+		 */
+		zinfo->quiesce_done = 0;
+		zinfo->quiesce_requested = 1;
+		quiesce_wait(zinfo);
+
+		uzfs_zvol_store_kv_pair(zinfo->clone_zv, STALE, 1);
+		/* This is to make sure that above kv is synced */
+		txg_wait_synced(spa_get_dsl(zinfo->main_zv->zv_spa), 0);
+
+		mutex_enter(&zinfo->main_zv->rebuild_mtx);
+		/* Mark replica healthy now */
+		uzfs_zvol_set_rebuild_status(zinfo->main_zv,
+		    ZVOL_REBUILDING_DONE);
+		uzfs_zvol_set_status(zinfo->main_zv,
+		    ZVOL_STATUS_HEALTHY);
+		uzfs_update_ionum_interval(zinfo, 0);
+		mutex_exit(&zinfo->main_zv->rebuild_mtx);
+	}
 
 	kmem_free(arg, sizeof (rebuild_thread_arg_t));
 	if (zio_cmd != NULL)
@@ -842,6 +845,10 @@ exit:
 		shutdown(sfd, SHUT_RDWR);
 		close(sfd);
 	}
+
+	if (wquiesce)
+		uzfs_zinfo_destroy_internal_clone(zinfo);
+
 	/* Parent thread have taken refcount, drop it now */
 	uzfs_zinfo_drop_refcnt(zinfo);
 
@@ -1512,6 +1519,12 @@ read_socket:
 					    snap_zv->zv_name);
 					LOG_INFO("closing snap %s", snap_name);
 					uzfs_close_dataset(snap_zv);
+#if DEBUG
+					if (inject_error.delay.
+					    helping_replica_rebuild_complete
+					    == 1)
+					sleep(10);
+#endif
 					rc = dsl_destroy_snapshot(snap_name,
 					    B_FALSE);
 					if (rc != 0)
@@ -1540,6 +1553,11 @@ exit:
 			snap_name = kmem_asprintf("%s", snap_zv->zv_name);
 			LOG_INFO("closing snap on conn break %s", snap_name);
 			uzfs_close_dataset(snap_zv);
+#if DEBUG
+			if (inject_error.delay.helping_replica_rebuild_complete
+			    == 1)
+				sleep(10);
+#endif
 			rc = dsl_destroy_snapshot(snap_name, B_FALSE);
 			if (rc != 0)
 				LOG_ERR("snap destroy fail %s err: %d",
@@ -1891,11 +1909,11 @@ open_zvol(int fd, zvol_info_t **zinfopp)
 		goto error_ret;
 	}
 
-	if (zinfo->snap_zv == NULL) {
+	if (zinfo->snapshot_zv == NULL) {
 		ASSERT3P(zinfo->clone_zv, ==, NULL);
 		/* Create clone for rebuild */
 		if (uzfs_zvol_get_or_create_internal_clone(zinfo->main_zv,
-		    &zinfo->snap_zv, &zinfo->clone_zv, NULL) != 0) {
+		    &zinfo->snapshot_zv, &zinfo->clone_zv, NULL) != 0) {
 			LOG_ERR("Failed to create clone for rebuild");
 			goto error_ret;
 		}
@@ -1965,6 +1983,7 @@ uzfs_zvol_io_receiver(void *arg)
 	zvol_info_t	*zinfo = NULL;
 	zvol_io_cmd_t	*zio_cmd;
 	zvol_io_hdr_t	hdr;
+	zvol_state_t	*snap_zv, *clone_zv;
 
 	prctl(PR_SET_NAME, "io_receiver", 0, 0, 0);
 
@@ -2077,8 +2096,16 @@ exit:
 
 	taskq_wait(zinfo->uzfs_zvol_taskq);
 	reinitialize_zv_state(zinfo->main_zv);
-	(void) uzfs_zvol_release_internal_clone(zinfo->main_zv,
-	    &zinfo->snap_zv, &zinfo->clone_zv);
+
+	(void) pthread_mutex_lock(&zinfo->zinfo_mutex);
+	snap_zv = zinfo->snapshot_zv;
+	clone_zv = zinfo->clone_zv;
+	zinfo->snapshot_zv = NULL;
+	zinfo->clone_zv = NULL;
+	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
+
+	(void) uzfs_zvol_release_internal_clone(zinfo->main_zv, snap_zv,
+	    clone_zv);
 
 	zinfo->quiesce_requested = 0;
 	zinfo->quiesce_done = 1;

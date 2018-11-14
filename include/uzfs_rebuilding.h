@@ -28,6 +28,7 @@ extern "C" {
 #define	IO_DIFF_SNAPNAME		".io_snap"
 #define	REBUILD_SNAPSHOT_SNAPNAME	"rebuild_snap"
 #define	REBUILD_SNAPSHOT_CLONENAME	"rebuild_clone"
+#define	STALE				"stale"
 
 /*
  * API to compare metadata
@@ -55,15 +56,13 @@ int uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *base_metadata,
  */
 int uzfs_get_nonoverlapping_ondisk_blks(zvol_state_t *zv, uint64_t offset,
     uint64_t len, blk_metadata_t *incoming_md, void **list);
-int
-uzfs_zvol_get_or_create_internal_clone(zvol_state_t *zv,
+int uzfs_zvol_get_or_create_internal_clone(zvol_state_t *zv,
     zvol_state_t **snap_zv, zvol_state_t **clone_zv, int *ret_val);
-int
-uzfs_zvol_release_internal_clone(zvol_state_t *zv,
-    zvol_state_t **snap_zv, zvol_state_t **clone_zv);
-int
-uzfs_zvol_destroy_internal_clone(zvol_state_t *zv,
-    zvol_state_t **snap_zv, zvol_state_t **clone_zv);
+int uzfs_zvol_release_internal_clone(zvol_state_t *zv,
+    zvol_state_t *snap_zv, zvol_state_t *clone_zv);
+
+boolean_t is_stale_clone(zvol_state_t *);
+
 #ifdef __cplusplus
 }
 #endif

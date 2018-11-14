@@ -68,7 +68,7 @@ extern void (*zinfo_destroy_hook)(zvol_info_t *);
 int receiver_created = 0;
 extern uint64_t zvol_rebuild_step_size;
 
-void (*dw_replica_fn)(void *);
+//void (*dw_replica_fn)(void *);
 #if DEBUG
 inject_error_t inject_error;
 #endif
@@ -800,6 +800,7 @@ TEST(uZFS, Setup) {
 
 	io_receiver = &uzfs_mock_io_receiver;
 	rebuild_scanner = &uzfs_mock_io_receiver;
+	dw_replica_fn = &uzfs_zvol_rebuild_dw_replica;
 
 	zrepl_log_level = LOG_LEVEL_DEBUG;
 
@@ -1078,31 +1079,55 @@ TEST(uZFS, RemovePendingCmds) {
 TEST(SnapRebuild, CloneCreate) {
 
 	int ret_val = 0;
+	zvol_state_t *snap_zv, *clone_zv;
 
 	/* Create snapshot and clone it */
 	EXPECT_EQ(0, uzfs_zvol_get_or_create_internal_clone(
-	    zinfo->main_zv, &zinfo->snap_zv, &zinfo->clone_zv, &ret_val));
-	EXPECT_EQ(NULL, !zinfo->snap_zv);
+	    zinfo->main_zv, &zinfo->snapshot_zv, &zinfo->clone_zv, &ret_val));
+	EXPECT_EQ(NULL, !zinfo->snapshot_zv);
 	EXPECT_EQ(NULL, !zinfo->clone_zv);
 	EXPECT_EQ(0, ret_val);
 
+	EXPECT_EQ(B_FALSE, is_stale_clone(zinfo->clone_zv));
+
 	/* Release clone and snapshot */
 	EXPECT_EQ(0, uzfs_zvol_release_internal_clone(zinfo->main_zv,
-	    &zinfo->snap_zv, &zinfo->clone_zv));
-	EXPECT_EQ(NULL, zinfo->snap_zv);
-	EXPECT_EQ(NULL, zinfo->clone_zv);
+	    zinfo->snapshot_zv, zinfo->clone_zv));
 
 	/* Create clone, this time it should load existing clone */
 	EXPECT_EQ(0, uzfs_zvol_get_or_create_internal_clone(
-	    zinfo->main_zv, &zinfo->snap_zv, &zinfo->clone_zv, &ret_val));
-	EXPECT_EQ(NULL, !zinfo->snap_zv);
+	    zinfo->main_zv, &zinfo->snapshot_zv, &zinfo->clone_zv, &ret_val));
+	EXPECT_EQ(NULL, !zinfo->snapshot_zv);
 	EXPECT_EQ(NULL, !zinfo->clone_zv);
 	EXPECT_EQ(EEXIST, ret_val);
 
+	uzfs_zvol_store_kv_pair(zinfo->clone_zv, (char *)STALE, 1);
+	EXPECT_EQ(B_TRUE, is_stale_clone(zinfo->clone_zv));
+
+	/* Create clone, this time it should try to delete, but, error out as release is not done */
+	snap_zv = zinfo->snapshot_zv;
+	clone_zv = zinfo->clone_zv;
+	EXPECT_NE(0, uzfs_zvol_get_or_create_internal_clone(
+	    zinfo->main_zv, &zinfo->snapshot_zv, &zinfo->clone_zv, &ret_val));
+	EXPECT_EQ(NULL, zinfo->snapshot_zv);
+	EXPECT_EQ(NULL, zinfo->clone_zv);
+
+	/* Release clone and snapshot */
+	zinfo->snapshot_zv = snap_zv;
+	zinfo->clone_zv = clone_zv;
+	EXPECT_EQ(0, uzfs_zvol_release_internal_clone(zinfo->main_zv,
+	    zinfo->snapshot_zv, zinfo->clone_zv));
+
+	/* Create clone, this time it should delete stale and create new one */
+	EXPECT_EQ(0, uzfs_zvol_get_or_create_internal_clone(
+	    zinfo->main_zv, &zinfo->snapshot_zv, &zinfo->clone_zv, &ret_val));
+	EXPECT_EQ(NULL, !zinfo->snapshot_zv);
+	EXPECT_EQ(NULL, !zinfo->clone_zv);
+	EXPECT_EQ(0, ret_val);
+
 	/* Destroy internal clone and internal snapshot */
-	EXPECT_EQ(0, uzfs_zvol_destroy_internal_clone(
-	    zinfo->main_zv, &zinfo->snap_zv, &zinfo->clone_zv));
-	EXPECT_EQ(NULL, zinfo->snap_zv);
+	EXPECT_EQ(0, uzfs_zinfo_destroy_internal_clone(zinfo));
+	EXPECT_EQ(NULL, zinfo->snapshot_zv);
 	EXPECT_EQ(NULL, zinfo->clone_zv);
 }
 
@@ -1622,15 +1647,20 @@ send_hdr_again:
 	if (rebuild_test_case == 5)
 		goto send_hdr_again;
 
-next_step:
+	offset = 0;
 
+next_step:
 	bzero(&hdr, sizeof (hdr));
 	hdr.status = ZVOL_OP_STATUS_OK;
 	hdr.version = REPLICA_VERSION;
 	hdr.opcode = ZVOL_OPCODE_REBUILD_STEP;
 	hdr.io_seq = checkpointed_ionum;
-	hdr.offset = 0;
-	hdr.len = zvol_rebuild_step_size;
+	hdr.offset = offset;
+	if ((offset + zvol_rebuild_step_size) >
+	    ZVOL_VOLUME_SIZE(zvol_state))
+		hdr.len = ZVOL_VOLUME_SIZE(zvol_state) - offset;
+	else
+		hdr.len = zvol_rebuild_step_size;
 
 	if (rebuild_test_case == 6) {
 		hdr.offset = -1;
@@ -1659,6 +1689,17 @@ next_step:
 		rc = 0;
 		LOG_INFO("Rebuilding zvol %s completed", zinfo->name);
 		goto exit;
+	} else if (rebuild_test_case == 12) {
+	    	if (offset >= ZVOL_VOLUME_SIZE(zvol_state))
+			hdr.opcode = ZVOL_OPCODE_REBUILD_COMPLETE;
+		rc = uzfs_zvol_socket_write(sfd, (char *)&hdr, sizeof (hdr));
+		if (rc != 0) {
+			goto exit;
+		}
+	    	if (offset >= ZVOL_VOLUME_SIZE(zvol_state)) {
+			LOG_INFO("Rebuilding zvol %s completed", zinfo->name);
+			goto exit;
+		}
 	}
 
 	while (1) {
@@ -1706,6 +1747,27 @@ next_step:
 			offset += zvol_rebuild_step_size;
 			LOG_DEBUG("ZVOL_OPCODE_REBUILD_STEP_DONE received");
 			goto next_step;
+		}
+
+		if (hdr.opcode == ZVOL_OPCODE_REBUILD_SNAP_DONE) {
+			LOG_INFO("ZVOL_OPCODE_REBUILD_SNAP_DONE received");
+			//offset += zvol_rebuild_step_size;
+			VERIFY(offset >= ZVOL_VOLUME_SIZE(zvol_state));
+			offset = 0;
+			rc = uzfs_zvol_handle_rebuild_snap_done(&hdr, sfd,
+			    zinfo);
+			checkpointed_ionum = hdr.io_seq - 1;
+			goto next_step;
+		}
+
+		if (hdr.opcode == ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE) {
+			if (uzfs_zvol_get_rebuild_status(zinfo->main_zv) !=
+			    ZVOL_REBUILDING_AFS) {
+				uzfs_zvol_set_rebuild_status(zinfo->main_zv,
+				    ZVOL_REBUILDING_AFS);
+				uzfs_zinfo_rebuild_from_clone(zinfo);
+			}
+			continue;
 		}
 
 		ASSERT((hdr.opcode == ZVOL_OPCODE_READ) &&
@@ -1769,7 +1831,17 @@ exit:
 	/* Parent thread have taken refcount, drop it now */
 	uzfs_zinfo_drop_refcnt(zinfo);
 
-	rebuild_test_case = 0;
+	done_thread_count++;
+	if (rebuild_test_case == 12) {
+		if (done_thread_count == 2) {
+			uzfs_zvol_store_kv_pair(zinfo2->clone_zv, (char *)STALE, 1);
+			uzfs_zinfo_destroy_internal_clone(zinfo2);
+			rebuild_test_case = 0;
+		}
+	} else {
+		rebuild_test_case = 0;
+	}
+
 	zk_thread_exit();
 }
 
@@ -2156,7 +2228,7 @@ TEST(uZFSRebuild, TestRebuildComplete) {
 	uzfs_zvol_set_rebuild_status(zv, ZVOL_REBUILDING_INIT);
 	do_data_connection(data_conn_fd, "127.0.0.1", IO_SERVER_PORT, "vol1");
 	EXPECT_EQ(NULL, !zinfo->clone_zv);
-	EXPECT_EQ(NULL, !zinfo->snap_zv);
+	EXPECT_EQ(NULL, !zinfo->snapshot_zv);
 	/*
 	 * thread helping rebuild will exit after writing
 	 * valid write IO and REBUILD_STEP_DONE, and reads
@@ -2173,7 +2245,7 @@ TEST(uZFSRebuild, TestRebuildComplete) {
 	sleep(5);
 
 	EXPECT_EQ(NULL, zinfo->clone_zv);
-	EXPECT_EQ(NULL, zinfo->snap_zv);
+	EXPECT_EQ(NULL, zinfo->snapshot_zv);
 	memset(&zinfo->main_zv->rebuild_info, 0, sizeof (zvol_rebuild_info_t));
 }
 
@@ -2213,6 +2285,7 @@ TEST(uZFSRebuild, TestRebuildSnapDoneFailureWrongSnapName) {
 	execute_rebuild_test_case("rebuild snap_done wrong snapname", 10,
 	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
 }
+
 #if 0
 /*
  * TODO: Since we have removed volume name check from
@@ -2232,6 +2305,7 @@ TEST(uZFSRebuild, TestRebuildSnapDoneFailureWrongVolName) {
 	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
 }
 #endif
+
 TEST(uZFSRebuild, TestRebuildSnapDoneSuccess) {
 	rebuild_scanner = &uzfs_mock_rebuild_scanner_snap_rebuild_related;
 	dw_replica_fn = &uzfs_zvol_rebuild_dw_replica;
@@ -2255,6 +2329,7 @@ TEST(uZFSRebuild, TestRebuildSnapDoneAllSuccess) {
 TEST(RebuildScanner, AbruptClose) {
 	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
 	dw_replica_fn = &uzfs_mock_zvol_rebuild_dw_replica;
+	io_receiver = &uzfs_zvol_io_receiver;
 	zvol_rebuild_step_size = (1024ULL * 1024ULL * 100);
 	zinfo2->state = ZVOL_INFO_STATE_ONLINE;
 
@@ -2326,6 +2401,27 @@ TEST(RebuildScanner, ShutdownRebuildFd) {
 	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
 }
 
+TEST(RebuildScanner, RebuildSuccessWithAFS) {
+	uzfs_zvol_set_rebuild_status(zv2, ZVOL_REBUILDING_INIT);
+	do_data_connection(data_conn_fd, "127.0.0.1", IO_SERVER_PORT, "vol3");
+	zvol_rebuild_step_size = (1024ULL * 1024ULL * 100);
+
+#if DEBUG
+	inject_error.delay.helping_replica_rebuild_complete = 1;
+#endif
+	/* Rebuild thread sending complete opcode */
+	execute_rebuild_test_case("complete rebuild", 12,
+	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_DONE);
+	EXPECT_EQ(ZVOL_STATUS_HEALTHY, uzfs_zvol_get_status(zinfo->main_zv));
+#if DEBUG
+	sleep(10);
+	inject_error.delay.helping_replica_rebuild_complete = 0;
+#endif
+	memset(&zinfo->main_zv->rebuild_info, 0, sizeof (zvol_rebuild_info_t));
+	close(data_conn_fd);
+	data_conn_fd = -1;
+}
+
 TEST(RebuildScanner, RebuildSuccess) {
 	uzfs_zvol_set_rebuild_status(zv2, ZVOL_REBUILDING_INIT);
 	do_data_connection(data_conn_fd, "127.0.0.1", IO_SERVER_PORT, "vol3");
@@ -2336,6 +2432,8 @@ TEST(RebuildScanner, RebuildSuccess) {
 	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_DONE);
 	EXPECT_EQ(ZVOL_STATUS_HEALTHY, uzfs_zvol_get_status(zinfo->main_zv));
 	memset(&zinfo->main_zv->rebuild_info, 0, sizeof (zvol_rebuild_info_t));
+	close(data_conn_fd);
+	data_conn_fd = -1;
 }
 
 TEST(Misc, DelayWriteAndBreakConn) {

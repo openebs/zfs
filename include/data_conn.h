@@ -47,9 +47,11 @@ typedef struct conn_acceptors {
 
 thread_func_t io_receiver;
 thread_func_t rebuild_scanner;
+thread_func_t dw_replica_fn;
 
 extern void (*io_receiver)(void *arg);
 extern void (*rebuild_scanner)(void *arg);
+extern void (*dw_replica_fn)(void *arg);
 
 extern void uzfs_zvol_io_receiver(void *);
 
@@ -75,10 +77,11 @@ int uzfs_zvol_create_internal_snapshot(zvol_state_t *zv, zvol_state_t **snap_zv,
     uint64_t io_num);
 
 void signal_fds_related_to_zinfo(zvol_info_t *zinfo);
-void quiesce_wait(zvol_info_t *zinfo, uint8_t delete_clone);
+void quiesce_wait(zvol_info_t *zinfo);
 
 int uzfs_zvol_create_internal_snapshot(zvol_state_t *zv, zvol_state_t **snap_zv,
     uint64_t io_num);
+int uzfs_zvol_handle_rebuild_snap_done(zvol_io_hdr_t *, int, zvol_info_t *);
 
 #ifdef __cplusplus
 }

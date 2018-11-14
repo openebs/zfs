@@ -5129,6 +5129,7 @@ zfs_ioc_inject_list_next(zfs_cmd_t *zc)
 
 	return (error);
 }
+#endif // _KERNEL
 
 static int
 zfs_ioc_error_log(zfs_cmd_t *zc)
@@ -5152,6 +5153,7 @@ zfs_ioc_error_log(zfs_cmd_t *zc)
 	return (error);
 }
 
+#if defined(_KERNEL)
 static int
 zfs_ioc_clear(zfs_cmd_t *zc)
 {
@@ -7341,6 +7343,12 @@ uzfs_handle_ioctl(const char *pool, zfs_cmd_t *zc, uzfs_info_t *ucmd_info)
 		nvlist_free(outnvl);
 		break;
 	}
+	case ZFS_IOC_ERROR_LOG:
+		err = zfs_ioc_error_log(zc);
+		break;
+	default:
+		fprintf(stderr, "ioctl(%ld) not supported!", uzfs_cmd->ioc_num);
+		break;
 	}
 
 	nvlist_free(innvl);

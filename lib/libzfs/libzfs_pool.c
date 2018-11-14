@@ -2633,7 +2633,7 @@ zpool_vdev_fault(zpool_handle_t *zhp, uint64_t guid, vdev_aux_t aux)
 	zc.zc_cookie = VDEV_STATE_FAULTED;
 	zc.zc_obj = aux;
 
-	if (ioctl(hdl->libzfs_fd, ZFS_IOC_VDEV_SET_STATE, &zc) == 0)
+	if (uzfs_ioctl(hdl->libzfs_fd, ZFS_IOC_VDEV_SET_STATE, &zc) == 0)
 		return (0);
 
 	switch (errno) {
@@ -2668,7 +2668,7 @@ zpool_vdev_degrade(zpool_handle_t *zhp, uint64_t guid, vdev_aux_t aux)
 	zc.zc_cookie = VDEV_STATE_DEGRADED;
 	zc.zc_obj = aux;
 
-	if (ioctl(hdl->libzfs_fd, ZFS_IOC_VDEV_SET_STATE, &zc) == 0)
+	if (uzfs_ioctl(hdl->libzfs_fd, ZFS_IOC_VDEV_SET_STATE, &zc) == 0)
 		return (0);
 
 	return (zpool_standard_error(hdl, errno, msg));
@@ -3314,7 +3314,7 @@ zpool_vdev_clear(zpool_handle_t *zhp, uint64_t guid)
 	zc.zc_guid = guid;
 	zc.zc_cookie = ZPOOL_NO_REWIND;
 
-	if (ioctl(hdl->libzfs_fd, ZFS_IOC_CLEAR, &zc) == 0)
+	if (uzfs_ioctl(hdl->libzfs_fd, ZFS_IOC_CLEAR, &zc) == 0)
 		return (0);
 
 	return (zpool_standard_error(hdl, errno, msg));
@@ -3457,7 +3457,7 @@ set_path(zpool_handle_t *zhp, nvlist_t *nv, const char *path)
 	verify(nvlist_lookup_uint64(nv, ZPOOL_CONFIG_GUID,
 	    &zc.zc_guid) == 0);
 
-	(void) ioctl(zhp->zpool_hdl->libzfs_fd, ZFS_IOC_VDEV_SETPATH, &zc);
+	(void) uzfs_ioctl(zhp->zpool_hdl->libzfs_fd, ZFS_IOC_VDEV_SETPATH, &zc);
 }
 #endif /* sun */
 
@@ -3727,7 +3727,7 @@ zpool_get_errlog(zpool_handle_t *zhp, nvlist_t **nverrlistp)
 	zc.zc_nvlist_dst_size = count;
 	(void) strcpy(zc.zc_name, zhp->zpool_name);
 	for (;;) {
-		if (ioctl(zhp->zpool_hdl->libzfs_fd, ZFS_IOC_ERROR_LOG,
+		if (uzfs_ioctl(zhp->zpool_hdl->libzfs_fd, ZFS_IOC_ERROR_LOG,
 		    &zc) != 0) {
 			free((void *)(uintptr_t)zc.zc_nvlist_dst);
 			if (errno == ENOMEM) {
@@ -4149,7 +4149,7 @@ zpool_obj_to_path(zpool_handle_t *zhp, uint64_t dsobj, uint64_t obj,
 	/* get the dataset's name */
 	(void) strlcpy(zc.zc_name, zhp->zpool_name, sizeof (zc.zc_name));
 	zc.zc_obj = dsobj;
-	if (ioctl(zhp->zpool_hdl->libzfs_fd,
+	if (uzfs_ioctl(zhp->zpool_hdl->libzfs_fd,
 	    ZFS_IOC_DSOBJ_TO_DSNAME, &zc) != 0) {
 		/* just write out a path of two object numbers */
 		(void) snprintf(pathname, len, "<0x%llx>:<0x%llx>",
@@ -4164,7 +4164,7 @@ zpool_obj_to_path(zpool_handle_t *zhp, uint64_t dsobj, uint64_t obj,
 	/* get the corrupted object's path */
 	(void) strlcpy(zc.zc_name, dsname, sizeof (zc.zc_name));
 	zc.zc_obj = obj;
-	if (ioctl(zhp->zpool_hdl->libzfs_fd, ZFS_IOC_OBJ_TO_PATH,
+	if (uzfs_ioctl(zhp->zpool_hdl->libzfs_fd, ZFS_IOC_OBJ_TO_PATH,
 	    &zc) == 0) {
 		if (mounted) {
 			(void) snprintf(pathname, len, "%s%s", mntpnt,

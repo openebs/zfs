@@ -69,7 +69,7 @@ bookmark_to_name(zbookmark_phys_t *zb, char *buf, size_t len)
 /*
  * Convert a string to a bookmark
  */
-#ifdef _KERNEL
+#if defined(_KERNEL) || defined(_UZFS)
 static void
 name_to_bookmark(char *buf, zbookmark_phys_t *zb)
 {
@@ -159,7 +159,7 @@ spa_get_errlog_size(spa_t *spa)
 	return (total);
 }
 
-#ifdef _KERNEL
+#if defined(_KERNEL) || defined(_UZFS)
 static int
 process_error_log(spa_t *spa, uint64_t obj, void *addr, size_t *count)
 {
@@ -180,13 +180,19 @@ process_error_log(spa_t *spa, uint64_t obj, void *addr, size_t *count)
 		}
 
 		name_to_bookmark(za.za_name, &zb);
-
+#ifdef _UZFS
+		memcpy((char *)addr + (*count - 1) * sizeof (zbookmark_phys_t),
+		    &zb, sizeof (zbookmark_phys_t));
+#else
+#ifdef _KERNEL
 		if (copyout(&zb, (char *)addr +
 		    (*count - 1) * sizeof (zbookmark_phys_t),
 		    sizeof (zbookmark_phys_t)) != 0) {
 			zap_cursor_fini(&zc);
 			return (SET_ERROR(EFAULT));
 		}
+#endif
+#endif
 
 		*count -= 1;
 	}
@@ -205,12 +211,17 @@ process_error_list(avl_tree_t *list, void *addr, size_t *count)
 
 		if (*count == 0)
 			return (SET_ERROR(ENOMEM));
-
+#ifdef _UZFS
+		memcpy((char *)addr + (*count - 1) * sizeof (zbookmark_phys_t),
+		    &se->se_bookmark, sizeof (zbookmark_phys_t));
+#else
+#ifdef _KERNEL
 		if (copyout(&se->se_bookmark, (char *)addr +
 		    (*count - 1) * sizeof (zbookmark_phys_t),
 		    sizeof (zbookmark_phys_t)) != 0)
 			return (SET_ERROR(EFAULT));
-
+#endif
+#endif
 		*count -= 1;
 	}
 
@@ -234,7 +245,7 @@ spa_get_errlog(spa_t *spa, void *uaddr, size_t *count)
 {
 	int ret = 0;
 
-#ifdef _KERNEL
+#if defined(_KERNEL) || defined(_UZFS)
 	mutex_enter(&spa->spa_errlog_lock);
 
 	ret = process_error_log(spa, spa->spa_errlog_scrub, uaddr, count);

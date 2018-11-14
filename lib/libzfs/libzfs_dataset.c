@@ -346,7 +346,8 @@ get_recvd_props_ioctl(zfs_handle_t *zhp)
 
 	(void) strlcpy(zc.zc_name, zhp->zfs_name, sizeof (zc.zc_name));
 
-	while (uzfs_ioctl(hdl->libzfs_fd, ZFS_IOC_OBJSET_RECVD_PROPS, &zc) != 0) {
+	while (uzfs_ioctl(hdl->libzfs_fd, ZFS_IOC_OBJSET_RECVD_PROPS,
+	    &zc) != 0) {
 		if (errno == ENOMEM) {
 			if (zcmd_expand_dst_nvlist(hdl, &zc) != 0) {
 				return (-1);

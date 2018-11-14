@@ -8035,7 +8035,8 @@ main(int argc, char **argv)
 		char buf[16384];
 		int fd = open(ZFS_DEV, O_RDWR);
 		(void) strlcpy((void *)buf, argv[2], sizeof (buf));
-		return (!!uzfs_ioctl(fd, ZFS_IOC_POOL_FREEZE, (zfs_cmd_t *)buf));
+		return (!!uzfs_ioctl(fd, ZFS_IOC_POOL_FREEZE,
+		    (zfs_cmd_t *)buf));
 	} else {
 		(void) fprintf(stderr, gettext("unrecognized "
 		    "command '%s'\n"), cmdname);

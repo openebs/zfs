@@ -5129,7 +5129,7 @@ zfs_ioc_inject_list_next(zfs_cmd_t *zc)
 
 	return (error);
 }
-#endif //_KERNEL
+#endif // _KERNEL
 
 static int
 zfs_ioc_error_log(zfs_cmd_t *zc)

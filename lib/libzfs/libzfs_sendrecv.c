@@ -3480,8 +3480,8 @@ zfs_receive_one(libzfs_handle_t *hdl, int infd, const char *tosnap,
 				err = zfs_error(hdl, EZFS_EXISTS, errbuf);
 				goto out;
 			}
-			if (uzfs_ioctl(hdl->libzfs_fd, ZFS_IOC_SNAPSHOT_LIST_NEXT,
-			    &zc) == 0) {
+			if (uzfs_ioctl(hdl->libzfs_fd,
+			    ZFS_IOC_SNAPSHOT_LIST_NEXT, &zc) == 0) {
 				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
 				    "destination has snapshots (eg. %s)\n"
 				    "must destroy them to overwrite it"),

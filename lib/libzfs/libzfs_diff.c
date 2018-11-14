@@ -93,7 +93,8 @@ get_stats_for_obj(differ_info_t *di, const char *dsname, uint64_t obj,
 	zc.zc_obj = obj;
 
 	errno = 0;
-	error = uzfs_ioctl(di->zhp->zfs_hdl->libzfs_fd, ZFS_IOC_OBJ_TO_STATS, &zc);
+	error = uzfs_ioctl(di->zhp->zfs_hdl->libzfs_fd,
+	    ZFS_IOC_OBJ_TO_STATS, &zc);
 	di->zerr = errno;
 
 	/* we can get stats even if we failed to get a path */

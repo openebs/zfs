@@ -467,7 +467,7 @@ verify_rebuild_io(int rebuild_fd, zvol_info_t *zinfo)
 	uzfs_read_data(zinfo->main_zv, read_buf, rebuild_hdr.offset, rw_hdr->len, &md);
 	EXPECT_EQ(NULL, md->next);
 	EXPECT_EQ(md->metadata.io_num, rw_hdr->io_num);
-	EXPECT_EQ(memcmp(write_buf, read_buf, rw_hdr->len, 0);
+	EXPECT_EQ(memcmp(write_buf, read_buf, rw_hdr->len), 0);
 	FREE_METADATA_LIST(md);
 
         free(send_buf);

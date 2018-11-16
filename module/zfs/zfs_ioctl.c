@@ -7351,6 +7351,7 @@ uzfs_handle_ioctl(const char *pool, zfs_cmd_t *zc, uzfs_info_t *ucmd_info)
 		err = uzfs_ioc_stats(zc, outnvl);
 		if (err == 0)
 			err = put_nvlist(zc, outnvl);
+		nvlist_free(outnvl);
 		break;
 	}
 	default:

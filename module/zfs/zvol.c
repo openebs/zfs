@@ -327,6 +327,22 @@ zvol_create_cb(objset_t *os, void *arg, cred_t *cr, dmu_tx_t *tx)
 #endif
 }
 
+int uzfs_ioc_stats(zfs_cmd_t *zc, nvlist_t *nvl)
+{
+	zvol_info_t *zv = NULL;
+
+	(void) mutex_enter(&zvol_list_mutex);
+	SLIST_FOREACH(zv, &zvol_list, zinfo_next) {
+		if (zc->zc_name[0] == '\0' ||
+		    (uzfs_zvol_name_compare(zv, zc->zc_name) == 0)) {
+			fnvlist_add_uint64(nvl, zv->name, ZVOL_IS_REBUILDING(zv->main_zv));
+		}
+	}
+	(void) mutex_exit(&zvol_list_mutex);
+
+	return (0);
+}
+
 /*
  * ZFS_IOC_OBJSET_STATS entry point.
  */

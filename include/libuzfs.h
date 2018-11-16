@@ -83,6 +83,7 @@ extern int libuzfs_client_init(libzfs_handle_t *g_zfs);
 extern int uzfs_recv_response(int fd, zfs_cmd_t *zc);
 extern int uzfs_client_init(const char *sock_path);
 extern int is_main_thread(void);
+int uzfs_ioc_stats(zfs_cmd_t *zc, nvlist_t *nvl);
 
 extern int do_sendfd(int sock, int fd);
 extern int do_recvfd(int sock);

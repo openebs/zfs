@@ -73,6 +73,7 @@
 #include "zfs_util.h"
 #include "zfs_comutil.h"
 #include "libzfs_impl.h"
+#include <json-c/json_object.h>
 
 libzfs_handle_t *g_zfs;
 
@@ -106,6 +107,7 @@ static int zfs_do_holds(int argc, char **argv);
 static int zfs_do_release(int argc, char **argv);
 static int zfs_do_diff(int argc, char **argv);
 static int zfs_do_bookmark(int argc, char **argv);
+static int zfs_do_stats(int argc, char **argv);
 
 /*
  * Enable a reasonable set of defaults for libumem debugging on DEBUG builds.
@@ -153,6 +155,7 @@ typedef enum {
 	HELP_RELEASE,
 	HELP_DIFF,
 	HELP_BOOKMARK,
+	HELP_STATS,
 } zfs_help_t;
 
 typedef struct zfs_command {
@@ -206,6 +209,7 @@ static zfs_command_t command_table[] = {
 	{ "holds",	zfs_do_holds,		HELP_HOLDS		},
 	{ "release",	zfs_do_release,		HELP_RELEASE		},
 	{ "diff",	zfs_do_diff,		HELP_DIFF		},
+	{ "stats",	zfs_do_stats,		HELP_STATS		},
 };
 
 #define	NCOMMAND	(sizeof (command_table) / sizeof (command_table[0]))
@@ -326,6 +330,8 @@ get_usage(zfs_help_t idx)
 		    "[snapshot|filesystem]\n"));
 	case HELP_BOOKMARK:
 		return (gettext("\tbookmark <snapshot> <bookmark>\n"));
+	case HELP_STATS:
+		return (gettext("\tstats <dataset>\n"));
 	}
 
 	abort();
@@ -7034,6 +7040,51 @@ zfs_do_bookmark(int argc, char **argv)
 usage:
 	usage(B_FALSE);
 	return (-1);
+}
+
+int
+zfs_do_stats(int argc, char **argv)
+{
+	nvlist_t *outnvl = NULL;
+	nvpair_t *elem = NULL;
+	uint64_t val;
+	struct json_object *jobj;
+
+	if (argc < 1) {
+		fprintf(stderr, "got stats command %d\n", argc);
+		usage(B_FALSE);
+		return (-1);
+	}
+	if (lzc_stats(argv[1], NULL, &outnvl) != 0) {
+		fprintf(stderr, "failed stats command for %s\n", argv[1]);
+		return (-1);
+	}
+
+	struct json_object *jarray = json_object_new_array();
+	while ((elem = nvlist_next_nvpair(outnvl, elem)) != NULL) {
+		switch (nvpair_type(elem)) {
+			case DATA_TYPE_UINT64:
+				nvpair_value_uint64(elem, &val);
+				jobj = json_object_new_object();
+				json_object_object_add(jobj, "name", json_object_new_string((nvpair_name(elem))));
+				json_object_object_add(jobj, "rebuild", json_object_new_string(val?"inprogress":"done"));
+				json_object_array_add(jarray, jobj);
+				break;
+			default:
+				fprintf(stderr, "nvpair type : %d name:%s\n",
+				    nvpair_type(elem), nvpair_name(elem));
+		}
+	}
+
+	jobj = json_object_new_object();
+	json_object_object_add(jobj, "status", jarray);
+        const char *json_string = json_object_to_json_string_ext(jobj,
+            JSON_C_TO_STRING_PLAIN);
+
+	fprintf(stderr, "json=%s\n", json_string);
+	json_object_put(jobj);
+
+	return (0);
 }
 
 int

@@ -95,6 +95,8 @@ int lzc_rollback_to(const char *, const char *);
 
 int lzc_sync(const char *, nvlist_t *, nvlist_t **);
 
+int lzc_stats(const char *dataset, nvlist_t *innvl, nvlist_t **outnvl);
+
 #ifdef	__cplusplus
 }
 #endif

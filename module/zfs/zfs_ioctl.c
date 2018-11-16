@@ -7354,7 +7354,8 @@ uzfs_handle_ioctl(const char *pool, zfs_cmd_t *zc, uzfs_info_t *ucmd_info)
 		break;
 	}
 	default:
-		fprintf(stderr, "ioctl(0x%lx) not supported!\n", uzfs_cmd->ioc_num);
+		fprintf(stderr, "ioctl(0x%lx) not supported!\n",
+		    uzfs_cmd->ioc_num);
 		break;
 	}
 

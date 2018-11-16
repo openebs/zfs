@@ -331,7 +331,7 @@ get_usage(zfs_help_t idx)
 	case HELP_BOOKMARK:
 		return (gettext("\tbookmark <snapshot> <bookmark>\n"));
 	case HELP_STATS:
-		return (gettext("\tstats <dataset>\n"));
+		return (gettext("\tstats [dataset]\n"));
 	}
 
 	abort();
@@ -7066,8 +7066,11 @@ zfs_do_stats(int argc, char **argv)
 			case DATA_TYPE_UINT64:
 				nvpair_value_uint64(elem, &val);
 				jobj = json_object_new_object();
-				json_object_object_add(jobj, "name", json_object_new_string((nvpair_name(elem))));
-				json_object_object_add(jobj, "rebuild", json_object_new_string(val?"inprogress":"done"));
+				json_object_object_add(jobj, "name",
+				    json_object_new_string(nvpair_name(elem)));
+				json_object_object_add(jobj, "rebuild",
+				    json_object_new_string(
+				    val ? "inprogress" : "done"));
 				json_object_array_add(jarray, jobj);
 				break;
 			default:
@@ -7078,10 +7081,10 @@ zfs_do_stats(int argc, char **argv)
 
 	jobj = json_object_new_object();
 	json_object_object_add(jobj, "status", jarray);
-        const char *json_string = json_object_to_json_string_ext(jobj,
-            JSON_C_TO_STRING_PLAIN);
+	const char *json_string = json_object_to_json_string_ext(jobj,
+	    JSON_C_TO_STRING_PLAIN);
 
-	fprintf(stderr, "json=%s\n", json_string);
+	fprintf(stdout, "%s\n", json_string);
 	json_object_put(jobj);
 
 	return (0);

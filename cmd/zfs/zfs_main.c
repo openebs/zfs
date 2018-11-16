@@ -7042,12 +7042,42 @@ usage:
 	return (-1);
 }
 
+static struct json_object *
+get_stats(nvlist_t *outnvl)
+{
+	nvpair_t *elem = NULL;
+	uint64_t val;
+	char *str_val;
+	struct json_object *jobj;
+
+	jobj = json_object_new_object();
+	while ((elem = nvlist_next_nvpair(outnvl, elem)) != NULL) {
+		switch (nvpair_type(elem)) {
+			case DATA_TYPE_UINT64:
+				nvpair_value_uint64(elem, &val);
+				json_object_object_add(jobj, nvpair_name(elem),
+				    json_object_new_int64(val));
+				break;
+			case DATA_TYPE_STRING:
+				nvpair_value_string(elem, &str_val);
+				json_object_object_add(jobj, nvpair_name(elem),
+				    json_object_new_string(str_val));
+				break;
+			default:
+				fprintf(stderr, "nvpair type : %d name:%s\n",
+				    nvpair_type(elem), nvpair_name(elem));
+				json_object_put(jobj);
+				return (NULL);
+		}
+	}
+	return (jobj);
+}
+
 int
 zfs_do_stats(int argc, char **argv)
 {
-	nvlist_t *outnvl = NULL;
+	nvlist_t *outnvl = NULL, *cnv = NULL;
 	nvpair_t *elem = NULL;
-	uint64_t val;
 	struct json_object *jobj;
 
 	if (argc < 1) {
@@ -7063,15 +7093,11 @@ zfs_do_stats(int argc, char **argv)
 	struct json_object *jarray = json_object_new_array();
 	while ((elem = nvlist_next_nvpair(outnvl, elem)) != NULL) {
 		switch (nvpair_type(elem)) {
-			case DATA_TYPE_UINT64:
-				nvpair_value_uint64(elem, &val);
-				jobj = json_object_new_object();
-				json_object_object_add(jobj, "name",
-				    json_object_new_string(nvpair_name(elem)));
-				json_object_object_add(jobj, "rebuild",
-				    json_object_new_string(
-				    val ? "inprogress" : "done"));
-				json_object_array_add(jarray, jobj);
+			case DATA_TYPE_NVLIST:
+				(void) nvpair_value_nvlist(elem, &cnv);
+				jobj = get_stats(cnv);
+				if (jobj)
+					json_object_array_add(jarray, jobj);
 				break;
 			default:
 				fprintf(stderr, "nvpair type : %d name:%s\n",
@@ -7080,7 +7106,7 @@ zfs_do_stats(int argc, char **argv)
 	}
 
 	jobj = json_object_new_object();
-	json_object_object_add(jobj, "status", jarray);
+	json_object_object_add(jobj, "stats", jarray);
 	const char *json_string = json_object_to_json_string_ext(jobj,
 	    JSON_C_TO_STRING_PLAIN);
 

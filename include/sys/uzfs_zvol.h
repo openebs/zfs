@@ -114,6 +114,7 @@ typedef struct zvol_state zvol_state_t;
 	(zv->rebuild_info.zv_rebuild_status == ZVOL_REBUILDING_FAILED)
 
 extern int zvol_get_data(void *arg, lr_write_t *lr, char *buf, zio_t *zio);
+const char *rebuild_status_to_str(zvol_rebuild_status_t status);
 
 /*
  * writes data and metadata

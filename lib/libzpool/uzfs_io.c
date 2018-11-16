@@ -367,7 +367,7 @@ zvol_status_to_str(zvol_status_t status)
 	return ("UNKNOWN");
 }
 
-static const char *
+const char *
 rebuild_status_to_str(zvol_rebuild_status_t status)
 {
 	switch (status) {

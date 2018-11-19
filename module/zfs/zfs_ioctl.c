@@ -7346,8 +7346,17 @@ uzfs_handle_ioctl(const char *pool, zfs_cmd_t *zc, uzfs_info_t *ucmd_info)
 	case ZFS_IOC_ERROR_LOG:
 		err = zfs_ioc_error_log(zc);
 		break;
+	case ZFS_IOC_STATS: {
+		nvlist_t *outnvl = fnvlist_alloc();
+		err = uzfs_ioc_stats(zc, outnvl);
+		if (err == 0)
+			err = put_nvlist(zc, outnvl);
+		nvlist_free(outnvl);
+		break;
+	}
 	default:
-		fprintf(stderr, "ioctl(%ld) not supported!", uzfs_cmd->ioc_num);
+		fprintf(stderr, "ioctl(0x%lx) not supported!\n",
+		    uzfs_cmd->ioc_num);
 		break;
 	}
 

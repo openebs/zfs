@@ -327,6 +327,60 @@ zvol_create_cb(objset_t *os, void *arg, cred_t *cr, dmu_tx_t *tx)
 #endif
 }
 
+#if !defined(_KERNEL)
+int
+uzfs_ioc_stats(zfs_cmd_t *zc, nvlist_t *nvl)
+{
+	zvol_info_t *zv = NULL;
+
+	(void) mutex_enter(&zvol_list_mutex);
+	SLIST_FOREACH(zv, &zvol_list, zinfo_next) {
+		if (zc->zc_name[0] == '\0' ||
+		    (uzfs_zvol_name_compare(zv, zc->zc_name) == 0)) {
+			nvlist_t *innvl = fnvlist_alloc();
+
+			fnvlist_add_string(innvl, "name", zv->name);
+
+			fnvlist_add_string(innvl, "status",
+			    ZINFO_IS_HEALTHY(zv) ?
+			    "healthy" : "degraded");
+
+			fnvlist_add_string(innvl, "rebuild",
+			    rebuild_status_to_str(
+			    zv->main_zv->rebuild_info.zv_rebuild_status));
+
+			fnvlist_add_uint64(innvl, "is_io_ack_sender_created",
+			    zv->is_io_ack_sender_created);
+			fnvlist_add_uint64(innvl, "is_io_receiver_created",
+			    zv->is_io_receiver_created);
+			fnvlist_add_uint64(innvl, "running_ionum",
+			    zv->running_ionum);
+			fnvlist_add_uint64(innvl, "checkpointed_ionum",
+			    zv->checkpointed_ionum);
+			fnvlist_add_uint64(innvl, "degraded_checkpointed_ionum",
+			    zv->degraded_checkpointed_ionum);
+			fnvlist_add_uint64(innvl, "checkpointed_time",
+			    zv->checkpointed_time);
+
+			fnvlist_add_uint64(innvl, "rebuild_bytes",
+			    zv->main_zv->rebuild_info.rebuild_bytes);
+			fnvlist_add_uint64(innvl, "rebuild_cnt",
+			    zv->main_zv->rebuild_info.rebuild_cnt);
+			fnvlist_add_uint64(innvl, "rebuild_done_cnt",
+			    zv->main_zv->rebuild_info.rebuild_done_cnt);
+			fnvlist_add_uint64(innvl, "rebuild_failed_cnt",
+			    zv->main_zv->rebuild_info.rebuild_failed_cnt);
+
+			fnvlist_add_nvlist(nvl, zv->name, innvl);
+			fnvlist_free(innvl);
+		}
+	}
+	(void) mutex_exit(&zvol_list_mutex);
+
+	return (0);
+}
+#endif
+
 /*
  * ZFS_IOC_OBJSET_STATS entry point.
  */

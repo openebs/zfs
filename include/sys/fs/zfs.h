@@ -1062,6 +1062,7 @@ typedef enum zfs_ioc {
 	ZFS_IOC_DESTROY_BOOKMARKS,
 	ZFS_IOC_RECV_NEW,
 	ZFS_IOC_POOL_SYNC,
+	ZFS_IOC_STATS,
 
 	/*
 	 * Linux - 3/64 numbers reserved.

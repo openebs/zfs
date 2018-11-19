@@ -400,6 +400,12 @@ lzc_sync(const char *pool_name, nvlist_t *innvl, nvlist_t **outnvl)
 	return (lzc_ioctl(ZFS_IOC_POOL_SYNC, pool_name, innvl, NULL));
 }
 
+int
+lzc_stats(const char *dataset, nvlist_t *innvl, nvlist_t **outnvl)
+{
+	return (lzc_ioctl(ZFS_IOC_STATS, dataset, NULL, outnvl));
+}
+
 /*
  * Create "user holds" on snapshots.  If there is a hold on a snapshot,
  * the snapshot can not be destroyed.  (However, it can be marked for deletion

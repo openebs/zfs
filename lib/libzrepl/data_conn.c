@@ -486,6 +486,7 @@ uzfs_zvol_handle_rebuild_snap_done(zvol_io_hdr_t *hdrp,
 	int rc = 0;
 	char *snap;
 	char zvol_name[MAX_NAME_LEN + 1];
+	char *local_vol = NULL, *remote_vol = NULL;
 
 	if (hdrp->len == 0 || hdrp->len > MAX_NAME_LEN) {
 		LOG_ERR("Unexpected hdr.len:%ld on volume: %s",
@@ -506,7 +507,16 @@ uzfs_zvol_handle_rebuild_snap_done(zvol_io_hdr_t *hdrp,
 	*snap++ = '\0';
 
 #if !defined(DEBUG)
-	if (strcmp(zinfo->name, zvol_name) != 0) {
+	local_vol = strchr(zinfo->name, '/');
+	remote_vol = strchr(zvol_name, '/');
+
+	if (local_vol == NULL || remote_vol == NULL) {
+		LOG_ERR("Invalid volume name, Received name: %s, Expected:%s",
+		    zvol_name, zinfo->name);
+		return (rc = -1);
+	}
+
+	if (strcmp(local_vol + 1, remote_vol + 1) != 0) {
 		LOG_ERR("Wrong volume, Received name: %s, Expected:%s",
 		    zvol_name, zinfo->name);
 		return (rc = -1);

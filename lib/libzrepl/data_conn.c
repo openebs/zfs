@@ -486,7 +486,9 @@ uzfs_zvol_handle_rebuild_snap_done(zvol_io_hdr_t *hdrp,
 	int rc = 0;
 	char *snap;
 	char zvol_name[MAX_NAME_LEN + 1];
+#if !defined(DEBUG)
 	char *local_vol = NULL, *remote_vol = NULL;
+#endif
 
 	if (hdrp->len == 0 || hdrp->len > MAX_NAME_LEN) {
 		LOG_ERR("Unexpected hdr.len:%ld on volume: %s",

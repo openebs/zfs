@@ -73,6 +73,7 @@ script:
         export FIO_SRCDIR=$PWD/../fio;
         sudo bash ./print_debug_info.sh &
         sudo bash ./tests/cbtest/script/test_uzfs.sh -T all || travis_terminate 1;
+        ./build_image.sh || travis_terminate 1;
       else
         sudo /sbin/modprobe zfs;
         travis_wait 10 /sbin/ztest || travis_terminate 1;
@@ -80,6 +81,5 @@ script:
 after_failure:
     - find /var/tmp/test_results/current/log -type f -name '*' -printf "%f\n" -exec cut -c -$ZFS_TEST_TRAVIS_LOG_MAX_LENGTH {} \;
 after_success:
-    - if [ $ZFS_BUILD_TAGS = 0 ]; then ./build_image.sh; fi
     - find /var/tmp/test_results/current/log -type f -name '*' -printf "%f\n" -exec cut -c -$ZFS_TEST_TRAVIS_LOG_MAX_LENGTH {} \;
     - bash <(curl -s https://codecov.io/bash)

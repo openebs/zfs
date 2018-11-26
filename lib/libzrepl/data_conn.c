@@ -828,6 +828,8 @@ exit:
 	 * to disk before making further progress
 	 */
 	if (wquiesce) {
+		uzfs_zvol_store_kv_pair(zinfo->clone_zv, STALE, 1);
+
 		mutex_enter(&zinfo->main_zv->rebuild_mtx);
 		/* Mark replica healthy now */
 		uzfs_zvol_set_rebuild_status(zinfo->main_zv,
@@ -845,10 +847,8 @@ exit:
 		zinfo->quiesce_requested = 1;
 		quiesce_wait(zinfo);
 
-		uzfs_zvol_store_kv_pair(zinfo->clone_zv, STALE, 1);
 		/* This is to make sure that above kv is synced */
 		txg_wait_synced(spa_get_dsl(zinfo->main_zv->zv_spa), 0);
-
 	}
 
 	kmem_free(arg, sizeof (rebuild_thread_arg_t));

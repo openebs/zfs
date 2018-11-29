@@ -31,6 +31,7 @@
 #include <arpa/inet.h>
 
 #include <sys/dsl_destroy.h>
+#include <sys/dsl_dir.h>
 #include <uzfs_io.h>
 #include <uzfs_rebuilding.h>
 #include <zrepl_mgmt.h>
@@ -829,6 +830,9 @@ exit:
 	 */
 	if (wquiesce) {
 		uzfs_zvol_store_kv_pair(zinfo->clone_zv, STALE, 1);
+
+		VERIFY0(dsl_dataset_set_quorum(zinfo->main_zv->zv_name,
+		    ZPROP_SRC_LOCAL, 1));
 
 		mutex_enter(&zinfo->main_zv->rebuild_mtx);
 		/* Mark replica healthy now */

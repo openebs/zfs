@@ -350,6 +350,9 @@ zfs_prop_init(void)
 	zprop_register_index(ZFS_PROP_CANMOUNT, "canmount", ZFS_CANMOUNT_ON,
 	    PROP_DEFAULT, ZFS_TYPE_FILESYSTEM, "on | off | noauto",
 	    "CANMOUNT", canmount_table);
+	zprop_register_index(ZFS_PROP_QUORUM, "quorum", 0, PROP_INHERIT,
+	    ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME, "on | off", "QUORUM",
+	    boolean_table);
 
 	/* readonly index (boolean) properties */
 	zprop_register_index(ZFS_PROP_MOUNTED, "mounted", 0, PROP_READONLY,

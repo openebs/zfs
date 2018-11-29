@@ -1664,6 +1664,50 @@ dsl_dir_set_reservation(const char *ddname, zprop_source_t source,
 	return (dsl_sync_task(ddname, dsl_dir_set_reservation_check,
 	    dsl_dir_set_reservation_sync, &ddsqra, 0, ZFS_SPACE_CHECK_NONE));
 }
+static void
+dsl_dir_set_quorum_sync(void *arg, dmu_tx_t *tx)
+{
+	dsl_dir_set_qr_arg_t *ddsqra = arg;
+	dsl_pool_t *dp = dmu_tx_pool(tx);
+	dsl_dataset_t *ds;
+
+	VERIFY0(dsl_dataset_hold(dp, ddsqra->ddsqra_name, FTAG, &ds));
+
+	dsl_prop_set_sync_impl(ds, zfs_prop_to_name(ZFS_PROP_QUORUM),
+	    ddsqra->ddsqra_source, sizeof (ddsqra->ddsqra_value), 1,
+	    &ddsqra->ddsqra_value, tx);
+
+	dsl_dataset_rele(ds, FTAG);
+}
+
+int
+dsl_dataset_set_quorum(const char *ddname, zprop_source_t source,
+    uint64_t val)
+{
+	dsl_dir_set_qr_arg_t ddsqra;
+
+	ddsqra.ddsqra_name = ddname;
+	ddsqra.ddsqra_source = source;
+	ddsqra.ddsqra_value = val;
+
+	uint64_t quorum = 0;
+	int error;
+
+	if ((error = dsl_prop_get_integer(ddname,
+	    zfs_prop_to_name(ZFS_PROP_QUORUM), &quorum, NULL))) {
+		return (error);
+	}
+
+	if ((quorum != val) &&
+	    (quorum != B_FALSE || val != B_TRUE)) {
+		fprintf(stderr, "setting of quorum is not"
+		    "allowed (%lu->%lu)\n", quorum, val);
+		return (EPERM);
+	}
+
+	return (dsl_sync_task(ddname, NULL, dsl_dir_set_quorum_sync,
+	    &ddsqra, 0, ZFS_SPACE_CHECK_NONE));
+}
 
 static dsl_dir_t *
 closest_common_ancestor(dsl_dir_t *ds1, dsl_dir_t *ds2)

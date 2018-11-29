@@ -165,6 +165,9 @@ void dsl_dir_set_reservation_sync_impl(dsl_dir_t *dd, uint64_t value,
 void dsl_dir_zapify(dsl_dir_t *dd, dmu_tx_t *tx);
 boolean_t dsl_dir_is_zapified(dsl_dir_t *dd);
 
+int dsl_dataset_set_quorum(const char *ddname, zprop_source_t source,
+    uint64_t val);
+
 /* internal reserved dir name */
 #define	MOS_DIR_NAME "$MOS"
 #define	ORIGIN_DIR_NAME "$ORIGIN"

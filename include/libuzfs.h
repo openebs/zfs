@@ -67,7 +67,13 @@ typedef struct uzfs_monitor {
     _UZFS_IOC(ZFS_IOC_SEND_PROGRESS, 0, 0, "print zfs send stats")             \
     _UZFS_IOC(ZFS_IOC_VDEV_ADD, 1, 0, "add vdev to the pool")                  \
     _UZFS_IOC(ZFS_IOC_VDEV_REMOVE, 1, 0, "remove vdev from the pool")          \
-    _UZFS_IOC(ZFS_IOC_ERROR_LOG, 0, 0, "get the error log")
+    _UZFS_IOC(ZFS_IOC_VDEV_ATTACH, 1, 0, "attached a disk to the pool")        \
+    _UZFS_IOC(ZFS_IOC_VDEV_DETACH, 1, 0, "detached a disk from the pool")      \
+    _UZFS_IOC(ZFS_IOC_VDEV_SET_STATE, 1, 0, "set vdev state")                  \
+    _UZFS_IOC(ZFS_IOC_PROMOTE, 1, 0, "promote the volume")                     \
+    _UZFS_IOC(ZFS_IOC_CLONE, 1, 1, "clone the volume")                         \
+    _UZFS_IOC(ZFS_IOC_ERROR_LOG, 0, 0, "get the error log")                    \
+    _UZFS_IOC(ZFS_IOC_STATS, 0, 0, "get the zfs volume stats")
 
 
 #define	MAX_NVLIST_SRC_SIZE (128 * 1024 * 1024)

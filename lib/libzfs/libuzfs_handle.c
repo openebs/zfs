@@ -286,7 +286,6 @@ uzfs_recv_ioctl(int fd, zfs_cmd_t *zc, uzfs_info_t *ucmd_info)
 	    uzfs_cmd->ioc_num == ZFS_IOC_RECV_NEW ||
 	    uzfs_cmd->ioc_num == ZFS_IOC_SEND_NEW) {
 		if ((ucmd_info->uzfs_recvfd = do_recvfd(fd)) < 0) {
-			VERIFY0(close(fd));
 			goto err;
 		}
 	}

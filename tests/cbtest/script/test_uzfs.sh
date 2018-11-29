@@ -192,6 +192,10 @@ run_zvol_tests()
 	log_must $ZFS set sync=standard $src_pool/$src_vol
 	log_must check_prop "$src_pool/$src_vol" sync standard
 
+	log_must check_prop "$src_pool/$src_vol" quorum off
+	log_must $ZFS set quorum=on $src_pool/$src_vol
+	log_must_not $ZFS set quorum=off $src_pool/$src_vol
+
 	log_must $ZFS set sync=disabled $src_pool/$src_vol
 	log_must check_prop "$src_pool/$src_vol" sync disabled
 

@@ -1700,8 +1700,6 @@ dsl_dataset_set_quorum(const char *ddname, zprop_source_t source,
 
 	if ((quorum != val) &&
 	    (quorum != B_FALSE || val != B_TRUE)) {
-		fprintf(stderr, "setting of quorum is not"
-		    "allowed (%lu->%lu)\n", quorum, val);
 		return (EPERM);
 	}
 

@@ -93,22 +93,49 @@ log_must_not()
 	rm $logfile
 }
 
+stop_zrepl()
+{
+	if [ $ZREPL_PID -ne -1 ]; then
+		kill -SIGKILL $ZREPL_PID
+		ZREPL_PID=-1
+	fi
+}
+
+test_dup_zrepl()
+{
+	# should block the duplicate zrepl start
+	$ZREPL &
+	pid=$!
+	sleep 2
+	blocked=`grep -c flock /proc/$pid/stack`
+	if [ $blocked -ne 1 ]; then
+		stop_zrepl
+		kill -SIGKILL $pid
+		echo "test failed, zrepl not blocked on flock"
+		exit 1;
+	fi
+	# kill the zrepl, the duplicate zrepl should take over
+	stop_zrepl
+	# wait for the other zrepl to take over
+	sleep 5
+	blocked=`grep -c flock /proc/$pid/stack`
+	if [ $blocked -ne 0 ]; then
+		kill -SIGKILL $pid
+		echo "test failed, zrepl not able to take over"
+		exit 1;
+	fi
+	ZREPL_PID=$pid
+}
+
 start_zrepl()
 {
 	if [ $ZREPL_PID -eq -1 ]; then
 		$ZREPL &
 		ZREPL_PID=$!
 		sleep 5
+		test_dup_zrepl
 	else
 		echo "warning.. zrepl is already started"
-	fi
-}
-
-stop_zrepl()
-{
-	if [ $ZREPL_PID -ne -1 ]; then
-		kill -SIGKILL $ZREPL_PID
-		ZREPL_PID=-1
 	fi
 }
 

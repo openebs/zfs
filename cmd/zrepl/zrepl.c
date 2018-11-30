@@ -16,6 +16,9 @@
 #include <uzfs_zap.h>
 #include <mgmt_conn.h>
 #include <data_conn.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 #include "zfs_events.h"
 
@@ -107,6 +110,17 @@ int
 main(int argc, char **argv)
 {
 	int	rc;
+
+	int fd = open(LOCK_FILE, O_CREAT | O_RDWR, 0644);
+	if (fd < 0) {
+		fprintf(stderr, "%s open failed: %s\n", LOCK_FILE,
+		    strerror(errno));
+		return (-1);
+	}
+	if (flock(fd, LOCK_EX) < 0) {
+		fprintf(stderr, "flock failed: %s\n", strerror(errno));
+		return (-1);
+	}
 
 	/* Use opt parsing lib if we have more options */
 	zrepl_log_level = LOG_LEVEL_INFO;

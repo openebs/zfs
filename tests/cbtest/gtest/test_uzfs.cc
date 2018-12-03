@@ -40,6 +40,7 @@
 #include <sys/eventfd.h>
 #include <sys/epoll.h>
 #include <sys/dsl_destroy.h>
+#include <sys/dsl_prop.h>
 #include <uzfs_rebuilding.h>
 
 #include "gtest_utils.h"
@@ -826,6 +827,11 @@ TEST(uZFS, Setup) {
 	EXPECT_EQ(0, !zinfo);
 
 	EXPECT_GT(kthread_nr, 0);
+
+	uint64_t quorum = -1;
+	EXPECT_EQ(0, dsl_prop_get_integer("pool1/vol1",
+	    zfs_prop_to_name(ZFS_PROP_QUORUM), &quorum, NULL));
+	EXPECT_EQ(quorum, 0);
 }
 
 int
@@ -2421,6 +2427,10 @@ TEST(RebuildScanner, RebuildSuccessWithAFS) {
 	sleep(10);
 	inject_error.delay.helping_replica_rebuild_complete = 0;
 #endif
+	uint64_t quorum = 0;
+	EXPECT_EQ(0, dsl_prop_get_integer(zinfo->main_zv->zv_name,
+	    zfs_prop_to_name(ZFS_PROP_QUORUM), &quorum, NULL));
+	EXPECT_EQ(quorum, 1);
 	memset(&zinfo->main_zv->rebuild_info, 0, sizeof (zvol_rebuild_info_t));
 	close(data_conn_fd);
 	data_conn_fd = -1;
@@ -2435,6 +2445,11 @@ TEST(RebuildScanner, RebuildSuccess) {
 	execute_rebuild_test_case("complete rebuild", 10,
 	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_DONE);
 	EXPECT_EQ(ZVOL_STATUS_HEALTHY, uzfs_zvol_get_status(zinfo->main_zv));
+
+	uint64_t quorum = 0;
+	EXPECT_EQ(0, dsl_prop_get_integer(zinfo->main_zv->zv_name,
+	    zfs_prop_to_name(ZFS_PROP_QUORUM), &quorum, NULL));
+	EXPECT_EQ(quorum, 1);
 	memset(&zinfo->main_zv->rebuild_info, 0, sizeof (zvol_rebuild_info_t));
 	close(data_conn_fd);
 	data_conn_fd = -1;

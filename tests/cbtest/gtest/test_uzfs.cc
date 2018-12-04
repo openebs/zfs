@@ -2084,6 +2084,11 @@ TEST(uZFSRebuild, TestErroredRebuild) {
 #ifdef DEBUG
 	inject_error.inject_rebuild_error.dw_replica_rebuild_error_io = (total_ios) / 4;
 #endif
+	uint64_t quorum = -1;
+	EXPECT_EQ(0, dsl_prop_get_integer(zinfo->main_zv->zv_name,
+	    zfs_prop_to_name(ZFS_PROP_QUORUM), &quorum, NULL));
+	EXPECT_EQ(quorum, 0);
+
 	execute_rebuild_test_case("errored rebuild with data conn", 15,
 	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED, 4, "vol3");
 	close(wargs.r1_fd);
@@ -2121,6 +2126,10 @@ TEST(uZFSRebuild, TestErroredRebuild) {
 	    verify_ios_from_two_replica, &wargs, 0, NULL, TS_RUN,
 	    0, 0);
 	zk_thread_join(writer_thread->t_tid);
+
+	EXPECT_EQ(0, dsl_prop_get_integer(zinfo->main_zv->zv_name,
+	    zfs_prop_to_name(ZFS_PROP_QUORUM), &quorum, NULL));
+	EXPECT_EQ(quorum, 1);
 
 	close(wargs.r1_fd);
 	close(wargs.r2_fd);

@@ -515,6 +515,8 @@ verify_app_io_read_write(int fd, zvol_info_t *zinfo)
 		memcpy(write_buf + i, cbuf, clen);
 	}
 
+	pthread_mutex_lock(&done_thread_count_mtx);
+
 	GtestUtils::write_data_and_verify_resp(fd, ioseq, write_buf, offset, len, io_num);
 
 	uzfs_read_data(read_zv, read_buf, offset, len, &md);
@@ -532,6 +534,7 @@ verify_app_io_read_write(int fd, zvol_info_t *zinfo)
 		EXPECT_EQ(memcmp(write_buf, read_buf, sizeof (read_buf)), 0);
 		FREE_METADATA_LIST(md);
 	}
+	pthread_mutex_unlock(&done_thread_count_mtx);
 }
 
 void

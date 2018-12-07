@@ -45,7 +45,7 @@ extern "C" {
  * properly aligned (and packed).
  */
 
-#define	REPLICA_VERSION	2
+#define	REPLICA_VERSION	3
 #define	MAX_NAME_LEN	256
 #define	MAX_IP_LEN	64
 #define	TARGET_PORT	6060
@@ -134,6 +134,8 @@ struct mgmt_ack {
 	uint64_t	pool_guid;
 	uint64_t	zvol_guid;
 	uint16_t	port;
+	uint8_t		quorum;
+	uint8_t		reserved[5];
 	char		ip[MAX_IP_LEN];
 	char		volname[MAX_NAME_LEN]; // zvol helping rebuild
 	char		dw_volname[MAX_NAME_LEN]; // zvol being rebuilt

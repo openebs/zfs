@@ -841,8 +841,7 @@ exit:
 		 * set the quorum to 1 once rebuild is done. istgt will
 		 * start considering it in the quorum decision.
 		 */
-		VERIFY0(dsl_dataset_set_quorum(zinfo->main_zv->zv_name,
-		    ZPROP_SRC_LOCAL, 1));
+		VERIFY0(uzfs_set_quorum(zinfo->main_zv, 1));
 
 		mutex_enter(&zinfo->main_zv->rebuild_mtx);
 		/* Mark replica healthy now */

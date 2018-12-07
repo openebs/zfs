@@ -513,6 +513,7 @@ uzfs_zvol_mgmt_get_handshake_info(zvol_io_hdr_t *in_hdr, const char *name,
 	mgmt_ack->checkpointed_io_seq = zinfo->checkpointed_ionum;
 	mgmt_ack->checkpointed_degraded_io_seq =
 	    zinfo->degraded_checkpointed_ionum;
+	mgmt_ack->quorum = uzfs_get_quorum(zv);
 
 	return (0);
 }

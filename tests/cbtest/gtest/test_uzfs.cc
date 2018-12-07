@@ -2571,7 +2571,7 @@ void mock_tgt_thread(void *arg)
 
 	/* Send wrong protocol version */
 	if (mgmt_test_case == 2)
-		hdr.version = 3;
+		hdr.version = -1;
 
 	/* Header len is greater than MAX_NAME_LEN */
 	if (mgmt_test_case == 4)

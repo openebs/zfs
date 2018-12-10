@@ -246,8 +246,8 @@ int uzfs_zvol_destroy_snapshot_clone(zvol_state_t *zv, zvol_state_t *snap_zv,
     zvol_state_t *clone_zv);
 int uzfs_zinfo_destroy_internal_clone(zvol_info_t *zv);
 
-uint8_t uzfs_get_quorum(zvol_state_t *zv);
-int uzfs_set_quorum(zvol_state_t *zv, uint64_t val);
+uint8_t uzfs_zinfo_get_quorum(zvol_info_t *zinfo);
+int uzfs_zinfo_set_quorum(zvol_info_t *zinfo, uint64_t val);
 
 /*
  * API to drop refcnt on zinfo. If refcnt

@@ -841,7 +841,7 @@ exit:
 		 * set the quorum to 1 once rebuild is done. istgt will
 		 * start considering it in the quorum decision.
 		 */
-		VERIFY0(uzfs_set_quorum(zinfo->main_zv, 1));
+		VERIFY0(uzfs_zinfo_set_quorum(zinfo, 1));
 
 		mutex_enter(&zinfo->main_zv->rebuild_mtx);
 		/* Mark replica healthy now */

@@ -460,18 +460,19 @@ uzfs_zinfo_store_last_committed_degraded_io_no(zvol_info_t *zinfo,
 }
 
 uint8_t
-uzfs_get_quorum(zvol_state_t *zv)
+uzfs_zinfo_get_quorum(zvol_info_t *zinfo)
 {
 	uint64_t quorum;
-	VERIFY0(dsl_prop_get_integer(zv->zv_name,
+	VERIFY0(dsl_prop_get_integer(zinfo->main_zv->zv_name,
 	    zfs_prop_to_name(ZFS_PROP_QUORUM), &quorum, NULL));
 	return (!!quorum);
 }
 
 int
-uzfs_set_quorum(zvol_state_t *zv, uint64_t val)
+uzfs_zinfo_set_quorum(zvol_info_t *zinfo, uint64_t val)
 {
-	int err = dsl_dataset_set_quorum(zv->zv_name, ZPROP_SRC_LOCAL, 1);
+	int err = dsl_dataset_set_quorum(zinfo->main_zv->zv_name,
+	    ZPROP_SRC_LOCAL, 1);
 	if (err)
 		return (err);
 	return (0);

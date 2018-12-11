@@ -189,8 +189,11 @@ typedef struct zvol_info_s {
 	uint64_t 	write_req_received_cnt;
 	uint64_t 	sync_req_received_cnt;
 	uint64_t 	read_req_ack_cnt;
+	uint64_t 	read_latency;
 	uint64_t	write_req_ack_cnt;
+	uint64_t 	write_latency;
 	uint64_t	sync_req_ack_cnt;
+	uint64_t 	sync_latency;
 } zvol_info_t;
 
 typedef struct thread_args_s {
@@ -213,6 +216,7 @@ typedef struct zvol_io_cmd_s {
 	zvol_info_t	*zinfo;
 	void		*buf;
 	uint64_t	buf_len;
+	uint64_t 	io_start_time;
 	metadata_desc_t	*metadata_desc;
 	int		conn;
 } zvol_io_cmd_t;

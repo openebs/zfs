@@ -352,6 +352,9 @@ uzfs_zvol_worker(void *arg)
 	} else {
 		metadata_desc = &zio_cmd->metadata_desc;
 	}
+
+	zio_cmd->io_start_time = gethrtime();
+
 	switch (hdr->opcode) {
 		case ZVOL_OPCODE_READ:
 			read_zv = zinfo->main_zv;
@@ -1796,11 +1799,18 @@ error_check:
 				}
 			}
 			atomic_inc_64(&zinfo->read_req_ack_cnt);
+			atomic_add_64(&zinfo->read_latency,
+			    gethrtime() - zio_cmd->io_start_time);
 		} else {
-			if (zio_cmd->hdr.opcode == ZVOL_OPCODE_WRITE)
+			if (zio_cmd->hdr.opcode == ZVOL_OPCODE_WRITE) {
 				atomic_inc_64(&zinfo->write_req_ack_cnt);
-			else if (zio_cmd->hdr.opcode == ZVOL_OPCODE_SYNC)
+				atomic_add_64(&zinfo->write_latency,
+				    gethrtime() - zio_cmd->io_start_time);
+			} else if (zio_cmd->hdr.opcode == ZVOL_OPCODE_SYNC) {
 				atomic_inc_64(&zinfo->sync_req_ack_cnt);
+				atomic_add_64(&zinfo->sync_latency,
+				    gethrtime() - zio_cmd->io_start_time);
+			}
 		}
 		zinfo->zio_cmd_in_ack = NULL;
 		zio_cmd_free(&zio_cmd);

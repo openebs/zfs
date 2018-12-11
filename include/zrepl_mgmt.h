@@ -190,8 +190,10 @@ typedef struct zvol_info_s {
 	uint64_t 	sync_req_received_cnt;
 	uint64_t 	read_req_ack_cnt;
 	uint64_t 	read_latency;
+	uint64_t 	read_byte;
 	uint64_t	write_req_ack_cnt;
 	uint64_t 	write_latency;
+	uint64_t 	write_byte;
 	uint64_t	sync_req_ack_cnt;
 	uint64_t 	sync_latency;
 } zvol_info_t;

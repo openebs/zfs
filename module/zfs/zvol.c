@@ -397,10 +397,14 @@ uzfs_ioc_stats(zfs_cmd_t *zc, nvlist_t *nvl)
 			    zv->read_req_ack_cnt);
 			fnvlist_add_uint64(innvl, "readLatency",
 			    zv->read_latency);
+			fnvlist_add_uint64(innvl, "readByte",
+			    zv->read_byte);
 			fnvlist_add_uint64(innvl, "writeCount",
 			    zv->write_req_ack_cnt);
 			fnvlist_add_uint64(innvl, "writeLatency",
 			    zv->write_latency);
+			fnvlist_add_uint64(innvl, "writeByte",
+			    zv->write_byte);
 			fnvlist_add_uint64(innvl, "syncCount",
 			    zv->sync_req_ack_cnt);
 			fnvlist_add_uint64(innvl, "syncLatency",

@@ -1805,7 +1805,8 @@ error_check:
 		} else {
 			if (zio_cmd->hdr.opcode == ZVOL_OPCODE_WRITE) {
 				atomic_inc_64(&zinfo->write_req_ack_cnt);
-				atomic_add_64(&zinfo->write_byte, zio_cmd->hdr.len);
+				atomic_add_64(&zinfo->write_byte,
+				    zio_cmd->hdr.len);
 				atomic_add_64(&zinfo->write_latency,
 				    gethrtime() - zio_cmd->io_start_time);
 			} else if (zio_cmd->hdr.opcode == ZVOL_OPCODE_SYNC) {

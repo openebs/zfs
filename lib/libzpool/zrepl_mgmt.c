@@ -144,7 +144,7 @@ create_and_bind(const char *port, int bind_needed, boolean_t nonblock)
 
 		enable = 1;
 		if (setsockopt(sfd, IPPROTO_TCP, TCP_NODELAY, &enable,
-		    sizeof (enable) < 0)) {
+		    sizeof (enable)) < 0) {
 			perror("setsockopt(TCP_NODELAY) failed");
 		}
 

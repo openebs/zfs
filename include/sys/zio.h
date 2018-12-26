@@ -43,6 +43,20 @@
 extern "C" {
 #endif
 
+#define	KB 1024
+#define	ZFS_HISTOGRAM_IO_SIZE (1024 * KB)
+#define	ZFS_HISTOGRAM_IO_BLOCK (32 * KB)
+
+typedef struct zio_histogram {
+	uint64_t size;
+	uint64_t count;
+} zio_histogram_t;
+
+extern zio_histogram_t zfs_rio_histogram[ZFS_HISTOGRAM_IO_SIZE /
+    ZFS_HISTOGRAM_IO_BLOCK + 1];
+extern zio_histogram_t zfs_wio_histogram[ZFS_HISTOGRAM_IO_SIZE /
+    ZFS_HISTOGRAM_IO_BLOCK + 1];
+
 /*
  * Embedded checksum
  */

@@ -96,6 +96,12 @@
 #include <uzfs_mgmt.h>
 #include <sys/uzfs_zvol.h>
 #include <zrepl_mgmt.h>
+
+zio_histogram_t zfs_rio_histogram[ZFS_HISTOGRAM_IO_SIZE /
+    ZFS_HISTOGRAM_IO_BLOCK + 1];
+zio_histogram_t zfs_wio_histogram[ZFS_HISTOGRAM_IO_SIZE /
+    ZFS_HISTOGRAM_IO_BLOCK + 1];
+
 #endif
 
 unsigned int zvol_inhibit_dev = 0;
@@ -458,17 +464,17 @@ uzfs_ioc_stats(zfs_cmd_t *zc, nvlist_t *nvl)
 	}
 	(void) mutex_exit(&zvol_list_mutex);
 
-#if 0
 	nvlist_t *innvl = fnvlist_alloc();
 	fnvlist_add_string(innvl, "name", "rzio");
-	uint64_t len = UZFS_HISTOGRAM_IO_SIZE /
-	    UZFS_HISTOGRAM_IO_BLOCK;
+	len = ZFS_HISTOGRAM_IO_SIZE /
+	    ZFS_HISTOGRAM_IO_BLOCK;
 	for (i = 0; i <= len; i++) {
-		if (zfs_rio_histogram[i]) {
-			char key[256];
-			sprintf(key, "%uKB", i * UZFS_HISTOGRAM_IO_BLOCK / KB);
-			fnvlist_add_uint64(innvl, key,
-			    uzfs_rio_histogram[i]);
+		if (zfs_rio_histogram[i].count) {
+			sprintf(key, "%uKB", i * ZFS_HISTOGRAM_IO_BLOCK / KB);
+			sprintf(val, "%lu/%lu",
+			    zfs_rio_histogram[i].size,
+			    zfs_rio_histogram[i].count);
+			fnvlist_add_string(innvl, key, val);
 		}
 	}
 	fnvlist_add_nvlist(nvl, "rzio", innvl);
@@ -476,20 +482,17 @@ uzfs_ioc_stats(zfs_cmd_t *zc, nvlist_t *nvl)
 
 	innvl = fnvlist_alloc();
 	fnvlist_add_string(innvl, "name", "wzio");
-	uint64_t len = UZFS_HISTOGRAM_IO_SIZE /
-	    UZFS_HISTOGRAM_IO_BLOCK;
 	for (i = 0; i <= len; i++) {
-		if (zfs_wio_histogram[i]) {
-			char key[256];
-			sprintf(key, "%uKB", i * UZFS_HISTOGRAM_IO_BLOCK / KB);
-			fnvlist_add_uint64(innvl, key,
-			    uzfs_wio_histogram[i]);
+		if (zfs_wio_histogram[i].count) {
+			sprintf(key, "%uKB", i * ZFS_HISTOGRAM_IO_BLOCK / KB);
+			sprintf(val, "%lu/%lu",
+			    zfs_wio_histogram[i].size,
+			    zfs_wio_histogram[i].count);
+			fnvlist_add_string(innvl, key, val);
 		}
 	}
 	fnvlist_add_nvlist(nvl, "wzio", innvl);
 	fnvlist_free(innvl);
-#endif
-
 	return (0);
 }
 #endif

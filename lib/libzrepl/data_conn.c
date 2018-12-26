@@ -236,6 +236,7 @@ uzfs_submit_writes(zvol_info_t *zinfo, zvol_io_cmd_t *zio_cmd)
 	int	rc = 0;
 	uint64_t running_ionum;
 	is_rebuild = hdr->flags & ZVOL_OP_FLAG_REBUILD;
+	uint64_t len = 0;
 
 #ifdef DEBUG
 	if (is_rebuild) {
@@ -284,9 +285,26 @@ uzfs_submit_writes(zvol_info_t *zinfo, zvol_io_cmd_t *zio_cmd)
 			running_ionum = zinfo->running_ionum;
 		}
 
+		len += write_hdr->len;
 		datap += write_hdr->len;
 		remain -= write_hdr->len;
 		data_offset += write_hdr->len;
+	}
+
+	if (!rc && !is_rebuild) {
+		if (len < UZFS_HISTOGRAM_IO_SIZE) {
+			atomic_inc_64(&(zinfo->uzfs_wio_histogram[len /
+			    UZFS_HISTOGRAM_IO_BLOCK].count));
+			atomic_add_64(&(zinfo->uzfs_wio_histogram[len /
+			    UZFS_HISTOGRAM_IO_BLOCK].size), len);
+		} else {
+			atomic_inc_64(&(zinfo->uzfs_wio_histogram[
+			    UZFS_HISTOGRAM_IO_SIZE /
+			    UZFS_HISTOGRAM_IO_BLOCK].count));
+			atomic_add_64(&(zinfo->uzfs_wio_histogram[
+			    UZFS_HISTOGRAM_IO_SIZE /
+			    UZFS_HISTOGRAM_IO_BLOCK].size), len);
+		}
 	}
 
 	return (rc);
@@ -313,6 +331,7 @@ uzfs_zvol_worker(void *arg)
 	int		rc = 0;
 	boolean_t	rebuild_cmd_req;
 	boolean_t	read_metadata;
+	uint64_t len;
 
 	zio_cmd = (zvol_io_cmd_t *)arg;
 	hdr = &zio_cmd->hdr;
@@ -377,6 +396,32 @@ uzfs_zvol_worker(void *arg)
 			    (char *)zio_cmd->buf,
 			    hdr->offset, hdr->len,
 			    metadata_desc);
+
+			len = hdr->len;
+			if (!rc && !rebuild_cmd_req) {
+				if (len < UZFS_HISTOGRAM_IO_SIZE) {
+					atomic_inc_64(&(zinfo->
+					    uzfs_rio_histogram[
+					    len /
+					    UZFS_HISTOGRAM_IO_BLOCK].count));
+					atomic_add_64(&(zinfo->
+					    uzfs_rio_histogram[
+					    len /
+					    UZFS_HISTOGRAM_IO_BLOCK].size),
+					    len);
+				} else {
+					atomic_inc_64(&(zinfo->
+					    uzfs_rio_histogram[
+					    UZFS_HISTOGRAM_IO_SIZE /
+					    UZFS_HISTOGRAM_IO_BLOCK].count));
+					atomic_add_64(&(zinfo->
+					    uzfs_rio_histogram[
+					    UZFS_HISTOGRAM_IO_SIZE /
+					    UZFS_HISTOGRAM_IO_BLOCK].size),
+					    len);
+				}
+			}
+
 			atomic_inc_64(&zinfo->read_req_received_cnt);
 			break;
 

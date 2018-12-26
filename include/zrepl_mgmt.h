@@ -94,6 +94,16 @@ typedef enum zvol_info_state_e {
 	ZVOL_INFO_STATE_OFFLINE,
 } zvol_info_state_t;
 
+// can support 1MB IO size, each of bucket size 32kb
+#define	KB 1024
+#define	UZFS_HISTOGRAM_IO_SIZE (1024 * KB)
+#define	UZFS_HISTOGRAM_IO_BLOCK (32 * KB)
+
+typedef struct uzfs_histogram {
+	uint64_t size;
+	uint64_t count;
+} uzfs_histogram_t;
+
 typedef struct zvol_info_s {
 
 	SLIST_ENTRY(zvol_info_s) zinfo_next;
@@ -196,6 +206,12 @@ typedef struct zvol_info_s {
 	uint64_t 	write_byte;
 	uint64_t	sync_req_ack_cnt;
 	uint64_t 	sync_latency;
+
+	// histogram of IOs
+	uzfs_histogram_t uzfs_rio_histogram[UZFS_HISTOGRAM_IO_SIZE /
+	    UZFS_HISTOGRAM_IO_BLOCK + 1];
+	uzfs_histogram_t uzfs_wio_histogram[UZFS_HISTOGRAM_IO_SIZE /
+	    UZFS_HISTOGRAM_IO_BLOCK + 1];
 } zvol_info_t;
 
 typedef struct thread_args_s {

@@ -7045,6 +7045,7 @@ usage:
 static struct json_object *
 get_stats(nvlist_t *outnvl)
 {
+	nvlist_t *cnv = NULL;
 	nvpair_t *elem = NULL;
 	uint64_t val;
 	char *str_val;
@@ -7062,6 +7063,13 @@ get_stats(nvlist_t *outnvl)
 				nvpair_value_string(elem, &str_val);
 				json_object_object_add(jobj, nvpair_name(elem),
 				    json_object_new_string(str_val));
+				break;
+			case DATA_TYPE_NVLIST:
+				(void) nvpair_value_nvlist(elem, &cnv);
+				struct json_object *obj = get_stats(cnv);
+				if (obj)
+					json_object_object_add(jobj,
+					    nvpair_name(elem), obj);
 				break;
 			default:
 				fprintf(stderr, "nvpair type : %d name:%s\n",
@@ -7086,6 +7094,7 @@ zfs_do_stats(int argc, char **argv)
 		usage(B_FALSE);
 		return (-1);
 	}
+
 	if ((error = lzc_stats(argv[1], NULL, &outnvl)) != 0) {
 		fprintf(stderr, "failed stats command for %s with err %d\n",
 		    argv[1], error);

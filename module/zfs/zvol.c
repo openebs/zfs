@@ -351,6 +351,9 @@ int
 uzfs_ioc_stats(zfs_cmd_t *zc, nvlist_t *nvl)
 {
 	zvol_info_t *zv = NULL;
+	int i;
+	uint64_t len;
+	char key[256], val[256];
 
 	(void) mutex_enter(&zvol_list_mutex);
 	SLIST_FOREACH(zv, &zvol_list, zinfo_next) {
@@ -410,13 +413,82 @@ uzfs_ioc_stats(zfs_cmd_t *zc, nvlist_t *nvl)
 			fnvlist_add_uint64(innvl, "syncLatency",
 			    zv->sync_latency);
 
+			nvlist_t *rnvl = fnvlist_alloc();
+
+			fnvlist_add_string(rnvl, "name", "ruio");
+
+			len = UZFS_HISTOGRAM_IO_SIZE /
+			    UZFS_HISTOGRAM_IO_BLOCK;
+			for (i = 0; i <= len; i++) {
+				if (zv->uzfs_rio_histogram[i].count) {
+					sprintf(key, "%uKB",
+					    i * UZFS_HISTOGRAM_IO_BLOCK / KB);
+					sprintf(val, "%lu/%lu",
+					    zv->uzfs_rio_histogram[i].size,
+					    zv->uzfs_rio_histogram[i].count);
+					fnvlist_add_string(rnvl, key, val);
+				}
+			}
+			fnvlist_add_nvlist(innvl, "ruio", rnvl);
+			fnvlist_free(rnvl);
+
+			nvlist_t *wnvl = fnvlist_alloc();
+			fnvlist_add_string(wnvl, "name", "wuio");
+
+			for (i = 0; i <= len; i++) {
+				if (zv->uzfs_wio_histogram[i].count) {
+					sprintf(key, "%uKB",
+					    i * UZFS_HISTOGRAM_IO_BLOCK / KB);
+					sprintf(val, "%lu/%lu",
+					    zv->uzfs_wio_histogram[i].size,
+					    zv->uzfs_wio_histogram[i].count);
+					fnvlist_add_string(wnvl, key, val);
+				}
+			}
+
+			fnvlist_add_nvlist(innvl, "wuio", wnvl);
+			fnvlist_free(wnvl);
+
 			fnvlist_add_nvlist(nvl, zv->name, innvl);
 			fnvlist_free(innvl);
+
 			if (zc->zc_name[0] != '\0')
 				break;
 		}
 	}
 	(void) mutex_exit(&zvol_list_mutex);
+
+#if 0
+	nvlist_t *innvl = fnvlist_alloc();
+	fnvlist_add_string(innvl, "name", "rzio");
+	uint64_t len = UZFS_HISTOGRAM_IO_SIZE /
+	    UZFS_HISTOGRAM_IO_BLOCK;
+	for (i = 0; i <= len; i++) {
+		if (zfs_rio_histogram[i]) {
+			char key[256];
+			sprintf(key, "%uKB", i * UZFS_HISTOGRAM_IO_BLOCK / KB);
+			fnvlist_add_uint64(innvl, key,
+			    uzfs_rio_histogram[i]);
+		}
+	}
+	fnvlist_add_nvlist(nvl, "rzio", innvl);
+	fnvlist_free(innvl);
+
+	innvl = fnvlist_alloc();
+	fnvlist_add_string(innvl, "name", "wzio");
+	uint64_t len = UZFS_HISTOGRAM_IO_SIZE /
+	    UZFS_HISTOGRAM_IO_BLOCK;
+	for (i = 0; i <= len; i++) {
+		if (zfs_wio_histogram[i]) {
+			char key[256];
+			sprintf(key, "%uKB", i * UZFS_HISTOGRAM_IO_BLOCK / KB);
+			fnvlist_add_uint64(innvl, key,
+			    uzfs_wio_histogram[i]);
+		}
+	}
+	fnvlist_add_nvlist(nvl, "wzio", innvl);
+	fnvlist_free(innvl);
+#endif
 
 	return (0);
 }

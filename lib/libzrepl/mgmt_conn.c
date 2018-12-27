@@ -31,6 +31,8 @@
 #include <sys/socket.h>
 #include <sys/eventfd.h>
 #include <sys/prctl.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 
 #include <sys/dsl_dataset.h>
 #include <sys/dsl_destroy.h>
@@ -173,6 +175,7 @@ connect_to_tgt(uzfs_mgmt_conn_t *conn)
 {
 	struct sockaddr_in istgt_addr;
 	int sfd, rc;
+	int synretries = 3;
 
 	conn->conn_last_connect = time(NULL);
 
@@ -184,6 +187,21 @@ connect_to_tgt(uzfs_mgmt_conn_t *conn)
 	sfd = create_and_bind(MGMT_PORT, B_FALSE, B_TRUE);
 	if (sfd < 0)
 		return (-1);
+
+	/*
+	 * synretry count is usually 6, which takes > 2 minutes.
+	 * kernel retries syn at 1, 2, 4, 8, 16, 32 and 64 seconds.
+	 * Due to some reason, even if listener at tgt is available,
+	 * until these retransmissions are complete and start new connect
+	 * call, connection is not getting established, and this is causing
+	 * volume to get into RO state.
+	 * By reducing synretries to 3, next connect call is made in less
+	 * than 20 seconds.
+	 */
+	if (setsockopt(sfd, IPPROTO_TCP, TCP_SYNCNT, &synretries,
+	    sizeof (int)) < 0) {
+		perror("setsockopt(TCP_SYNCNT) failed");
+	}
 
 	rc = connect(sfd, (struct sockaddr *)&istgt_addr, sizeof (istgt_addr));
 	/* EINPROGRESS means that EPOLLOUT will tell us when connect is done */

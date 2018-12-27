@@ -92,10 +92,12 @@ else
   echo "No docker credentials provided. Skip uploading ${IMAGE_REPO} to quay";
 fi;
 #Push image to run openebs-e2e based on git commit
-if [ ! -z "${COMMIT}" ];
-then
+if [ ! -z "${GITLAB_DNAME}" ] && [ ! -z "${GITLAB_DPASS}" ] && [ ! -z "${COMMIT}" ]; 
+then 
   sudo docker login -u "${GITLAB_DNAME}" -p "${GITLAB_DPASS}";
 
   # Push COMMIT tagged image - :COMMIT
   TagAndPushImage "${IMAGE_REPO}" "${COMMIT}"
+else
+  echo "No docker credentials or commit tag provided. Skip uploading openebs-e2e image";
 fi;

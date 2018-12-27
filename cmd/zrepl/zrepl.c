@@ -27,6 +27,7 @@
 extern unsigned long zfs_arc_max;
 extern unsigned long zfs_arc_min;
 extern int zfs_autoimport_disable;
+extern int zfs_do_write_coalesce;
 
 #if DEBUG
 inject_error_t	inject_error;
@@ -110,7 +111,7 @@ int
 main(int argc, char **argv)
 {
 	int	rc;
-
+	char	*env;
 	int fd = open(LOCK_FILE, O_CREAT | O_RDWR, 0644);
 	if (fd < 0) {
 		fprintf(stderr, "%s open failed: %s\n", LOCK_FILE,
@@ -145,6 +146,14 @@ main(int argc, char **argv)
 		LOG_INFO("disabled auto import (reading of zpool.cache)");
 		zfs_autoimport_disable = 1;
 	}
+
+	zfs_do_write_coalesce = 1;
+	env = getenv("DISABLE_WRITE_COALESCE");
+	if (env != NULL)
+		if (strcmp(env, "1") == 0) {
+			LOG_INFO("Disabling write IOs coalescing");
+			zfs_do_write_coalesce = 0;
+		}
 
 	SLIST_INIT(&uzfs_mgmt_conns);
 	mutex_init(&conn_list_mtx, NULL, MUTEX_DEFAULT, NULL);

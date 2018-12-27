@@ -67,6 +67,7 @@ static uint64_t spa_config_generation = 1;
  */
 char *spa_config_path = ZPOOL_CACHE;
 int zfs_autoimport_disable = 0;
+int zfs_do_write_coalesce = 1;
 
 /*
  * Called when the module is first loaded, this routine loads the configuration
@@ -610,5 +611,8 @@ MODULE_PARM_DESC(spa_config_path, "SPA config file (/etc/zfs/zpool.cache)");
 
 module_param(zfs_autoimport_disable, int, 0644);
 MODULE_PARM_DESC(zfs_autoimport_disable, "Disable pool import at module load");
+
+module_param(zfs_do_write_coalesce, int, 0644);
+MODULE_PARM_DESC(zfs_do_write_coalesce, "Coalesce write IOs at ZIO");
 
 #endif

@@ -31,6 +31,7 @@
 #include <uzfs_io.h>
 #include "zrepl_prot.h"
 #include <sys/zfs_context.h>
+#include <sys/spa_impl.h>
 
 #ifdef	__cplusplus
 extern "C" {

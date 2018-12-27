@@ -97,9 +97,9 @@
 #include <sys/uzfs_zvol.h>
 #include <zrepl_mgmt.h>
 
-zio_histogram_t zfs_rio_histogram[ZFS_HISTOGRAM_IO_SIZE /
+zfs_histogram_t zfs_rio_histogram[ZFS_HISTOGRAM_IO_SIZE /
     ZFS_HISTOGRAM_IO_BLOCK + 1];
-zio_histogram_t zfs_wio_histogram[ZFS_HISTOGRAM_IO_SIZE /
+zfs_histogram_t zfs_wio_histogram[ZFS_HISTOGRAM_IO_SIZE /
     ZFS_HISTOGRAM_IO_BLOCK + 1];
 
 #endif
@@ -361,6 +361,9 @@ uzfs_ioc_stats(zfs_cmd_t *zc, nvlist_t *nvl)
 	uint64_t len;
 	char key[256], val[256];
 
+	len = ZFS_HISTOGRAM_IO_SIZE /
+	    ZFS_HISTOGRAM_IO_BLOCK;
+
 	(void) mutex_enter(&zvol_list_mutex);
 	SLIST_FOREACH(zv, &zvol_list, zinfo_next) {
 
@@ -421,14 +424,10 @@ uzfs_ioc_stats(zfs_cmd_t *zc, nvlist_t *nvl)
 
 			nvlist_t *rnvl = fnvlist_alloc();
 
-			fnvlist_add_string(rnvl, "name", "ruio");
-
-			len = UZFS_HISTOGRAM_IO_SIZE /
-			    UZFS_HISTOGRAM_IO_BLOCK;
 			for (i = 0; i <= len; i++) {
 				if (zv->uzfs_rio_histogram[i].count) {
 					sprintf(key, "%uKB",
-					    i * UZFS_HISTOGRAM_IO_BLOCK / KB);
+					    i * ZFS_HISTOGRAM_IO_BLOCK / KB);
 					sprintf(val, "%lu/%lu",
 					    zv->uzfs_rio_histogram[i].size,
 					    zv->uzfs_rio_histogram[i].count);
@@ -439,12 +438,11 @@ uzfs_ioc_stats(zfs_cmd_t *zc, nvlist_t *nvl)
 			fnvlist_free(rnvl);
 
 			nvlist_t *wnvl = fnvlist_alloc();
-			fnvlist_add_string(wnvl, "name", "wuio");
 
 			for (i = 0; i <= len; i++) {
 				if (zv->uzfs_wio_histogram[i].count) {
 					sprintf(key, "%uKB",
-					    i * UZFS_HISTOGRAM_IO_BLOCK / KB);
+					    i * ZFS_HISTOGRAM_IO_BLOCK / KB);
 					sprintf(val, "%lu/%lu",
 					    zv->uzfs_wio_histogram[i].size,
 					    zv->uzfs_wio_histogram[i].count);
@@ -466,8 +464,6 @@ uzfs_ioc_stats(zfs_cmd_t *zc, nvlist_t *nvl)
 
 	nvlist_t *innvl = fnvlist_alloc();
 	fnvlist_add_string(innvl, "name", "rzio");
-	len = ZFS_HISTOGRAM_IO_SIZE /
-	    ZFS_HISTOGRAM_IO_BLOCK;
 	for (i = 0; i <= len; i++) {
 		if (zfs_rio_histogram[i].count) {
 			sprintf(key, "%uKB", i * ZFS_HISTOGRAM_IO_BLOCK / KB);

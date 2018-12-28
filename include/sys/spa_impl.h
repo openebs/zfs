@@ -129,6 +129,15 @@ typedef enum spa_all_vdev_zap_action {
 #define	ZFS_HISTOGRAM_IO_SIZE (1024 * KB)
 #define	ZFS_HISTOGRAM_IO_BLOCK (32 * KB)
 
+#define	zfs_histogram_add(_array, _bucket, _size, _latency) \
+    atomic_inc_64(&(_array[_bucket / ZFS_HISTOGRAM_IO_BLOCK].count)); \
+    atomic_add_64(&(_array[_bucket / ZFS_HISTOGRAM_IO_BLOCK].size), _size); \
+    atomic_add_64(&(_array[_bucket / ZFS_HISTOGRAM_IO_BLOCK].latency), _latency)
+
+#define	zio_histogram_add(_array, _bucket, _size) \
+    atomic_inc_64(&(_array[_bucket / ZFS_HISTOGRAM_IO_BLOCK].count)); \
+    atomic_add_64(&(_array[_bucket / ZFS_HISTOGRAM_IO_BLOCK].size), _size);
+
 typedef struct zfs_histogram {
 	uint64_t size;
 	uint64_t count;

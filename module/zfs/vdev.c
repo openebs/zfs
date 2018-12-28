@@ -3154,41 +3154,25 @@ vdev_stat_update(zio_t *zio, uint64_t psize)
 #if !defined(_KERNEL)
 			if (type == ZIO_TYPE_READ) {
 				if (psize < ZFS_HISTOGRAM_IO_SIZE) {
-					atomic_add_64(&spa->zfs_rio_histogram[
-					    psize / ZFS_HISTOGRAM_IO_BLOCK].
-					    size, psize);
-					atomic_inc_64(&spa->zfs_rio_histogram[
-					    psize / ZFS_HISTOGRAM_IO_BLOCK].
-					    count);
+					zio_histogram_add(spa->
+					    zfs_rio_histogram,
+					    psize, psize);
 				} else {
-					atomic_add_64(&spa->zfs_rio_histogram[
-					    ZFS_HISTOGRAM_IO_SIZE /
-					    ZFS_HISTOGRAM_IO_BLOCK].size,
-					    psize);
-					atomic_inc_64(&spa->zfs_rio_histogram[
-					    ZFS_HISTOGRAM_IO_SIZE /
-					    ZFS_HISTOGRAM_IO_BLOCK].
-					    count);
+					zio_histogram_add(spa->
+					    zfs_rio_histogram,
+					    ZFS_HISTOGRAM_IO_SIZE, psize);
 				}
 			}
 
 			if (type == ZIO_TYPE_WRITE) {
 				if (psize < ZFS_HISTOGRAM_IO_SIZE) {
-					atomic_add_64(&spa->zfs_wio_histogram[
-					    psize / ZFS_HISTOGRAM_IO_BLOCK].
-					    size, psize);
-					atomic_inc_64(&spa->zfs_wio_histogram[
-					    psize / ZFS_HISTOGRAM_IO_BLOCK].
-					    count);
+					zio_histogram_add(spa->
+					    zfs_wio_histogram,
+					    psize, psize);
 				} else {
-					atomic_add_64(&spa->zfs_wio_histogram[
-					    ZFS_HISTOGRAM_IO_SIZE /
-					    ZFS_HISTOGRAM_IO_BLOCK].size,
-					    psize);
-					atomic_inc_64(&spa->zfs_wio_histogram[
-					    ZFS_HISTOGRAM_IO_SIZE /
-					    ZFS_HISTOGRAM_IO_BLOCK].
-					    count);
+					zio_histogram_add(spa->
+					    zfs_wio_histogram,
+					    ZFS_HISTOGRAM_IO_SIZE, psize);
 				}
 			}
 #endif

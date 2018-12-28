@@ -29,6 +29,8 @@
 extern "C" {
 #endif
 
+extern int uzfs_write_size;
+
 struct metadata_desc;
 
 /*

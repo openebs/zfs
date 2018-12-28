@@ -149,11 +149,19 @@ main(int argc, char **argv)
 
 	zfs_do_write_coalesce = 1;
 	env = getenv("DISABLE_WRITE_COALESCE");
-	if (env != NULL)
+	if (env != NULL) {
 		if (strcmp(env, "1") == 0) {
 			LOG_INFO("Disabling write IOs coalescing");
 			zfs_do_write_coalesce = 0;
 		}
+	}
+
+	uzfs_write_size = 0;
+	env = getenv("UZFS_WRITE_SIZE");
+	if (env != NULL) {
+		uzfs_write_size = atoi(env);
+		LOG_INFO("uzfs write size = %d", uzfs_write_size);
+	}
 
 	SLIST_INIT(&uzfs_mgmt_conns);
 	mutex_init(&conn_list_mtx, NULL, MUTEX_DEFAULT, NULL);

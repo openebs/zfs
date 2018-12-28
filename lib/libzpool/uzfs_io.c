@@ -27,6 +27,8 @@
 #include <uzfs_io.h>
 #include <zrepl_mgmt.h>
 
+int uzfs_write_size;
+
 #if DEBUG
 inject_error_t	inject_error;
 #endif
@@ -82,6 +84,10 @@ uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 	uint64_t orig_offset = offset;
 	char *mdata = NULL, *tmdata = NULL, *tmdataend = NULL;
 
+	if (uzfs_write_size) {
+		// align it in the multiple of blocksize
+		blocksize = (uzfs_write_size / blocksize) * blocksize;
+	}
 	/*
 	 * If trying IO on fresh zvol before metadata granularity is set return
 	 * error.

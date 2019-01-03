@@ -86,7 +86,7 @@ uzfs_write_data(zvol_state_t *zv, char *buf, uint64_t offset, uint64_t len,
 
 	if (uzfs_write_size) {
 		// align it in the multiple of blocksize
-		blocksize = (uzfs_write_size / blocksize) * blocksize;
+		blocksize *= ((uzfs_write_size + blocksize - 1) / blocksize);
 	}
 	/*
 	 * If trying IO on fresh zvol before metadata granularity is set return

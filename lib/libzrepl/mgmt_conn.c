@@ -501,9 +501,27 @@ uzfs_zvol_mgmt_get_handshake_info(zvol_io_hdr_t *in_hdr, const char *name,
 	    &zinfo->checkpointed_ionum);
 	error2 = uzfs_zvol_get_last_committed_io_no(zv, DEGRADED_IO_SEQNUM,
 	    &zinfo->degraded_checkpointed_ionum);
-	if ((error1 != 0) || (error2 != 0)) {
-		LOG_ERR("Failed to read io_seqnum %s", zinfo->name);
+	if (error1 != 0) {
+		LOG_ERR("Failed to read io_seqnum %s, err1: %d err2: %d",
+		    zinfo->name, error1, error2);
 		return (-1);
+	}
+
+	/*
+	 * Success condition for error2
+	 * error2 can be 0 (or)
+	 * error2 can be ENOENT
+	 */
+	if ((error2 != 0) && (error2 != ENOENT)) {
+		LOG_ERR("Failed to read degraded_io %s, err1: %d err2: %d",
+		    zinfo->name, error1, error2);
+		return (-1);
+	}
+
+	if (error2 != 0) {
+		LOG_ERR("Failed to read degraded_io %sd err: %d", zinfo->name,
+		    error2);
+		zinfo->degraded_checkpointed_ionum = 0;
 	}
 
 	/*

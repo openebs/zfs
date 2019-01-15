@@ -380,8 +380,12 @@ free_ret:
 	error = zap_lookup(os, ZVOL_ZAP_OBJ, "metavolblocksize", 8, 1,
 	    &meta_vol_block_size);
 	/* ok if doesn't exist, it is initialized after zvol creation */
-	if (error)
-		meta_vol_block_size = 0;
+	if (error) {
+		if (error == ENOENT)
+			meta_vol_block_size = 0;
+		else
+			goto disown_free;
+	}
 
 	error = zap_lookup(os, ZVOL_ZAP_OBJ, "metadatasize", 8, 1,
 	    &meta_data_size);

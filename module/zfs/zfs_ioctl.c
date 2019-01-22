@@ -5156,7 +5156,6 @@ zfs_ioc_error_log(zfs_cmd_t *zc)
 	return (error);
 }
 
-#if defined(_KERNEL)
 static int
 zfs_ioc_clear(zfs_cmd_t *zc)
 {
@@ -5236,6 +5235,7 @@ zfs_ioc_clear(zfs_cmd_t *zc)
 	return (error);
 }
 
+#if defined(_KERNEL)
 static int
 zfs_ioc_pool_reopen(zfs_cmd_t *zc)
 {
@@ -7355,6 +7355,10 @@ uzfs_handle_ioctl(const char *pool, zfs_cmd_t *zc, uzfs_info_t *ucmd_info)
 		if (err == 0)
 			err = put_nvlist(zc, outnvl);
 		nvlist_free(outnvl);
+		break;
+	}
+	case ZFS_IOC_CLEAR: {
+		err = zfs_ioc_clear(zc);
 		break;
 	}
 	default:

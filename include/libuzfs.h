@@ -74,7 +74,8 @@ typedef struct uzfs_monitor {
     _UZFS_IOC(ZFS_IOC_PROMOTE, 1, 0, "promote the volume")                     \
     _UZFS_IOC(ZFS_IOC_CLONE, 1, 1, "clone the volume")                         \
     _UZFS_IOC(ZFS_IOC_ERROR_LOG, 0, 0, "get the error log")                    \
-    _UZFS_IOC(ZFS_IOC_STATS, 0, 0, "get the zfs volume stats")
+    _UZFS_IOC(ZFS_IOC_STATS, 0, 0, "get the zfs volume stats")                 \
+    _UZFS_IOC(ZFS_IOC_CLEAR, 1, 0, "clear the zpool error counters")
 
 
 #define	MAX_NVLIST_SRC_SIZE (128 * 1024 * 1024)

@@ -574,6 +574,9 @@ test_stripe_pool()
 	create_disk $src_pool_spare_disk
 	create_disk $dst_pool_spare_disk
 
+	# test clear pool
+	log_must $ZPOOL clear $src_pool
+
 	log_must $ZPOOL add -f $src_pool $src_pool_spare_disk
 	log_must $ZPOOL add -f $dst_pool $dst_pool_spare_disk
 
@@ -644,6 +647,9 @@ test_mirror_pool()
 	log_must $ZPOOL create -f $dst_pool mirror \
 	    -o cachefile="$TMPDIR/zpool_$dst_pool.cache" \
 	    $dst_pool_disk_a $dst_pool_disk_b
+
+	# test clear pool
+	log_must $ZPOOL clear $src_pool
 
 	# test pool expansion
 	create_disk $src_pool_spare_disk_a $src_pool_spare_disk_b
@@ -724,6 +730,9 @@ test_raidz_pool()
 	log_must $ZPOOL add -f $dst_pool \
 	    ${dst_pool_spare_disk[1]} ${dst_pool_spare_disk[2]} \
 	    ${dst_pool_spare_disk[3]} ${dst_pool_spare_disk[4]}
+
+	# test clear pool
+	log_must $ZPOOL clear $src_pool
 
 	# test vdev remove
 	log_must_not $ZPOOL remove $src_pool ${src_pool_spare_disk[2]}

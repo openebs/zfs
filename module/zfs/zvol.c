@@ -416,6 +416,10 @@ uzfs_ioc_stats(zfs_cmd_t *zc, nvlist_t *nvl)
 			    zv->sync_req_ack_cnt);
 			fnvlist_add_uint64(innvl, "syncLatency",
 			    zv->sync_latency);
+			fnvlist_add_uint64(innvl, "curIOCnt",
+			    zv->cur_io_cnt);
+			fnvlist_add_uint64(innvl, "dispatchedIOCnt",
+			    zv->dispatched_io_cnt);
 
 			nvlist_t *rnvl = fnvlist_alloc();
 

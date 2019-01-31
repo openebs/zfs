@@ -197,6 +197,8 @@ typedef struct zvol_info_s {
 	uint64_t 	write_byte;
 	uint64_t	sync_req_ack_cnt;
 	uint64_t 	sync_latency;
+	uint64_t 	cur_io_cnt;
+	uint64_t	dispatched_io_cnt;
 
 	// histogram of IOs
 	zfs_histogram_t uzfs_rio_histogram[ZFS_HISTOGRAM_IO_SIZE /

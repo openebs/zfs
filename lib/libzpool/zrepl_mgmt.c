@@ -390,7 +390,7 @@ uzfs_zinfo_init(void *zv, const char *ds_name, nvlist_t *create_props)
 	int nworker = MAX(boot_ncpus, nthread);
 
 	zinfo->uzfs_zvol_taskq = taskq_create("replica", nworker,
-	    defclsyspri, boot_ncpus, INT_MAX,
+	    defclsyspri, nworker, INT_MAX,
 	    TASKQ_PREPOPULATE | TASKQ_DYNAMIC);
 
 	STAILQ_INIT(&zinfo->complete_queue);

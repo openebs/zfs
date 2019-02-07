@@ -380,7 +380,16 @@ uzfs_zinfo_init(void *zv, const char *ds_name, nvlist_t *create_props)
 	ASSERT(zinfo->clone_zv == NULL);
 	ASSERT(zinfo->snapshot_zv == NULL);
 
-	zinfo->uzfs_zvol_taskq = taskq_create("replica", boot_ncpus,
+	char *env = getenv("UZFS_WORKER");
+	int nthread = 1;
+	if (env != NULL) {
+		nthread = atoi(env);
+		LOG_INFO("env UZFS_WORKER = %d", nthread);
+	}
+
+	int nworker = MAX(boot_ncpus, nthread);
+
+	zinfo->uzfs_zvol_taskq = taskq_create("replica", nworker,
 	    defclsyspri, boot_ncpus, INT_MAX,
 	    TASKQ_PREPOPULATE | TASKQ_DYNAMIC);
 

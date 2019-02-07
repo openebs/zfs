@@ -340,7 +340,7 @@ uzfs_zvol_worker(void *arg)
 		goto drop_refcount;
 	}
 
-	atomic_inc_64(&zinfo->cur_io_cnt);
+	atomic_inc_64(&zinfo->inflight_io_cnt);
 
 	/*
 	 * If zvol hasn't passed rebuild phase or if read
@@ -436,7 +436,7 @@ uzfs_zvol_worker(void *arg)
 	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 
 drop_refcount:
-	atomic_add_64(&zinfo->cur_io_cnt, -1);
+	atomic_add_64(&zinfo->inflight_io_cnt, -1);
 	atomic_add_64(&zinfo->dispatched_io_cnt, -1);
 
 	uzfs_zinfo_drop_refcnt(zinfo);

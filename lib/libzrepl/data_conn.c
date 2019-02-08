@@ -341,6 +341,8 @@ uzfs_zvol_worker(void *arg)
 		goto drop_refcount;
 	}
 
+	atomic_inc_64(&zinfo->inflight_io_cnt);
+
 	/*
 	 * If zvol hasn't passed rebuild phase or if read
 	 * is meant for rebuild or if target has asked for metadata
@@ -434,6 +436,9 @@ uzfs_zvol_worker(void *arg)
 	(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 
 drop_refcount:
+	atomic_add_64(&zinfo->inflight_io_cnt, -1);
+	atomic_add_64(&zinfo->dispatched_io_cnt, -1);
+
 	uzfs_zinfo_drop_refcnt(zinfo);
 }
 
@@ -794,6 +799,7 @@ next_step:
 		 */
 		uzfs_zinfo_take_refcnt(zinfo);
 		zio_cmd->zinfo = zinfo;
+		atomic_inc_64(&zinfo->dispatched_io_cnt);
 		uzfs_zvol_worker(zio_cmd);
 		if (zio_cmd->hdr.status != ZVOL_OP_STATUS_OK) {
 			LOG_ERR("rebuild IO failed.. for %s..", zinfo->name);
@@ -1291,6 +1297,7 @@ uzfs_zvol_rebuild_scanner_callback(off_t offset, size_t len,
 	uzfs_zinfo_take_refcnt(zinfo);
 	zio_cmd->zinfo = zinfo;
 	zinfo->rebuild_zv = zv;
+	atomic_inc_64(&zinfo->dispatched_io_cnt);
 
 	/*
 	 * Any error in uzfs_zvol_worker will send FAILURE status to degraded
@@ -1318,6 +1325,7 @@ uzfs_zvol_send_zio_cmd(zvol_info_t *zinfo, zvol_io_hdr_t *hdrp,
 	if (payload_size != 0)
 		bcopy(payload, zio_cmd->buf, payload_size);
 
+	atomic_inc_64(&zinfo->dispatched_io_cnt);
 	/* Take refcount for uzfs_zvol_worker to work on it */
 	uzfs_zinfo_take_refcnt(zinfo);
 	zio_cmd->zinfo = zinfo;
@@ -1740,6 +1748,7 @@ uzfs_zvol_io_ack_sender(void *arg)
 		zinfo->zio_cmd_in_ack = zio_cmd;
 		if (zio_cmd->hdr.flags & ZVOL_OP_FLAG_REBUILD)
 			zinfo->rebuild_cmd_acked_cnt++;
+
 		(void) pthread_mutex_unlock(&zinfo->zinfo_mutex);
 
 		LOG_DEBUG("ACK for op: %d, seq-id: %ld",
@@ -2100,6 +2109,8 @@ uzfs_zvol_io_receiver(void *arg)
 			zinfo->quiesce_requested = 0;
 			zinfo->quiesce_done = 1;
 		}
+
+		atomic_inc_64(&zinfo->dispatched_io_cnt);
 
 		taskq_dispatch(zinfo->uzfs_zvol_taskq, uzfs_zvol_worker,
 		    zio_cmd, TQ_SLEEP);

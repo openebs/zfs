@@ -196,6 +196,8 @@ typedef struct zvol_info_s {
 	uint64_t 	write_byte;
 	uint64_t	sync_req_ack_cnt;
 	uint64_t 	sync_latency;
+	uint64_t 	inflight_io_cnt; // ongoing IOs count
+	uint64_t	dispatched_io_cnt; // total received but incomplete IOs
 } zvol_info_t;
 
 typedef struct thread_args_s {

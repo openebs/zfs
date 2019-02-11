@@ -11,19 +11,24 @@ developed for Solaris and is now maintained by the OpenZFS community.
   * [Mailing lists](https://github.com/zfsonlinux/zfs/wiki/Mailing-Lists)
   * [OpenZFS site](http://open-zfs.org/)
 
-# Installation
-Full documentation for installing ZoL on your favorite Linux distribution can
-be found at [our site](http://zfsonlinux.org/).
-
 # Contribute & Develop
 We have a separate document with [contribution guidelines](./.github/CONTRIBUTING.md).
 
 # Building
 In addition to standard dependencies of ZFS on Linux project following
-packages need to be installed:
+packages need to be installed on a ubuntu machine:
 
 ```bash
-sudo apt-get install libaio-dev libgtest-dev cmake libjemalloc-dev libjson-c-dev
+sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+sudo apt-get update -qq
+sudo apt-get install --yes -qq gcc-6 g++-6
+sudo apt-get install --yes -qq build-essential autoconf libtool gawk alien fakeroot linux-headers-$(uname -r) libaio-dev
+sudo apt-get install --yes -qq zlib1g-dev uuid-dev libattr1-dev libblkid-dev libselinux-dev libudev-dev libssl-dev libjson-c-dev
+sudo apt-get install --yes -qq lcov libjemalloc-dev
+sudo apt-get install --yes -qq parted lsscsi ksh attr acl nfs-kernel-server fio
+sudo apt-get install --yes -qq libgtest-dev cmake
+sudo unlink /usr/bin/gcc && sudo ln -s /usr/bin/gcc-6 /usr/bin/gcc
+sudo unlink /usr/bin/g++ && sudo ln -s /usr/bin/g++-6 /usr/bin/g++
 ```
 
 Google test framework library does not have a binary package so it needs to be compiled manually:
@@ -35,13 +40,25 @@ sudo make
 # copy or symlink libgtest.a and libgtest_main.a to your /usr/lib folder
 sudo cp *.so /usr/lib
 ```
+Clone the shim layer which adds the core interfaces..
 
-Special configure option `--enable-debug` should be used in order to create
+```bash
+git clone https://github.com/openebs/spl
+cd spl
+git checkout spl-0.7.9
+sh autogen.sh
+./configure
+make -j4
+```
+
+Special configure option `--enable-uzfs` should be used in order to create
 zfs and zpool commands which don't call into the kernel using ioctls, but
-instead call into uZFS process for serving "ioctls" using tcp connection.
+instead call into uZFS process for serving "ioctls" using unix domain socket.
 Other than that the build steps are the same as for ZoL:
 
 ```bash
+git clone https://github.com/openebs/zfs.git
+cd zfs
 ./autogen.sh
 CFLAGS="-g -O0" ./configure --enable-debug --enable-uzfs=yes
 make

@@ -368,7 +368,8 @@ uzfs_ioc_stats(zfs_cmd_t *zc, nvlist_t *nvl)
 		if (zc->zc_name[0] == '\0' ||
 		    (uzfs_zvol_name_compare(zv, zc->zc_name) == 0)) {
 			nvlist_t *innvl = fnvlist_alloc();
-			/* split the string of the format poolname/volname
+			/*
+			 * split the string of the format poolname/volname
 			 * into two separate strings.
 			 */
 			char str[256];

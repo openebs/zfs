@@ -840,8 +840,11 @@ finish_async_tasks(void)
 		}
 		SLIST_REMOVE(&async_tasks, async_task, async_task, task_next);
 		free_async_task(async_task);
-		if (rc != 0)
+		if (rc != 0) {
+			LOG_ERR("replying to client returned error(%d)",
+			    async_task->conn->conn_fd);
 			break;
+		}
 	}
 	mutex_exit(&async_tasks_mtx);
 	return (rc);
@@ -1706,10 +1709,12 @@ uzfs_zvol_mgmt_thread(void *arg)
 
 			if (events[i].events & EPOLLERR) {
 				if (conn->conn_state == CS_CONNECT) {
-					LOG_ERR("Failed to connect to %s:%d",
-					    conn->conn_host, conn->conn_port);
+					LOG_ERR("Failed to connect to %s:%d "
+					    "fd(%d)", conn->conn_host,
+					    conn->conn_port, conn->conn_fd);
 				} else {
-					LOGERRCONN(conn, "Error on connection");
+					LOGERRCONN(conn, "Error on connection "
+					    "for sock(%d)", conn->conn_fd);
 				}
 				if (close_conn(conn) != 0) {
 					goto exit;
@@ -1739,6 +1744,8 @@ uzfs_zvol_mgmt_thread(void *arg)
 				if (cnt == 0) {
 					/* the other peer closed the conn */
 					if (events[i].events & EPOLLIN) {
+						LOG_ERR("connection closed for "
+						    "fd(%d)", conn->conn_fd);
 						if (close_conn(conn) != 0) {
 							goto exit;
 						}
@@ -1749,7 +1756,8 @@ uzfs_zvol_mgmt_thread(void *arg)
 					    errno == EINTR) {
 						continue;
 					}
-					perror("read/write");
+					LOG_ERR("Read/Write error(%d) on "
+					    "fd(%d)", errno, conn->conn_fd);
 					if (close_conn(conn) != 0) {
 						goto exit;
 					}

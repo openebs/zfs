@@ -379,9 +379,9 @@ uzfs_ioc_stats(zfs_cmd_t *zc, nvlist_t *nvl)
 			    zv->main_zv->rebuild_info.zv_rebuild_status));
 
 			fnvlist_add_uint64(innvl, "isIOAckSenderCreated",
-			    zv->is_io_ack_sender_created);
+			    (zv->is_io_ack_sender_created) ? 1 : 0);
 			fnvlist_add_uint64(innvl, "isIOReceiverCreated",
-			    zv->is_io_receiver_created);
+			    (zv->is_io_receiver_created) ? 1 : 0);
 			fnvlist_add_uint64(innvl, "runningIONum",
 			    zv->running_ionum);
 			fnvlist_add_uint64(innvl, "checkpointedIONum",

@@ -58,8 +58,8 @@ build-zfs-0:
     - make cstyle
     - export FIO_SRCDIR=$PWD/../fio
     - echo $FIO_SRCDIR
-#    - sudo bash ./print_debug_info.sh &
-#    - bash ./tests/cbtest/script/test_uzfs.sh -T all
+    - sudo bash ./print_debug_info.sh &
+    - bash ./tests/cbtest/script/test_uzfs.sh -T all
     - ./build_image.sh
 
 build-zfs-1:

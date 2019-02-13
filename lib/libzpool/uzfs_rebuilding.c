@@ -403,8 +403,13 @@ uzfs_destroy_internal_all_snap(zvol_state_t *zv)
 {
 	int ret;
 	char snapname[MAXNAMELEN];
-	objset_t *os = zv->zv_objset;
+	objset_t *os;
 	uint64_t obj = 0, cookie = 0;
+
+	if (!zv || !zv->zv_objset)
+		return (-1);
+
+	os = zv->zv_objset;
 
 	while (1) {
 		dsl_pool_config_enter(spa_get_dsl(zv->zv_spa), FTAG);

@@ -61,6 +61,10 @@ int uzfs_zvol_get_or_create_internal_clone(zvol_state_t *zv,
 int uzfs_zvol_release_internal_clone(zvol_state_t *zv,
     zvol_state_t *snap_zv, zvol_state_t *clone_zv);
 
+/*
+ * To remove all internal snapshots of a dataset
+ */
+int uzfs_destroy_internal_all_snap(zvol_state_t *zv);
 boolean_t is_stale_clone(zvol_state_t *);
 
 #ifdef __cplusplus

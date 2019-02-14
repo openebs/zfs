@@ -544,6 +544,13 @@ uzfs_zvol_destroy_snapshot_clone(zvol_state_t *zv, zvol_state_t *snap_zv,
 	LOG_INFO("Destroying %s and %s(%s) on:%s", snap_zv->zv_name,
 	    clone_zv->zv_name, clonename, zv->zv_name);
 
+	/* Destroy clone's snapshot */
+	ret = uzfs_destroy_internal_all_snap(clone_zv);
+	if (ret != 0) {
+		LOG_ERR("Rebuild_clone snap destroy failed on:%s"
+		    " with err:%d", clone_zv->zv_name, ret);
+	}
+
 	uzfs_zvol_release_internal_clone(zv, snap_zv, clone_zv);
 
 // try_clone_delete_again:

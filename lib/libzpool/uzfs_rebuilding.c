@@ -393,3 +393,49 @@ again:
 	strfree(snapname);
 	return (ret);
 }
+
+/*
+ * To destroy all internal created snapshot
+ * on a dataset
+ */
+int
+uzfs_destroy_internal_all_snap(zvol_state_t *zv)
+{
+	int ret;
+	char snapname[MAXNAMELEN];
+	objset_t *os;
+	uint64_t obj = 0, cookie = 0;
+
+	if (!zv || !zv->zv_objset)
+		return (-1);
+
+	os = zv->zv_objset;
+
+	while (1) {
+		dsl_pool_config_enter(spa_get_dsl(zv->zv_spa), FTAG);
+		ret = dmu_snapshot_list_next(os, sizeof (snapname) - 1,
+		    snapname, &obj, &cookie, NULL);
+		dsl_pool_config_exit(spa_get_dsl(zv->zv_spa), FTAG);
+
+		if (ret) {
+			if (ret == ENOENT)
+				ret = 0;
+			break;
+		}
+
+		if (!(strcmp(snapname, REBUILD_SNAPSHOT_SNAPNAME) == 0) &&
+		    !(strncmp(snapname, IO_DIFF_SNAPNAME,
+		    sizeof (IO_DIFF_SNAPNAME) - 1) == 0)) {
+			continue;
+		}
+
+		ret = destroy_snapshot_zv(zv, snapname);
+		if (ret != 0) {
+			LOG_ERR("Failed to destroy internal snap(%s) on:%s "
+			    "with err:%d", snapname, zv->zv_name, ret);
+			break;
+		}
+	}
+
+	return (ret);
+}

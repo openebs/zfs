@@ -59,6 +59,15 @@ typedef struct zvol_rebuild_info {
 
 	/* peer replica cnt whose rebuild is done and failure */
 	uint16_t rebuild_failed_cnt;
+
+	/*
+	 * does stale clone exist?
+	 * If stale_clone_exist set to 2 then timer thread will delete
+	 * the clone and related_snapshot.
+	 * scanner thread and rebuilding thread will increment
+	 * stale_clone_exis by 1.
+	 */
+	uint8_t	stale_clone_exist;
 } zvol_rebuild_info_t;
 
 /*
@@ -112,6 +121,9 @@ typedef struct zvol_state zvol_state_t;
 	(zv->rebuild_info.zv_rebuild_status == ZVOL_REBUILDING_ERRORED)
 #define	ZVOL_IS_REBUILDING_FAILED(zv)	\
 	(zv->rebuild_info.zv_rebuild_status == ZVOL_REBUILDING_FAILED)
+
+#define	ZVOL_HAS_STALE_CLONE(zv)	\
+	(zv->rebuild_info.stale_clone_exist == 2)
 
 extern int zvol_get_data(void *arg, lr_write_t *lr, char *buf, zio_t *zio);
 const char *rebuild_status_to_str(zvol_rebuild_status_t status);

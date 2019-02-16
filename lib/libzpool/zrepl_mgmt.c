@@ -545,10 +545,10 @@ uzfs_zvol_destroy_snapshot_clone(zvol_state_t *zv, zvol_state_t *snap_zv,
 	    clone_zv->zv_name, clonename, zv->zv_name);
 
 	/* Destroy clone's snapshot */
-	ret = uzfs_destroy_internal_all_snap(clone_zv);
+	ret = uzfs_destroy_all_internal_snapshots(clone_zv);
 	if (ret != 0) {
 		LOG_ERR("Rebuild_clone snap destroy failed on:%s"
-		    " with err:%d", clone_zv->zv_name, ret);
+		    " with err:%d", zv->zv_name, ret);
 	}
 
 	uzfs_zvol_release_internal_clone(zv, snap_zv, clone_zv);
@@ -605,5 +605,51 @@ uzfs_zinfo_destroy_internal_clone(zvol_info_t *zinfo)
 
 	ret = uzfs_zvol_destroy_snapshot_clone(zinfo->main_zv, snap_zv,
 	    clone_zv);
+	return (ret);
+}
+
+/*
+ * This API is used to delete stale
+ * cloned volume and backing snapshot.
+ */
+int
+uzfs_zinfo_destroy_stale_clone(zvol_info_t *zinfo)
+{
+	int ret = 0;
+	char *clone_subname = NULL;
+	zvol_state_t *l_snap_zv = NULL, *l_clone_zv = NULL;
+	zvol_state_t *zv;
+
+	if (!zinfo->main_zv)
+		return (0);
+
+	zv = zinfo->main_zv;
+
+	ret = get_snapshot_zv(zv, REBUILD_SNAPSHOT_SNAPNAME,
+	    &l_snap_zv, B_FALSE, B_TRUE);
+	if (ret != 0) {
+		LOG_ERR("Failed to get info about %s@%s",
+		    zv->zv_name, REBUILD_SNAPSHOT_SNAPNAME);
+		return (ret);
+	}
+
+	clone_subname = kmem_asprintf("%s_%s", strchr(zv->zv_name, '/') + 1,
+	    REBUILD_SNAPSHOT_CLONENAME);
+
+	ret = uzfs_open_dataset(zv->zv_spa, clone_subname, &l_clone_zv);
+	if (ret == 0) {
+		ret = uzfs_hold_dataset(l_clone_zv);
+		if (ret != 0) {
+			LOG_ERR("Failed to hold clone: %d", ret);
+			uzfs_close_dataset(l_clone_zv);
+			l_clone_zv = NULL;
+		}
+	}
+
+	if (!uzfs_zvol_destroy_snapshot_clone(zv, l_snap_zv, l_clone_zv))
+		zv->rebuild_info.stale_clone_exist = 0;
+
+	strfree(clone_subname);
+
 	return (ret);
 }

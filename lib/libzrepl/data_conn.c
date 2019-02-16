@@ -894,12 +894,21 @@ exit:
 		close(sfd);
 	}
 
-	if (wquiesce)
-		uzfs_zinfo_destroy_internal_clone(zinfo);
+#ifdef	DEBUG
+	if (inject_error.delay.rebuild_complete == 1)
+		sleep(10);
+#endif
+
+	if (wquiesce) {
+		if (uzfs_zinfo_destroy_internal_clone(zinfo)) {
+			mutex_enter(&zinfo->main_zv->rebuild_mtx);
+			zinfo->main_zv->rebuild_info.stale_clone_exist++;
+			mutex_exit(&zinfo->main_zv->rebuild_mtx);
+		}
+	}
 
 	/* Parent thread have taken refcount, drop it now */
 	uzfs_zinfo_drop_refcnt(zinfo);
-
 	zk_thread_exit();
 }
 
@@ -963,6 +972,10 @@ uzfs_zvol_timer_thread(void)
 					next_check = now +
 					    zinfo->update_ionum_interval;
 				}
+
+				if (ZVOL_HAS_STALE_CLONE(zinfo->main_zv)) {
+					uzfs_zinfo_destroy_stale_clone(zinfo);
+				}
 			} else if (uzfs_zvol_get_status(zinfo->main_zv) ==
 			    ZVOL_STATUS_DEGRADED &&
 			    zinfo->main_zv->zv_objset) {
@@ -1014,6 +1027,7 @@ uzfs_zvol_timer_thread(void)
 		    node_next);
 		kmem_free(n_zinfo, sizeof (*n_zinfo));
 	}
+	zk_thread_exit();
 }
 
 /*
@@ -1396,6 +1410,7 @@ uzfs_zvol_rebuild_scanner(void *arg)
 	uint64_t	checkpointed_io_seq = 0;
 	uint64_t	payload_size = 0;
 	char		*snap_name;
+	boolean_t	afs_rebuild;
 
 	if ((rc = setsockopt(fd, SOL_SOCKET, SO_LINGER, &lo, sizeof (lo)))
 	    != 0) {
@@ -1460,6 +1475,9 @@ read_socket:
 			LOG_INFO("Rebuild scanner started on zvol %s from "
 			    "sock(%d)", name, fd);
 
+			if (ZVOL_IS_REBUILDING_AFS(zinfo->main_zv))
+				afs_rebuild = B_TRUE;
+
 			uzfs_zvol_append_to_fd_list(zinfo, fd);
 			zinfo->rebuild_cmd_queued_cnt =
 			    zinfo->rebuild_cmd_acked_cnt = 0;
@@ -1515,7 +1533,6 @@ read_socket:
 				}
 				if (ZINFO_IS_DEGRADED(zinfo))
 					zv = zinfo->clone_zv;
-
 				rc = uzfs_zvol_create_internal_snapshot(zv,
 				    &snap_zv, metadata.io_num);
 				if (rc != 0) {
@@ -1630,6 +1647,15 @@ exit:
 		uzfs_zvol_remove_from_fd_list(zinfo, fd);
 
 		uzfs_zinfo_drop_refcnt(zinfo);
+
+		/*
+		 * Increment stale_clone_exist with 1
+		 */
+		if (afs_rebuild) {
+			mutex_enter(&zinfo->main_zv->rebuild_mtx);
+			zinfo->main_zv->rebuild_info.stale_clone_exist++;
+			mutex_exit(&zinfo->main_zv->rebuild_mtx);
+		}
 	} else {
 		LOG_INFO("Closing rebuild connection on sock(%d)", fd);
 	}
@@ -1652,6 +1678,7 @@ reinitialize_zv_state(zvol_state_t *zv)
 
 	uzfs_zvol_set_status(zv, ZVOL_STATUS_DEGRADED);
 	uzfs_zvol_set_rebuild_status(zv, ZVOL_REBUILDING_INIT);
+	zv->rebuild_info.stale_clone_exist = 0;
 }
 
 /*

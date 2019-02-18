@@ -2118,7 +2118,9 @@ TEST(uZFSRebuild, TestRebuildSnapDeletion) {
 
 	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
         zinfo->main_zv->zv_status = ZVOL_STATUS_DEGRADED;
+#ifdef	DEBUG
 	inject_error.delay.rebuild_complete = 1;
+#endif
 	do_data_connection(data_conn_fd1, "127.0.0.1", IO_SERVER_PORT, "vol1");
         execute_rebuild_test_case("complete rebuild with data conn", 15,
             ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_DONE, 4, "vol3");

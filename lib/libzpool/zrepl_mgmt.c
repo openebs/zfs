@@ -537,6 +537,11 @@ uzfs_zvol_destroy_snapshot_clone(zvol_state_t *zv, zvol_state_t *snap_zv,
 	int ret1 = 0;
 	char *clonename;
 
+	if (snap_zv == NULL) {
+		VERIFY(clone_zv != NULL);
+		return (0);
+	}
+
 	clonename = kmem_asprintf("%s/%s_%s", spa_name(zv->zv_spa),
 	    strchr(zv->zv_name, '/') + 1,
 	    REBUILD_SNAPSHOT_CLONENAME);
@@ -551,6 +556,10 @@ uzfs_zvol_destroy_snapshot_clone(zvol_state_t *zv, zvol_state_t *snap_zv,
 		    " with err:%d", zv->zv_name, ret);
 	}
 
+	/*
+	 * We need to release the snapshot zv so that next hold
+	 * on dataset doesn't fail
+	 */
 	uzfs_zvol_release_internal_clone(zv, snap_zv, clone_zv);
 
 // try_clone_delete_again:
@@ -638,11 +647,16 @@ uzfs_zinfo_destroy_stale_clone(zvol_info_t *zinfo)
 
 	ret = uzfs_open_dataset(zv->zv_spa, clone_subname, &l_clone_zv);
 	if (ret == 0) {
+		/*
+		 * If hold on clone dataset fails then we will
+		 * try to delete the clone after sometime.
+		 */
 		ret = uzfs_hold_dataset(l_clone_zv);
 		if (ret != 0) {
 			LOG_ERR("Failed to hold clone: %d", ret);
 			uzfs_close_dataset(l_clone_zv);
-			l_clone_zv = NULL;
+			uzfs_close_dataset(l_snap_zv);
+			return (ret);
 		}
 	}
 

@@ -904,6 +904,8 @@ exit:
 			mutex_enter(&zinfo->main_zv->rebuild_mtx);
 			zinfo->main_zv->rebuild_info.stale_clone_exist++;
 			mutex_exit(&zinfo->main_zv->rebuild_mtx);
+		} else {
+			zinfo->main_zv->rebuild_info.stale_clone_exist = 0;
 		}
 	}
 

@@ -658,6 +658,9 @@ uzfs_zinfo_destroy_stale_clone(zvol_info_t *zinfo)
 			uzfs_close_dataset(l_snap_zv);
 			return (ret);
 		}
+	} else {
+		uzfs_close_dataset(l_snap_zv);
+		return (ret);
 	}
 
 	if (!uzfs_zvol_destroy_snapshot_clone(zv, l_snap_zv, l_clone_zv))

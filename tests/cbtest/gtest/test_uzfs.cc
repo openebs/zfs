@@ -2126,7 +2126,9 @@ TEST(uZFSRebuild, TestRebuildSnapDeletion) {
             ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_DONE, 4, "vol3");
 
 	sleep(12);
+#ifdef	DEBUG
 	inject_error.delay.rebuild_complete = 0;
+#endif
 
 	EXPECT_EQ(0, dsl_prop_get_integer(zinfo->main_zv->zv_name,
 	    zfs_prop_to_name(ZFS_PROP_QUORUM), &quorum, NULL));

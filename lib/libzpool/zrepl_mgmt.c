@@ -654,12 +654,14 @@ uzfs_zinfo_destroy_stale_clone(zvol_info_t *zinfo)
 		ret = uzfs_hold_dataset(l_clone_zv);
 		if (ret != 0) {
 			LOG_ERR("Failed to hold clone: %d", ret);
+			strfree(clone_subname);
 			uzfs_close_dataset(l_clone_zv);
 			uzfs_close_dataset(l_snap_zv);
 			return (ret);
 		}
 	} else {
 		uzfs_close_dataset(l_snap_zv);
+		strfree(clone_subname);
 		return (ret);
 	}
 

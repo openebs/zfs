@@ -76,6 +76,7 @@ typedef struct inject_delay_s {
 	int downgraded_replica_rebuild_size_set;
 	int io_receiver_exit;
 	int helping_replica_rebuild_complete;
+	int rebuild_complete;
 } inject_delay_t;
 
 typedef struct inject_rebuild_error_s {
@@ -283,6 +284,11 @@ uzfs_zinfo_take_refcnt(zvol_info_t *zinfo)
 {
 	atomic_inc_64(&zinfo->refcnt);
 }
+
+/*
+ * To remove the internal stale clone
+ */
+int uzfs_zinfo_destroy_stale_clone(zvol_info_t *zinfo);
 
 /*
  * ZAP key for io sequence number

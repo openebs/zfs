@@ -894,12 +894,23 @@ exit:
 		close(sfd);
 	}
 
-	if (wquiesce)
-		uzfs_zinfo_destroy_internal_clone(zinfo);
+#ifdef	DEBUG
+	if (inject_error.delay.rebuild_complete == 1)
+		sleep(10);
+#endif
+
+	if (wquiesce) {
+		if (uzfs_zinfo_destroy_internal_clone(zinfo)) {
+			mutex_enter(&zinfo->main_zv->rebuild_mtx);
+			zinfo->main_zv->rebuild_info.stale_clone_exist++;
+			mutex_exit(&zinfo->main_zv->rebuild_mtx);
+		} else {
+			zinfo->main_zv->rebuild_info.stale_clone_exist = 0;
+		}
+	}
 
 	/* Parent thread have taken refcount, drop it now */
 	uzfs_zinfo_drop_refcnt(zinfo);
-
 	zk_thread_exit();
 }
 
@@ -963,6 +974,10 @@ uzfs_zvol_timer_thread(void)
 					next_check = now +
 					    zinfo->update_ionum_interval;
 				}
+
+				if (ZVOL_HAS_STALE_CLONE(zinfo->main_zv)) {
+					uzfs_zinfo_destroy_stale_clone(zinfo);
+				}
 			} else if (uzfs_zvol_get_status(zinfo->main_zv) ==
 			    ZVOL_STATUS_DEGRADED &&
 			    zinfo->main_zv->zv_objset) {
@@ -1014,6 +1029,7 @@ uzfs_zvol_timer_thread(void)
 		    node_next);
 		kmem_free(n_zinfo, sizeof (*n_zinfo));
 	}
+	zk_thread_exit();
 }
 
 /*
@@ -1515,7 +1531,6 @@ read_socket:
 				}
 				if (ZINFO_IS_DEGRADED(zinfo))
 					zv = zinfo->clone_zv;
-
 				rc = uzfs_zvol_create_internal_snapshot(zv,
 				    &snap_zv, metadata.io_num);
 				if (rc != 0) {
@@ -1652,6 +1667,7 @@ reinitialize_zv_state(zvol_state_t *zv)
 
 	uzfs_zvol_set_status(zv, ZVOL_STATUS_DEGRADED);
 	uzfs_zvol_set_rebuild_status(zv, ZVOL_REBUILDING_INIT);
+	zv->rebuild_info.stale_clone_exist = 0;
 }
 
 /*

@@ -399,7 +399,7 @@ again:
  * on a dataset
  */
 int
-uzfs_destroy_internal_all_snap(zvol_state_t *zv)
+uzfs_destroy_all_internal_snapshots(zvol_state_t *zv)
 {
 	int ret;
 	char snapname[MAXNAMELEN];

@@ -2059,6 +2059,87 @@ void verify_ios_from_two_replica(void *arg)
 	zk_thread_exit();
 }
 
+static int
+check_if_snap_exist(zvol_state_t *zv, char *snap)
+{
+	int ret;
+	char snapname[MAXNAMELEN];
+	objset_t *os;
+	uint64_t obj = 0, cookie = 0;
+
+	if (!zv || !zv->zv_objset)
+		return (-1);
+
+	os = zv->zv_objset;
+	while (1) {
+		dsl_pool_config_enter(spa_get_dsl(zv->zv_spa), FTAG);
+		ret = dmu_snapshot_list_next(os, sizeof (snapname) - 1,
+		    snapname, &obj, &cookie, NULL);
+		dsl_pool_config_exit(spa_get_dsl(zv->zv_spa), FTAG);
+
+		if (ret) {
+			if (ret == ENOENT)
+				ret = 0;
+			break;
+		}
+		if (strcmp(snapname, snap) == 0) {
+			ret = 1;
+			break;
+		}
+	}
+
+	return (ret);
+}
+
+TEST(uZFSRebuild, TestRebuildSnapDeletion) {
+	int data_conn_fd1, data_conn_fd3;
+	rebuild_scanner = &uzfs_mock_rebuild_scanner_abrupt_conn_close;
+	dw_replica_fn = &uzfs_zvol_rebuild_dw_replica;
+	io_receiver = &uzfs_zvol_io_receiver;
+
+	zinfo->main_zv->zv_status = ZVOL_STATUS_DEGRADED;
+	zvol_rebuild_step_size = (1024ULL * 1024ULL * 1024ULL) / 2 + 1000;
+	do_data_connection(data_conn_fd1, "127.0.0.1", IO_SERVER_PORT, "vol1");
+	do_data_connection(data_conn_fd3, "127.0.0.1", IO_SERVER_PORT, "vol3");
+
+	uint64_t quorum = -1;
+	EXPECT_EQ(0, dsl_prop_get_integer(zinfo->main_zv->zv_name,
+	    zfs_prop_to_name(ZFS_PROP_QUORUM), &quorum, NULL));
+	EXPECT_EQ(quorum, 0);
+
+	/* thread that helps rebuilding exits abruptly just after connects */
+	execute_rebuild_test_case("rebuild abrupt", 1, ZVOL_REBUILDING_SNAP,
+	    ZVOL_REBUILDING_FAILED, 4, "vol3");
+        close(data_conn_fd1);
+
+	EXPECT_EQ(NULL, !zinfo->clone_zv);
+	EXPECT_EQ(0, dmu_objset_snapshot_one(zinfo->clone_zv->zv_name, ".io_snap100.2"));
+	EXPECT_EQ(0, dmu_objset_snapshot_one(zinfo->clone_zv->zv_name, ".io_snap100.1"));
+
+	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
+        zinfo->main_zv->zv_status = ZVOL_STATUS_DEGRADED;
+#ifdef	DEBUG
+	inject_error.delay.rebuild_complete = 1;
+#endif
+	do_data_connection(data_conn_fd1, "127.0.0.1", IO_SERVER_PORT, "vol1");
+        execute_rebuild_test_case("complete rebuild with data conn", 15,
+            ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_DONE, 4, "vol3");
+
+	sleep(12);
+#ifdef	DEBUG
+	inject_error.delay.rebuild_complete = 0;
+#endif
+
+	EXPECT_EQ(0, dsl_prop_get_integer(zinfo->main_zv->zv_name,
+	    zfs_prop_to_name(ZFS_PROP_QUORUM), &quorum, NULL));
+	EXPECT_EQ(quorum, 1);
+
+	EXPECT_EQ(0, check_if_snap_exist(zinfo->main_zv, (char *)REBUILD_SNAPSHOT_SNAPNAME));
+	close(data_conn_fd1);
+	close(data_conn_fd3);
+	sleep(10);
+}
+
 TEST(uZFSRebuild, TestErroredRebuild) {
 	replica_writes_io_t wargs = { 0 };
 	kthread_t *writer_thread, *reader_thread;
@@ -2087,11 +2168,6 @@ TEST(uZFSRebuild, TestErroredRebuild) {
 #ifdef DEBUG
 	inject_error.inject_rebuild_error.dw_replica_rebuild_error_io = (total_ios) / 4;
 #endif
-	uint64_t quorum = -1;
-	EXPECT_EQ(0, dsl_prop_get_integer(zinfo->main_zv->zv_name,
-	    zfs_prop_to_name(ZFS_PROP_QUORUM), &quorum, NULL));
-	EXPECT_EQ(quorum, 0);
-
 	execute_rebuild_test_case("errored rebuild with data conn", 15,
 	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED, 4, "vol3");
 	close(wargs.r1_fd);
@@ -2130,6 +2206,7 @@ TEST(uZFSRebuild, TestErroredRebuild) {
 	    0, 0);
 	zk_thread_join(writer_thread->t_tid);
 
+	uint64_t quorum = 0;
 	EXPECT_EQ(0, dsl_prop_get_integer(zinfo->main_zv->zv_name,
 	    zfs_prop_to_name(ZFS_PROP_QUORUM), &quorum, NULL));
 	EXPECT_EQ(quorum, 1);

@@ -95,6 +95,7 @@ struct zvol_state {
 	zvol_status_t zv_status;		/* zvol status */
 	kmutex_t rebuild_mtx;
 	zvol_rebuild_info_t rebuild_info;
+	uint8_t zvol_workers;			/* zvol workers count */
 };
 
 #define	ZVOL_VOLUME_SIZE(zv)	(zv->zv_volsize)

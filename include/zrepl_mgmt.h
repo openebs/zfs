@@ -40,6 +40,7 @@ extern "C" {
 #define	uZFS_ZVOL_WORKERS_MAX 128
 #define	uZFS_ZVOL_WORKERS_DEFAULT 6
 #define	ZFS_PROP_TARGET_IP	"io.openebs:targetip"
+#define	ZFS_PROP_ZVOL_WORKERS	"io.openebs:zvol_workers"
 
 #define	REBUILD_IO_SERVER_PORT	3233
 #define	IO_SERVER_PORT	3232
@@ -239,7 +240,7 @@ typedef struct zvol_rebuild_s {
 	int		fd;
 } zvol_rebuild_t;
 
-extern int uzfs_zinfo_init(void *zv, const char *ds_name,
+extern int uzfs_zinfo_init(zvol_state_t *zv, const char *ds_name,
     nvlist_t *create_props);
 extern zvol_info_t *uzfs_zinfo_lookup(const char *name);
 extern void uzfs_zinfo_replay_zil_all(void);

@@ -390,6 +390,8 @@ uzfs_ioc_stats(zfs_cmd_t *zc, nvlist_t *nvl)
 			    zv->degraded_checkpointed_ionum);
 			fnvlist_add_uint64(innvl, "checkpointedTime",
 			    zv->checkpointed_time);
+			fnvlist_add_uint64(innvl, "zvol_workers",
+			    zv->main_zv->zvol_workers);
 
 			fnvlist_add_uint64(innvl, "rebuildBytes",
 			    zv->main_zv->rebuild_info.rebuild_bytes);

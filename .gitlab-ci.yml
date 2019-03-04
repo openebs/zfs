@@ -2,52 +2,54 @@ stages:
   - build
   - baseline
 
-before_script:
-  - echo $HOME
-  - export BRANCH=${CI_COMMIT_REF_NAME}
-  - echo $BRANCH
-  - export COMMIT=${CI_COMMIT_SHA:0:8}
-  - echo $FIO_SRCDIR
-  - apt-get update
-  - apt-get install --yes sudo git-core
-  - sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
-  - sudo apt-get update -qq
-  - sudo apt-get install --yes -qq gcc-6 g++-6
-  - sudo apt-get install --yes -qq build-essential autoconf libtool gawk alien fakeroot linux-headers-$(uname -r) libaio-dev
-  - sudo apt-get install --yes -qq zlib1g-dev uuid-dev libattr1-dev libblkid-dev libselinux-dev libudev-dev libssl-dev libjson-c-dev
-  - sudo apt-get install --yes -qq lcov libjemalloc-dev libelf-dev net-tools bc kmod linux-modules-4.15.0-1025-gcp
-  # packages for tests
-  - sudo apt-get install --yes -qq parted lsscsi ksh attr acl nfs-kernel-server fio
-  - sudo apt-get install --yes -qq libgtest-dev cmake
-  # packages for debugging
-  - sudo apt-get install --yes gdb
-  # use gcc-6 by default
-  - sudo unlink /usr/bin/gcc && sudo ln -s /usr/bin/gcc-6 /usr/bin/gcc
-  - sudo unlink /usr/bin/g++ && sudo ln -s /usr/bin/g++-6 /usr/bin/g++
-  - echo "CSTOR"
-  - echo $COMMIT
-  - pushd .
-  - cd /usr/src/gtest
-  - sudo cmake CMakeLists.txt
-  - sudo make -j4
-  - sudo cp *.a /usr/lib
-  - popd
-  - cd ..
-  # we need fio repo to build zfs replica fio engine
-  - git clone https://github.com/axboe/fio
-  - cd fio
-  - git checkout fio-3.7
-  - ./configure
-  - sudo make -j4
-  - cd ..
-  - git clone https://github.com/openebs/spl
-  - cd spl
-  - git checkout spl-0.7.9
-  - sudo sh autogen.sh
-  - ./configure
-
 build-zfs-0:
    stage: build
+   only:
+     refs:
+       - ^(v[0-9][.][0-9][.]x|zfs-0.7-release)?$
+   before_script:
+     - echo $HOME
+     - export BRANCH=${CI_COMMIT_REF_NAME}
+     - echo $BRANCH
+     - export COMMIT=${CI_COMMIT_SHORT_SHA}
+     - echo $FIO_SRCDIR
+     - apt-get update
+     - apt-get install --yes sudo git-core
+     - sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+     - sudo apt-get update -qq
+     - sudo apt-get install --yes -qq gcc-6 g++-6
+     - sudo apt-get install --yes -qq build-essential autoconf libtool gawk alien fakeroot linux-headers-$(uname -r) libaio-dev
+     - sudo apt-get install --yes -qq zlib1g-dev uuid-dev libattr1-dev libblkid-dev libselinux-dev libudev-dev libssl-dev libjson-c-dev
+     - sudo apt-get install --yes -qq lcov libjemalloc-dev libelf-dev net-tools bc kmod linux-modules-4.15.0-1025-gcp
+  # packages for tests
+     - sudo apt-get install --yes -qq parted lsscsi ksh attr acl nfs-kernel-server fio
+     - sudo apt-get install --yes -qq libgtest-dev cmake
+  # packages for debugging
+     - sudo apt-get install --yes gdb
+  # use gcc-6 by default
+     - sudo unlink /usr/bin/gcc && sudo ln -s /usr/bin/gcc-6 /usr/bin/gcc
+     - sudo unlink /usr/bin/g++ && sudo ln -s /usr/bin/g++-6 /usr/bin/g++
+     - echo "CSTOR"
+     - echo $COMMIT
+     - pushd .
+     - cd /usr/src/gtest
+     - sudo cmake CMakeLists.txt
+     - sudo make -j4
+     - sudo cp *.a /usr/lib
+     - popd
+     - cd ..
+  # we need fio repo to build zfs replica fio engine
+     - git clone https://github.com/axboe/fio
+     - cd fio
+     - git checkout fio-3.7
+     - ./configure
+     - sudo make -j4
+     - cd ..
+     - git clone https://github.com/openebs/spl
+     - cd spl
+     - git checkout spl-0.7.9
+     - sudo sh autogen.sh
+     - ./configure
    script: 
     - make -j4
     - cd ../zfs
@@ -64,6 +66,52 @@ build-zfs-0:
 
 build-zfs-1:
    stage: build
+   only:
+     refs:
+       - ^(v[0-9][.][0-9][.]x|zfs-0.7-release)?$
+   before_script:
+     - echo $HOME
+     - export BRANCH=${CI_COMMIT_REF_NAME}
+     - echo $BRANCH
+     - export COMMIT=${CI_COMMIT_SHORT_SHA}
+     - echo $FIO_SRCDIR
+     - apt-get update
+     - apt-get install --yes sudo git-core
+     - sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+     - sudo apt-get update -qq
+     - sudo apt-get install --yes -qq gcc-6 g++-6
+     - sudo apt-get install --yes -qq build-essential autoconf libtool gawk alien fakeroot linux-headers-$(uname -r) libaio-dev
+     - sudo apt-get install --yes -qq zlib1g-dev uuid-dev libattr1-dev libblkid-dev libselinux-dev libudev-dev libssl-dev libjson-c-dev
+     - sudo apt-get install --yes -qq lcov libjemalloc-dev libelf-dev net-tools bc kmod linux-modules-4.15.0-1025-gcp
+  # packages for tests
+     - sudo apt-get install --yes -qq parted lsscsi ksh attr acl nfs-kernel-server fio
+     - sudo apt-get install --yes -qq libgtest-dev cmake
+  # packages for debugging
+     - sudo apt-get install --yes gdb
+  # use gcc-6 by default
+     - sudo unlink /usr/bin/gcc && sudo ln -s /usr/bin/gcc-6 /usr/bin/gcc
+     - sudo unlink /usr/bin/g++ && sudo ln -s /usr/bin/g++-6 /usr/bin/g++
+     - echo "CSTOR"
+     - echo $COMMIT
+     - pushd .
+     - cd /usr/src/gtest
+     - sudo cmake CMakeLists.txt
+     - sudo make -j4
+     - sudo cp *.a /usr/lib
+     - popd
+     - cd ..
+  # we need fio repo to build zfs replica fio engine
+     - git clone https://github.com/axboe/fio
+     - cd fio
+     - git checkout fio-3.7
+     - ./configure
+     - sudo make -j4
+     - cd ..
+     - git clone https://github.com/openebs/spl
+     - cd spl
+     - git checkout spl-0.7.9
+     - sudo sh autogen.sh
+     - ./configure
    script: 
     - make --no-print-directory -s pkg-utils pkg-kmod
     - sudo dpkg -i *.deb
@@ -79,6 +127,9 @@ build-zfs-1:
 
 baseline-image:
   stage: baseline
+  only:
+    refs:
+      - ^(v[0-9][.][0-9][.]x|zfs-0.7-release)?$
   image: atulabhi/kops:v10
   before_script: []  
   script:
@@ -89,9 +140,10 @@ baseline-image:
      - git config --global user.email openebscibot@openebs.io
      - export BRANCH=${CI_COMMIT_REF_NAME}
      - echo $BRANCH
-     - export COMMIT=${CI_COMMIT_SHA:0:8}
+     - export COMMIT=${CI_COMMIT_SHORT_SHA}
      - echo $COMMIT
      - git clone https://github.com/openebs/e2e-infrastructure.git
+     - if [[ "$BRANCH" == "zfs-0.7-release" ]] ; then git checkout master ; else git checkout $BRANCH ; fi
      - cd e2e-infrastructure/baseline
      - ansible-playbook commit-writer.yml --extra-vars "branch=$BRANCH repo=$CI_PROJECT_NAME commit=$COMMIT"
      - git status
@@ -99,6 +151,7 @@ baseline-image:
      - git status
      - git commit -m "updated $CI_PROJECT_NAME commit:$COMMIT"
      - git push  https://$user:$pass@github.com/openebs/e2e-infrastructure.git --all
-     - curl -X POST -F token=$AZURE -F ref=master https://gitlab.openebs.ci/api/v4/projects/2/trigger/pipeline
-     - curl -X POST -F token=$EKS -F ref=master https://gitlab.openebs.ci/api/v4/projects/3/trigger/pipeline
-     - curl -X POST -F token=$GKE -F ref=master https://gitlab.openebs.ci/api/v4/projects/5/trigger/pipeline
+     - if [[ "$BRANCH" == "zfs-0.7-release" ]] ; then export INFRA="master" ; else export INFRA=$BRANCH ; fi
+     - curl -X POST -F variable[INFRA_BRANCH]=$INFRA -F token=$PACKET -F ref=k8s-1-11 https://gitlab.openebs.ci/api/v4/projects/27/trigger/pipeline
+     - curl -X POST -F variable[INFRA_BRANCH]=$INFRA -F token=$PACKET -F ref=k8s-1-12 https://gitlab.openebs.ci/api/v4/projects/27/trigger/pipeline
+     - curl -X POST -F variable[INFRA_BRANCH]=$INFRA -F token=$PACKET -F ref=k8s-1-13 https://gitlab.openebs.ci/api/v4/projects/27/trigger/pipeline

@@ -463,11 +463,14 @@ uzfs_ioc_stats(zfs_cmd_t *zc, nvlist_t *nvl)
 	}
 	(void) mutex_exit(&zvol_list_mutex);
 
-	if (zc->zc_name[0] == '\0') {
+	if (zc->zc_name[0] != '\0') {
 		spa_t *spa = NULL;
 		nvlist_t *tnvl = fnvlist_alloc();
 		mutex_enter(&spa_namespace_lock);
 		while ((spa = spa_next(spa)) != NULL) {
+			if (strcmp(spa->spa_name, zc->zc_name) != 0) {
+				continue;
+			}
 			nvlist_t *pnvl = fnvlist_alloc();
 
 			nvlist_t *innvl = fnvlist_alloc();

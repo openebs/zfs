@@ -206,7 +206,7 @@ run_zvol_tests()
 	log_must datasetexists $src_pool/$src_vol
 	log_must check_prop $src_pool/$src_vol type volume
 
-	log_must $ZFS create -V $VOLSIZE -o io.openebs:targetip=127.0.0.1:6060 $src_pool/$src_vol"_1"
+	log_must $ZFS create -V $VOLSIZE -o io.openebs:targetip=127.0.0.1:6060 -o io.openebs:zvol_workers=19 $src_pool/$src_vol"_1"
 
 	# test volume properties
 	log_must $ZFS get all $src_pool/$src_vol > /dev/null
@@ -231,6 +231,8 @@ run_zvol_tests()
 	log_must check_prop "$src_pool/$src_vol" sync always
 
 	log_must check_prop "$src_pool/$src_vol""_1" io.openebs:targetip 127.0.0.1:6060
+
+	log_must check_stats "$src_pool/$src_vol""_1" zvol_workers 19
 
 	# dump some data
 	#log_must dump_data
@@ -530,6 +532,13 @@ check_history()
 	    | grep -i "$match" > /dev/null 2>&1
 
 	return $?
+}
+
+check_stats()
+{
+	type=$($ZFS stats | jq .stats[0].$2)
+	test $type = "$3" && return 0
+	return 1
 }
 
 check_prop()

@@ -287,32 +287,44 @@ ret:
 }
 
 /*
- * Try to obtain controller address from zfs property.
+ * Try to obtain controller address and zvol workers from zfs property.
  */
 static int
-get_controller_ip(objset_t *os, char *buf, int len)
+get_openebs_options(objset_t *os, zvol_state_t *zv)
 {
 	nvlist_t *props, *propval;
 	char *ip;
 	int error;
 	dsl_pool_t *dp = spa_get_dsl(os->os_spa);
+	char *zvol_workers;
 
 	dsl_pool_config_enter(dp, FTAG);
 	error = dsl_prop_get_all(os, &props);
 	dsl_pool_config_exit(dp, FTAG);
 	if (error != 0)
 		return (error);
-	if (nvlist_lookup_nvlist(props, ZFS_PROP_TARGET_IP, &propval) != 0) {
-		nvlist_free(props);
-		return (ENOENT);
-	}
-	if (nvlist_lookup_string(propval, ZPROP_VALUE, &ip) != 0) {
-		nvlist_free(props);
-		return (EINVAL);
-	}
-	strncpy(buf, ip, len);
+
+	/*
+	 * reading zvol_workers on failure of getting target_ip will not be
+	 * useful as change of target ip using zfs set will not be picked
+	 * and need restart of zrepl.
+	 */
+	if ((error = nvlist_lookup_nvlist(props, ZFS_PROP_TARGET_IP, &propval))
+	    != 0)
+		goto end;
+	if ((error = nvlist_lookup_string(propval, ZPROP_VALUE, &ip)) != 0)
+		goto end;
+	strncpy(zv->zv_target_host, ip, sizeof (zv->zv_target_host));
+
+	if ((error = nvlist_lookup_nvlist(props, ZFS_PROP_ZVOL_WORKERS,
+	    &propval)) != 0)
+		goto end;
+	if (nvlist_lookup_string(propval, ZPROP_VALUE, &zvol_workers) != 0)
+		goto end;
+	zv->zvol_workers = (uint8_t)strtol(zvol_workers, NULL, 10);
+end:
 	nvlist_free(props);
-	return (0);
+	return (error);
 }
 
 /* owns objset with name 'ds_name' in pool 'spa' */
@@ -396,8 +408,7 @@ free_ret:
 	zv->zv_volmetadatasize = meta_data_size;
 	zv->zv_metavolblocksize = meta_vol_block_size;
 
-	error = get_controller_ip(os, zv->zv_target_host,
-	    sizeof (zv->zv_target_host));
+	error = get_openebs_options(os, zv);
 	if (error != 0 && error != ENOENT)
 		goto disown_free;
 
@@ -505,6 +516,7 @@ uzfs_zvol_create_cb(const char *ds_name, void *arg)
 	int 		error = -1;
 	nvlist_t	*nvprops = arg;
 	char		*ip;
+	char		*zvol_workers;
 
 	if (strrchr(ds_name, '@') != NULL) {
 		return (0);
@@ -535,6 +547,12 @@ uzfs_zvol_create_cb(const char *ds_name, void *arg)
 			uzfs_close_dataset(zv);
 			return (error);
 		}
+
+		error = nvlist_lookup_string(nvprops, ZFS_PROP_ZVOL_WORKERS,
+		    &zvol_workers);
+		if (error == 0)
+			zv->zvol_workers = (uint8_t)strtol(zvol_workers, NULL,
+			    10);
 	} else {
 		if (zv->zv_target_host[0] == '\0') {
 			LOG_ERR("target IP address is empty for %s", ds_name);

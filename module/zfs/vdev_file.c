@@ -233,6 +233,17 @@ vdev_file_io_start(zio_t *zio)
 
 	zio->io_target_timestamp = zio_handle_io_delay(zio);
 
+#if defined(_DISABLE_WRITES)
+	if ((zio->io_bookmark.zb_objset != 0) && (zio->io_bookmark.zb_object == 1) &&
+	    (zio->io_bookmark.zb_level == 0)) {
+		if (zio->io_type == ZIO_TYPE_READ)
+			zio_interrupt(zio);
+		else
+			zio_execute(zio);
+		return;
+	}
+#endif
+
 	VERIFY3U(taskq_dispatch(vdev_file_taskq, vdev_file_io_strategy, zio,
 	    TQ_SLEEP), !=, TASKQID_INVALID);
 }

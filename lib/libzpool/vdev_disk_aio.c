@@ -709,6 +709,16 @@ vdev_disk_aio_start(zio_t *zio)
 		break;
 	}
 
+#if defined(_DISABLE_WRITES)
+	if ((zio->io_bookmark.zb_objset != 0) && (zio->io_bookmark.zb_object == 1) &&
+	    (zio->io_bookmark.zb_level == 0)) {
+		if (zio->io_type == ZIO_TYPE_READ)
+			zio_interrupt(zio);
+		else
+			zio_execute(zio);
+		return;
+	}
+#endif
 	/*
 	 * Enqueue zio and poller thread will take care of it.
 	 */

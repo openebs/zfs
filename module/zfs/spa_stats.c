@@ -36,7 +36,7 @@ int zfs_read_history_hits = 0;
 /*
  * Keeps stats on the last N txgs, disabled by default.
  */
-int zfs_txg_history = 0;
+int zfs_txg_history = 10;
 
 /*
  * Keeps stats on the last N MMP updates, disabled by default.
@@ -389,6 +389,9 @@ spa_txg_history_init(spa_t *spa)
 		ksp->ks_update = spa_txg_history_update;
 		kstat_set_raw_ops(ksp, spa_txg_history_headers,
 		    spa_txg_history_data, spa_txg_history_addr);
+		ksp->ks_raw_ops.headers = spa_txg_history_headers;
+		ksp->ks_raw_ops.data = spa_txg_history_data;
+		ksp->ks_raw_ops.addr = spa_txg_history_addr;
 		kstat_install(ksp);
 	}
 }
@@ -426,7 +429,7 @@ spa_txg_history_add(spa_t *spa, uint64_t txg, hrtime_t birth_time)
 	spa_stats_history_t *ssh = &spa->spa_stats.txg_history;
 	spa_txg_history_t *sth, *rm;
 
-	if (zfs_txg_history == 0 && ssh->size == 0)
+	if (zfs_txg_history == 0)
 		return;
 
 	sth = kmem_zalloc(sizeof (spa_txg_history_t), KM_SLEEP);
@@ -446,6 +449,32 @@ spa_txg_history_add(spa_t *spa, uint64_t txg, hrtime_t birth_time)
 	}
 
 	mutex_exit(&ssh->lock);
+}
+
+static void
+spa_kstat_add(spa_stats_history_t *ssh, uint64_t val)
+{
+	uint64_t idx = 0;
+
+	while (((1ULL << idx) < val) && (idx < ssh->size - 1))
+		idx++;
+
+	atomic_inc_64(&((kstat_named_t *)ssh->priv)[idx].value.ui64);
+}
+
+
+static void
+spa_txg_stats_set(spa_t *spa, spa_txg_history_t *sth)
+{
+	spa_kstat_add(&spa->spa_stats.txg_nread, sth->nread);
+	spa_kstat_add(&spa->spa_stats.txg_reads, sth->reads);
+	spa_kstat_add(&spa->spa_stats.txg_nwritten, sth->nwritten);
+	spa_kstat_add(&spa->spa_stats.txg_writes, sth->writes);
+	spa_kstat_add(&spa->spa_stats.txg_dirty, sth->ndirty);
+	spa_kstat_add(&spa->spa_stats.txg_open_time, sth->times[TXG_STATE_OPEN] - sth->times[TXG_STATE_BIRTH]);
+	spa_kstat_add(&spa->spa_stats.txg_quiesce_time, sth->times[TXG_STATE_QUIESCED] - sth->times[TXG_STATE_OPEN]);
+	spa_kstat_add(&spa->spa_stats.txg_wait_for_sync_time, sth->times[TXG_STATE_WAIT_FOR_SYNC] - sth->times[TXG_STATE_QUIESCED]);
+	spa_kstat_add(&spa->spa_stats.txg_sync_time, sth->times[TXG_STATE_SYNCED] - sth->times[TXG_STATE_WAIT_FOR_SYNC]);
 }
 
 /*
@@ -472,6 +501,10 @@ spa_txg_history_set(spa_t *spa, uint64_t txg, txg_state_t completed_state,
 			break;
 		}
 	}
+
+	if (sth && completed_state == TXG_STATE_SYNCED)
+		spa_txg_stats_set(spa, sth);
+
 	mutex_exit(&ssh->lock);
 
 	return (error);
@@ -546,13 +579,13 @@ spa_txg_history_fini_io(spa_t *spa, txg_stat_t *ts)
 	vdev_get_stats(spa->spa_root_vdev, &ts->vs2);
 	spa_config_exit(spa, SCL_ALL, FTAG);
 
-	spa_txg_history_set(spa, ts->txg, TXG_STATE_SYNCED, gethrtime());
 	spa_txg_history_set_io(spa, ts->txg,
 	    ts->vs2.vs_bytes[ZIO_TYPE_READ] - ts->vs1.vs_bytes[ZIO_TYPE_READ],
 	    ts->vs2.vs_bytes[ZIO_TYPE_WRITE] - ts->vs1.vs_bytes[ZIO_TYPE_WRITE],
 	    ts->vs2.vs_ops[ZIO_TYPE_READ] - ts->vs1.vs_ops[ZIO_TYPE_READ],
 	    ts->vs2.vs_ops[ZIO_TYPE_WRITE] - ts->vs1.vs_ops[ZIO_TYPE_WRITE],
 	    ts->ndirty);
+	spa_txg_history_set(spa, ts->txg, TXG_STATE_SYNCED, gethrtime());
 
 	kmem_free(ts, sizeof (txg_stat_t));
 }
@@ -640,6 +673,30 @@ spa_tx_assign_init(spa_t *spa)
 }
 
 static void
+spa_txg_stats_init(spa_t *spa)
+{
+	spa_kstat_init(&spa->spa_stats.txg_reads, spa,
+	    "txg_reads", 25, "");
+	spa_kstat_init(&spa->spa_stats.txg_nread, spa,
+	    "txg_read_bytes", 37, "bytes");
+	spa_kstat_init(&spa->spa_stats.txg_writes, spa,
+	    "txg_writes", 25, "");
+	spa_kstat_init(&spa->spa_stats.txg_nwritten, spa,
+	    "txg_written_bytes", 37, "bytes");
+	spa_kstat_init(&spa->spa_stats.txg_dirty, spa,
+	    "txg_dirty", 37, "bytes");
+	spa_kstat_init(&spa->spa_stats.txg_open_time, spa,
+	    "txg_open_time", 37, "ns");
+	spa_kstat_init(&spa->spa_stats.txg_quiesce_time, spa,
+	    "txg_quiesce_time", 37, "ns");
+	spa_kstat_init(&spa->spa_stats.txg_wait_for_sync_time, spa,
+	    "txg_wait_for_sync_time", 37, "ns");
+	spa_kstat_init(&spa->spa_stats.txg_sync_time, spa,
+	    "txg_sync_time", 37, "ns");
+}
+
+
+static void
 spa_io_stats_init(spa_t *spa)
 {
 	char ks_name[KSTAT_STRLEN];
@@ -670,17 +727,6 @@ spa_tx_assign_destroy(spa_t *spa)
 
 	kmem_free(ssh->priv, ssh->size);
 	mutex_destroy(&ssh->lock);
-}
-
-void
-spa_kstat_add(spa_stats_history_t *ssh, uint64_t val)
-{
-	uint64_t idx = 0;
-
-	while (((1ULL << idx) < val) && (idx < ssh->size - 1))
-		idx++;
-
-	atomic_inc_64(&((kstat_named_t *)ssh->priv)[idx].value.ui64);
 }
 
 void
@@ -1040,6 +1086,7 @@ spa_stats_init(spa_t *spa)
 {
 	spa_read_history_init(spa);
 	spa_txg_history_init(spa);
+	spa_txg_stats_init(spa);
 	spa_tx_assign_init(spa);
 	spa_io_stats_init(spa);
 	spa_io_history_init(spa);

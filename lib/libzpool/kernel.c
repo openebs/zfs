@@ -240,7 +240,7 @@ kstat_create(const char *ks_module, int ks_instance, const char *ks_name,
     const char *ks_class, uchar_t ks_type, ulong_t ks_ndata, uchar_t ks_flags)
 {
 	if (ks_type ==  KSTAT_TYPE_IO || ks_type == KSTAT_TYPE_TIMER ||
-	    ks_type == KSTAT_TYPE_INTR || ks_type == KSTAT_TYPE_RAW)
+	    ks_type == KSTAT_TYPE_INTR)
 		return (NULL);
 	kstat_t *ksp;
 	ksp = kmem_zalloc(sizeof (*ksp), KM_SLEEP);
@@ -263,6 +263,7 @@ kstat_create(const char *ks_module, int ks_instance, const char *ks_name,
 
 	switch (ksp->ks_type) {
 		case KSTAT_TYPE_NAMED:
+		case KSTAT_TYPE_RAW:
 			ksp->ks_ndata = ks_ndata;
 			ksp->ks_data_size = ks_ndata * sizeof (kstat_named_t);
 			break;
@@ -410,11 +411,26 @@ int
 kstat_read(kstat_t *ksp)
 {
 	int rc = 0;
+	char buf[151];
+	void *addr;
+
 	switch (ksp->ks_type) {
 	case KSTAT_TYPE_NAMED:
 		rc = kstat_show_named(ksp);
 		break;
 	case KSTAT_TYPE_RAW:
+		if ((ksp->ks_raw_ops.headers == NULL) || (ksp->ks_raw_ops.data == NULL) ||
+		    (ksp->ks_raw_ops.addr == NULL))
+			break;
+		ksp->ks_raw_ops.headers(buf, 150);
+		printf("%s", buf);
+		addr = ksp->ks_raw_ops.addr(ksp, 0);
+		while (addr != NULL) {
+			ksp->ks_raw_ops.data(buf, 150, addr);
+			printf("%s", buf);
+			addr = ksp->ks_raw_ops.addr(ksp, 1);
+		}
+		break;
 	case KSTAT_TYPE_INTR:
 	case KSTAT_TYPE_IO:
 	case KSTAT_TYPE_TIMER:

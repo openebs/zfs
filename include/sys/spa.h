@@ -728,6 +728,15 @@ typedef struct spa_stats {
 	spa_stats_history_t	read_history;
 	spa_stats_history_t	txg_history;
 	spa_stats_history_t	tx_assign_histogram;
+	spa_stats_history_t	txg_reads;
+	spa_stats_history_t	txg_nread;
+	spa_stats_history_t	txg_writes;
+	spa_stats_history_t	txg_nwritten;
+	spa_stats_history_t	txg_dirty;
+	spa_stats_history_t	txg_open_time;
+	spa_stats_history_t	txg_quiesce_time;
+	spa_stats_history_t	txg_wait_for_sync_time;
+	spa_stats_history_t	txg_sync_time;
 	spa_stats_history_t	l0_size_histo[ZIO_TYPES];
 	spa_stats_history_t	l0_lat_histo[ZIO_TYPES];
 	spa_stats_history_t	non_l0_size_histo[ZIO_TYPES];

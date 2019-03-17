@@ -595,31 +595,29 @@ spa_tx_assign_update(kstat_t *ksp, int rw)
 }
 
 static void
-spa_tx_assign_init(spa_t *spa)
+spa_kstat_init(spa_stats_history_t *ssh, spa_t *spa, char *ks_name, int count, char *suffix)
 {
-	spa_stats_history_t *ssh = &spa->spa_stats.tx_assign_histogram;
-	char name[KSTAT_STRLEN];
 	kstat_named_t *ks;
 	kstat_t *ksp;
 	int i;
-
-	mutex_init(&ssh->lock, NULL, MUTEX_DEFAULT, NULL);
-
-	ssh->count = 42; /* power of two buckets for 1ns to 2,199s */
-	ssh->size = ssh->count * sizeof (kstat_named_t);
-	ssh->priv = kmem_alloc(ssh->size, KM_SLEEP);
+	char name[KSTAT_STRLEN];
 
 	(void) snprintf(name, KSTAT_STRLEN, "zfs/%s", spa_name(spa));
+	mutex_init(&ssh->lock, NULL, MUTEX_DEFAULT, NULL);
+
+	ssh->count = count; /* power of two buckets for 1ns to 2,199s */
+	ssh->size = ssh->count * sizeof (kstat_named_t);
+	ssh->priv = kmem_alloc(ssh->size, KM_SLEEP);
 
 	for (i = 0; i < ssh->count; i++) {
 		ks = &((kstat_named_t *)ssh->priv)[i];
 		ks->data_type = KSTAT_DATA_UINT64;
 		ks->value.ui64 = 0;
-		(void) snprintf(ks->name, KSTAT_STRLEN, "%llu ns",
-		    (u_longlong_t)1 << i);
+		(void) snprintf(ks->name, KSTAT_STRLEN, "%llu %s",
+		    (u_longlong_t)1 << i, suffix);
 	}
 
-	ksp = kstat_create(name, 0, "dmu_tx_assign", "misc",
+	ksp = kstat_create(name, 0, ks_name, "misc",
 	    KSTAT_TYPE_NAMED, 0, KSTAT_FLAG_VIRTUAL);
 	ssh->kstat = ksp;
 
@@ -631,6 +629,32 @@ spa_tx_assign_init(spa_t *spa)
 		ksp->ks_private = spa;
 		ksp->ks_update = spa_tx_assign_update;
 		kstat_install(ksp);
+	}
+}
+
+static void
+spa_tx_assign_init(spa_t *spa)
+{
+	spa_kstat_init(&spa->spa_stats.tx_assign_histogram, spa,
+	    "dmu_tx_assign", 42, "ns");
+}
+
+static void
+spa_io_stats_init(spa_t *spa)
+{
+	char ks_name[KSTAT_STRLEN];
+	for (int i = 0; i < ZIO_TYPES; i++) {
+		(void) snprintf(ks_name, KSTAT_STRLEN, "l0_size_%d", i);
+		spa_kstat_init(&spa->spa_stats.l0_size_histo[i], spa, ks_name, 25,
+		    "bytes");
+		(void) snprintf(ks_name, KSTAT_STRLEN, "l0_lat_%d", i);
+		spa_kstat_init(&spa->spa_stats.l0_lat_histo[i], spa, ks_name, 37, "ns");
+		(void) snprintf(ks_name, KSTAT_STRLEN, "non_l0_size_%d", i);
+		spa_kstat_init(&spa->spa_stats.non_l0_size_histo[i], spa, ks_name,
+		    25, "bytes");
+		(void) snprintf(ks_name, KSTAT_STRLEN, "non_l0_lat_%d", i);
+		spa_kstat_init(&spa->spa_stats.non_l0_lat_histo[i], spa, ks_name,
+		    37, "ns");
 	}
 }
 
@@ -649,15 +673,34 @@ spa_tx_assign_destroy(spa_t *spa)
 }
 
 void
-spa_tx_assign_add_nsecs(spa_t *spa, uint64_t nsecs)
+spa_kstat_add(spa_stats_history_t *ssh, uint64_t val)
 {
-	spa_stats_history_t *ssh = &spa->spa_stats.tx_assign_histogram;
 	uint64_t idx = 0;
 
-	while (((1ULL << idx) < nsecs) && (idx < ssh->size - 1))
+	while (((1ULL << idx) < val) && (idx < ssh->size - 1))
 		idx++;
 
 	atomic_inc_64(&((kstat_named_t *)ssh->priv)[idx].value.ui64);
+}
+
+void
+spa_non_l0_add_values(spa_t *spa, int type, uint64_t size, uint64_t nsecs)
+{
+	spa_kstat_add(&spa->spa_stats.non_l0_size_histo[type], size);
+	spa_kstat_add(&spa->spa_stats.non_l0_lat_histo[type], nsecs);
+}
+
+void
+spa_l0_add_values(spa_t *spa, int type, uint64_t size, uint64_t nsecs)
+{
+	spa_kstat_add(&spa->spa_stats.l0_size_histo[type], size);
+	spa_kstat_add(&spa->spa_stats.l0_lat_histo[type], nsecs);
+}
+
+void
+spa_tx_assign_add_nsecs(spa_t *spa, uint64_t nsecs)
+{
+	spa_kstat_add(&spa->spa_stats.tx_assign_histogram, nsecs);
 }
 
 /*
@@ -998,6 +1041,7 @@ spa_stats_init(spa_t *spa)
 	spa_read_history_init(spa);
 	spa_txg_history_init(spa);
 	spa_tx_assign_init(spa);
+	spa_io_stats_init(spa);
 	spa_io_history_init(spa);
 	spa_mmp_history_init(spa);
 }

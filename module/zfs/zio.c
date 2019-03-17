@@ -3064,6 +3064,11 @@ zio_dva_free(zio_t *zio)
 {
 	metaslab_free(zio->io_spa, zio->io_bp, zio->io_txg, B_FALSE);
 
+	if (BP_GET_LEVEL(zio->io_bp) == 0)
+		spa_l0_add_values(zio->io_spa, zio->io_type, zio->io_size, zio->io_delta);
+	else
+		spa_non_l0_add_values(zio->io_spa, zio->io_type, zio->io_size, zio->io_delta);
+
 	return (ZIO_PIPELINE_CONTINUE);
 }
 

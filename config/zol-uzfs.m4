@@ -9,8 +9,11 @@ AC_DEFUN([ZFS_ZOL_UZFS], [
 		UZFS_CFLAGS="-D_UZFS -Werror"
 	])
 
-	AC_SUBST(UZFS_CFLAGS)
+	AC_MSG_CHECKING(for enabling uzfs)
 	AC_MSG_RESULT([$enable_uzfs])
+
+	AC_SUBST(UZFS_CFLAGS)
+
 	AM_CONDITIONAL([ENABLE_UZFS],
 	    [test "x$enable_uzfs" = xyes])
 ])

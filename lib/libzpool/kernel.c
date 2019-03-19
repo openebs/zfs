@@ -387,16 +387,19 @@ kstat_show_named(kstat_t *ksp)
 	for (int i = 0; i < ksp->ks_ndata; i++, value++) {
 		switch (value->data_type) {
 			case KSTAT_DATA_INT64:
-				printf("%s: %ld\n", value->name,
-				    value->value.i64);
+				if (value->value.i64 != 0)
+					printf("%s: %ld\n", value->name,
+					    value->value.i64);
 				break;
 			case KSTAT_DATA_UINT64:
-				printf("%s: %lu\n", value->name,
-				    value->value.ui64);
+				if (value->value.ui64 != 0)
+					printf("%s: %lu\n", value->name,
+					    value->value.ui64);
 				break;
 			case KSTAT_DATA_UINT32:
-				printf("%s: %u\n", value->name,
-				    value->value.ui32);
+				if (value->value.ui32 != 0)
+					printf("%s: %u\n", value->name,
+					    value->value.ui32);
 				break;
 			default:
 				printf("NOT IMPLEMENTED %d\n",

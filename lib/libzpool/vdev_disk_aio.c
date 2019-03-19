@@ -664,6 +664,9 @@ vdev_disk_aio_start(zio_t *zio)
 {
 	vdev_t *vd = zio->io_vd;
 	vdev_disk_aio_t *vda = vd->vdev_tsd;
+	hrtime_t delta = gethrtime();
+	zio_type_t type = zio->io_type;
+	uint64_t psize = zio->io_size;
 
 	/*
 	 * Check operation type.
@@ -716,9 +719,8 @@ vdev_disk_aio_start(zio_t *zio)
 			zio_interrupt(zio);
 		else
 			zio_execute(zio);
-		return;
 	}
-#endif
+#else
 	/*
 	 * Enqueue zio and poller thread will take care of it.
 	 */
@@ -730,6 +732,20 @@ vdev_disk_aio_start(zio_t *zio)
 	}
 	if (rte_ring_count(vda->vda_ring) >= AIO_QUEUE_HIGH_WM) {
 		kick_submitter(vda);
+	}
+#endif
+
+	delta = gethrtime() - delta;
+	if (zio->io_bookmark.zb_level == 0) {
+		if (zio->io_bookmark.zb_objset != 0)
+			spa_l0_add_disk_values(zio->io_spa, type, psize, delta);
+		else
+			spa_meta_l0_add_disk_values(zio->io_spa, type, psize, delta);
+	} else {
+		if (zio->io_bookmark.zb_objset != 0)
+			spa_non_l0_add_disk_values(zio->io_spa, type, psize, delta);
+		else
+			spa_meta_non_l0_add_disk_values(zio->io_spa, type, psize, delta);
 	}
 }
 

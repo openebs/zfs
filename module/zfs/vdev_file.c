@@ -191,6 +191,9 @@ vdev_file_io_start(zio_t *zio)
 {
 	vdev_t *vd = zio->io_vd;
 	vdev_file_t *vf = vd->vdev_tsd;
+	hrtime_t delta = gethrtime();
+	zio_type_t type = zio->io_type;
+	uint64_t psize = zio->io_size;
 
 	if (zio->io_type == ZIO_TYPE_IOCTL) {
 		/* XXPOLICY */
@@ -240,12 +243,26 @@ vdev_file_io_start(zio_t *zio)
 			zio_interrupt(zio);
 		else
 			zio_execute(zio);
-		return;
 	}
-#endif
-
+#else
 	VERIFY3U(taskq_dispatch(vdev_file_taskq, vdev_file_io_strategy, zio,
 	    TQ_SLEEP), !=, TASKQID_INVALID);
+#endif
+
+	delta = gethrtime() - delta;
+	if (zio->io_bookmark.zb_level == 0) {
+		if (zio->io_bookmark.zb_objset != 0)
+			spa_l0_add_disk_values(zio->io_spa, type, psize, delta);
+		else
+			spa_meta_l0_add_disk_values(zio->io_spa, type, psize, delta);
+	} else {
+		if (zio->io_bookmark.zb_objset != 0)
+			spa_non_l0_add_disk_values(zio->io_spa, type, psize, delta);
+		else
+			spa_meta_non_l0_add_disk_values(zio->io_spa, type, psize, delta);
+	}
+
+	return;
 }
 
 /* ARGSUSED */

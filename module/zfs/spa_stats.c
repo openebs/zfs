@@ -647,7 +647,7 @@ spa_kstat_init(spa_stats_history_t *ssh, spa_t *spa, char *ks_name, int count, c
 		ks->data_type = KSTAT_DATA_UINT64;
 		ks->value.ui64 = 0;
 		(void) snprintf(ks->name, KSTAT_STRLEN, "%llu %s",
-		    (u_longlong_t)1 << i, suffix);
+		    (u_longlong_t)(1 << i), suffix);
 	}
 
 	ksp = kstat_create(name, 0, ks_name, "misc",
@@ -712,6 +712,43 @@ spa_io_stats_init(spa_t *spa)
 		(void) snprintf(ks_name, KSTAT_STRLEN, "non_l0_lat_%d", i);
 		spa_kstat_init(&spa->spa_stats.non_l0_lat_histo[i], spa, ks_name,
 		    37, "ns");
+
+		(void) snprintf(ks_name, KSTAT_STRLEN, "meta_l0_size_%d", i);
+		spa_kstat_init(&spa->spa_stats.meta_l0_size_histo[i], spa, ks_name, 25,
+		    "bytes");
+		(void) snprintf(ks_name, KSTAT_STRLEN, "meta_l0_lat_%d", i);
+		spa_kstat_init(&spa->spa_stats.meta_l0_lat_histo[i], spa, ks_name, 37, "ns");
+		(void) snprintf(ks_name, KSTAT_STRLEN, "meta_non_l0_size_%d", i);
+		spa_kstat_init(&spa->spa_stats.meta_non_l0_size_histo[i], spa, ks_name,
+		    25, "bytes");
+		(void) snprintf(ks_name, KSTAT_STRLEN, "meta_non_l0_lat_%d", i);
+		spa_kstat_init(&spa->spa_stats.meta_non_l0_lat_histo[i], spa, ks_name,
+		    37, "ns");
+
+
+		(void) snprintf(ks_name, KSTAT_STRLEN, "disk_l0_size_%d", i);
+		spa_kstat_init(&spa->spa_stats.disk_l0_size_histo[i], spa, ks_name, 25,
+		    "bytes");
+		(void) snprintf(ks_name, KSTAT_STRLEN, "disk_l0_lat_%d", i);
+		spa_kstat_init(&spa->spa_stats.disk_l0_lat_histo[i], spa, ks_name, 37, "ns");
+		(void) snprintf(ks_name, KSTAT_STRLEN, "disk_non_l0_size_%d", i);
+		spa_kstat_init(&spa->spa_stats.disk_non_l0_size_histo[i], spa, ks_name,
+		    25, "bytes");
+		(void) snprintf(ks_name, KSTAT_STRLEN, "disk_non_l0_lat_%d", i);
+		spa_kstat_init(&spa->spa_stats.disk_non_l0_lat_histo[i], spa, ks_name,
+		    37, "ns");
+
+		(void) snprintf(ks_name, KSTAT_STRLEN, "disk_meta_l0_size_%d", i);
+		spa_kstat_init(&spa->spa_stats.disk_meta_l0_size_histo[i], spa, ks_name, 25,
+		    "bytes");
+		(void) snprintf(ks_name, KSTAT_STRLEN, "disk_meta_l0_lat_%d", i);
+		spa_kstat_init(&spa->spa_stats.disk_meta_l0_lat_histo[i], spa, ks_name, 37, "ns");
+		(void) snprintf(ks_name, KSTAT_STRLEN, "disk_meta_non_l0_size_%d", i);
+		spa_kstat_init(&spa->spa_stats.disk_meta_non_l0_size_histo[i], spa, ks_name,
+		    25, "bytes");
+		(void) snprintf(ks_name, KSTAT_STRLEN, "disk_meta_non_l0_lat_%d", i);
+		spa_kstat_init(&spa->spa_stats.disk_meta_non_l0_lat_histo[i], spa, ks_name,
+		    37, "ns");
 	}
 }
 
@@ -727,6 +764,48 @@ spa_tx_assign_destroy(spa_t *spa)
 
 	kmem_free(ssh->priv, ssh->size);
 	mutex_destroy(&ssh->lock);
+}
+
+void
+spa_meta_non_l0_add_disk_values(spa_t *spa, int type, uint64_t size, uint64_t nsecs)
+{
+	spa_kstat_add(&spa->spa_stats.disk_meta_non_l0_size_histo[type], size);
+	spa_kstat_add(&spa->spa_stats.disk_meta_non_l0_lat_histo[type], nsecs);
+}
+
+void
+spa_meta_l0_add_disk_values(spa_t *spa, int type, uint64_t size, uint64_t nsecs)
+{
+	spa_kstat_add(&spa->spa_stats.disk_meta_l0_size_histo[type], size);
+	spa_kstat_add(&spa->spa_stats.disk_meta_l0_lat_histo[type], nsecs);
+}
+
+void
+spa_non_l0_add_disk_values(spa_t *spa, int type, uint64_t size, uint64_t nsecs)
+{
+	spa_kstat_add(&spa->spa_stats.disk_non_l0_size_histo[type], size);
+	spa_kstat_add(&spa->spa_stats.disk_non_l0_lat_histo[type], nsecs);
+}
+
+void
+spa_l0_add_disk_values(spa_t *spa, int type, uint64_t size, uint64_t nsecs)
+{
+	spa_kstat_add(&spa->spa_stats.disk_l0_size_histo[type], size);
+	spa_kstat_add(&spa->spa_stats.disk_l0_lat_histo[type], nsecs);
+}
+
+void
+spa_meta_non_l0_add_values(spa_t *spa, int type, uint64_t size, uint64_t nsecs)
+{
+	spa_kstat_add(&spa->spa_stats.meta_non_l0_size_histo[type], size);
+	spa_kstat_add(&spa->spa_stats.meta_non_l0_lat_histo[type], nsecs);
+}
+
+void
+spa_meta_l0_add_values(spa_t *spa, int type, uint64_t size, uint64_t nsecs)
+{
+	spa_kstat_add(&spa->spa_stats.meta_l0_size_histo[type], size);
+	spa_kstat_add(&spa->spa_stats.meta_l0_lat_histo[type], nsecs);
 }
 
 void

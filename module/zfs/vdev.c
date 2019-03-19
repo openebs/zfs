@@ -240,10 +240,14 @@ vdev_print_stats(vdev_t *vd)
 		printf("%s_totLat_diskLat_%d_iotype\n", vd->vdev_path, type);
 		printf("|----------|\n");
 		for (histo = 0; histo < ARRAY_SIZE(vsx->vsx_disk_histo[0]);
-		    histo++)
+		    histo++) {
+			if ((vsx->vsx_total_histo[type][histo] == 0) &&
+			    (vsx->vsx_disk_histo[type][histo] == 0))
+				continue;
 			printf("%llu ns: total: %lu disk: %lu\n",
 			    (u_longlong_t)(1 << histo), vsx->vsx_total_histo[type][histo],
 			    vsx->vsx_disk_histo[type][histo]);
+		}
 	}
 
 	for (prio = 0; prio < ZIO_PRIORITY_NUM_QUEUEABLE; prio++) {
@@ -251,10 +255,14 @@ vdev_print_stats(vdev_t *vd)
 		printf("%s_phy_deleg_cnt_%d_prio\n", vd->vdev_path, prio);
 		printf("|----------|\n");
 		for (histo = 0; histo < ARRAY_SIZE(vsx->vsx_ind_histo[0]);
-		    histo++)
+		    histo++) {
+			if ((vsx->vsx_ind_histo[prio][histo] == 0) &&
+			    (vsx->vsx_agg_histo[prio][histo] == 0))
+				continue;
 			printf("%llu bytes: phys: %lu deleg: %lu\n",
 			    (u_longlong_t)(1 << histo), vsx->vsx_ind_histo[prio][histo],
 			    vsx->vsx_agg_histo[prio][histo]);
+		}
 	}
 
 	for (prio = 0; prio < ZIO_PRIORITY_NUM_QUEUEABLE; prio++) {
@@ -262,9 +270,12 @@ vdev_print_stats(vdev_t *vd)
 		printf("%s_zio_queue_time_%d_prio\n", vd->vdev_path, prio);
 		printf("|----------|\n");
 		for (histo = 0; histo < ARRAY_SIZE(vsx->vsx_queue_histo[0]);
-		    histo++)
+		    histo++) {
+			if (vsx->vsx_queue_histo[prio][histo] == 0)
+				continue;
 			printf("%llu ns: %lu\n",
 			    (u_longlong_t)(1 << histo), vsx->vsx_queue_histo[prio][histo]);
+		}
 	}
 }
 
@@ -3258,19 +3269,32 @@ vdev_stat_update(zio_t *zio, uint64_t psize)
 				    [L_HISTO(zio->io_delta)]++;
 			}
 
-			if ((zio->io_bookmark.zb_objset != 0) && (zio->io_bookmark.zb_object == 1) &&
-			    (zio->io_bookmark.zb_level == 0))
-				spa_l0_add_values(zio->io_spa, type, psize, zio->io_delta);
-			else
-				spa_non_l0_add_values(zio->io_spa, type, psize, zio->io_delta);
+			if (zio->io_bookmark.zb_level == 0) {
+				if (zio->io_bookmark.zb_objset != 0)
+					spa_l0_add_values(zio->io_spa, type, psize, zio->io_delta);
+				else
+					spa_meta_l0_add_values(zio->io_spa, type, psize, zio->io_delta);
+			} else {
+				if (zio->io_bookmark.zb_objset != 0)
+					spa_non_l0_add_values(zio->io_spa, type, psize, zio->io_delta);
+				else
+					spa_meta_non_l0_add_values(zio->io_spa, type, psize, zio->io_delta);
+			}
 		}
 
 		if (vd == vd->vdev_top) {
 			if ((type != ZIO_TYPE_READ) && (type != ZIO_TYPE_WRITE)) {
-				if (zio->io_bookmark.zb_level == 0)
-					spa_l0_add_values(zio->io_spa, type, psize, zio->io_delta);
-				else
-					spa_non_l0_add_values(zio->io_spa, type, psize, zio->io_delta);
+				if (zio->io_bookmark.zb_level == 0) {
+					if (zio->io_bookmark.zb_objset != 0)
+						spa_l0_add_values(zio->io_spa, type, psize, zio->io_delta);
+					else
+						spa_meta_l0_add_values(zio->io_spa, type, psize, zio->io_delta);
+				} else {
+					if (zio->io_bookmark.zb_objset != 0)
+						spa_non_l0_add_values(zio->io_spa, type, psize, zio->io_delta);
+					else
+						spa_meta_non_l0_add_values(zio->io_spa, type, psize, zio->io_delta);
+				}
 			}
 		}
 

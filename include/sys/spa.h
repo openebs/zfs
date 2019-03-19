@@ -741,6 +741,20 @@ typedef struct spa_stats {
 	spa_stats_history_t	l0_lat_histo[ZIO_TYPES];
 	spa_stats_history_t	non_l0_size_histo[ZIO_TYPES];
 	spa_stats_history_t	non_l0_lat_histo[ZIO_TYPES];
+	spa_stats_history_t	meta_l0_size_histo[ZIO_TYPES];
+	spa_stats_history_t	meta_l0_lat_histo[ZIO_TYPES];
+	spa_stats_history_t	meta_non_l0_size_histo[ZIO_TYPES];
+	spa_stats_history_t	meta_non_l0_lat_histo[ZIO_TYPES];
+
+	spa_stats_history_t	disk_l0_size_histo[ZIO_TYPES];
+	spa_stats_history_t	disk_l0_lat_histo[ZIO_TYPES];
+	spa_stats_history_t	disk_non_l0_size_histo[ZIO_TYPES];
+	spa_stats_history_t	disk_non_l0_lat_histo[ZIO_TYPES];
+	spa_stats_history_t	disk_meta_l0_size_histo[ZIO_TYPES];
+	spa_stats_history_t	disk_meta_l0_lat_histo[ZIO_TYPES];
+	spa_stats_history_t	disk_meta_non_l0_size_histo[ZIO_TYPES];
+	spa_stats_history_t	disk_meta_non_l0_lat_histo[ZIO_TYPES];
+
 	spa_stats_history_t	io_history;
 	spa_stats_history_t	mmp_history;
 } spa_stats_t;
@@ -774,6 +788,12 @@ extern void spa_txg_history_fini_io(spa_t *, txg_stat_t *);
 extern void spa_tx_assign_add_nsecs(spa_t *spa, uint64_t nsecs);
 extern void spa_l0_add_values(spa_t *spa, int type, uint64_t size, uint64_t nsecs);
 extern void spa_non_l0_add_values(spa_t *spa, int type, uint64_t size, uint64_t nsecs);
+extern void spa_meta_l0_add_values(spa_t *spa, int type, uint64_t size, uint64_t nsecs);
+extern void spa_meta_non_l0_add_values(spa_t *spa, int type, uint64_t size, uint64_t nsecs);
+extern void spa_l0_add_disk_values(spa_t *spa, int type, uint64_t size, uint64_t nsecs);
+extern void spa_non_l0_add_disk_values(spa_t *spa, int type, uint64_t size, uint64_t nsecs);
+extern void spa_meta_l0_add_disk_values(spa_t *spa, int type, uint64_t size, uint64_t nsecs);
+extern void spa_meta_non_l0_add_disk_values(spa_t *spa, int type, uint64_t size, uint64_t nsecs);
 extern int spa_mmp_history_set_skip(spa_t *spa, uint64_t mmp_kstat_id);
 extern int spa_mmp_history_set(spa_t *spa, uint64_t mmp_kstat_id, int io_error,
     hrtime_t duration);

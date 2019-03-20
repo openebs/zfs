@@ -981,6 +981,19 @@ uzfs_zvol_get_snap_dataset_with_io(zvol_info_t *zinfo,
 	return (ret);
 }
 
+static int
+zvol_trigger_update_volsize(zvol_state_t *resize_zv, uint64_t volsize)
+{
+	int rc;
+
+	rc = zvol_update_volsize(volsize, resize_zv->zv_objset);
+	if (rc == 0)
+		zvol_size_changed(resize_zv, volsize);
+	else
+		LOG_INFO("Failed to resize zvol: %s", resize_zv->zv_name);
+	return (rc);
+}
+
 /*
  * Perform the command (in async context).
  *
@@ -1034,13 +1047,15 @@ uzfs_zvol_execute_async_command(void *arg)
 		rc = zvol_check_volsize(volsize,
 		    zinfo->main_zv->zv_volblocksize);
 		if (rc == 0) {
-			rc = zvol_update_volsize(volsize,
-			    zinfo->main_zv->zv_objset);
+			if (!ZVOL_IS_HEALTHY(zinfo->main_zv)) {
+				rc = zvol_trigger_update_volsize(
+				    zinfo->clone_zv, volsize);
+			}
 			if (rc == 0)
-				zvol_size_changed(zinfo->main_zv, volsize);
+				rc = zvol_trigger_update_volsize(
+				    zinfo->main_zv, volsize);
 		}
 		if (rc != 0) {
-			LOG_ERR("Failed to resize zvol %s", zinfo->name);
 			async_task->status = ZVOL_OP_STATUS_FAILED;
 		} else {
 			async_task->status = ZVOL_OP_STATUS_OK;

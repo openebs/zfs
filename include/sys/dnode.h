@@ -65,7 +65,11 @@ extern "C" {
  * 4 levels of indirect blocks would not be able to guarantee addressing an
  * entire object, so 5 levels will be used, but 5 * (20 - 7) = 65.
  */
+#if defined(_SMALL_IND_SZ)
+#define	DN_MAX_INDBLKSHIFT	14	/* 16k */
+#else
 #define	DN_MAX_INDBLKSHIFT	17	/* 128k */
+#endif
 #define	DNODE_BLOCK_SHIFT	14	/* 16k */
 #define	DNODE_CORE_SIZE		64	/* 64 bytes for dnode sans blkptrs */
 #define	DN_MAX_OBJECT_SHIFT	48	/* 256 trillion (zfs_fid_t limit) */

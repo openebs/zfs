@@ -883,11 +883,7 @@ dmu_objset_create_impl(spa_t *spa, dsl_dataset_t *ds, blkptr_t *bp,
 
 	mdn = DMU_META_DNODE(os);
 
-#if defined(_SMALL_IND_SZ)
-	dnode_allocate(mdn, DMU_OT_DNODE, DNODE_BLOCK_SIZE, DNODE_BLOCK_SIZE,
-#else
 	dnode_allocate(mdn, DMU_OT_DNODE, DNODE_BLOCK_SIZE, DN_MIN_INDBLKSHIFT,
-#endif
 	    DMU_OT_NONE, 0, DNODE_MIN_SLOTS, tx);
 
 	/*

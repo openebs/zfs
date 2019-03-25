@@ -508,12 +508,16 @@ is_internally_created_clone_volume(const char *ds_name)
 	    REBUILD_SNAPSHOT_CLONENAME));
 }
 
-/* uZFS Zvol create call back function */
+/*
+ * uZFS Zvol create call back function
+ * Returning 0 in error cases also so that dmu_objset_find_impl will execute
+ * this function for all zvols
+ */
 int
 uzfs_zvol_create_cb(const char *ds_name, void *arg)
 {
 	zvol_state_t	*zv = NULL;
-	int 		error = -1;
+	int 		error = 0;
 	nvlist_t	*nvprops = arg;
 	char		*ip;
 	char		*zvol_workers;
@@ -533,7 +537,7 @@ uzfs_zvol_create_cb(const char *ds_name, void *arg)
 	error = uzfs_dataset_zv_create(ds_name, &zv);
 	if (error) {
 		/* happens normally for all non-zvol-type datasets */
-		return (error);
+		return (0);
 	}
 
 	/* if zvol is being created, read target address from nvlist */
@@ -545,7 +549,7 @@ uzfs_zvol_create_cb(const char *ds_name, void *arg)
 		else {
 			LOG_ERR("target IP address is not set for %s", ds_name);
 			uzfs_close_dataset(zv);
-			return (error);
+			return (0);
 		}
 
 		error = nvlist_lookup_string(nvprops, ZFS_PROP_ZVOL_WORKERS,
@@ -557,13 +561,10 @@ uzfs_zvol_create_cb(const char *ds_name, void *arg)
 		if (zv->zv_target_host[0] == '\0') {
 			LOG_ERR("target IP address is empty for %s", ds_name);
 			uzfs_close_dataset(zv);
-			return (EINVAL);
+			return (0);
 		}
 	}
-	if (uzfs_zinfo_init(zv, ds_name, nvprops) != 0) {
-		LOG_ERR("Failed in uzfs_zinfo_init");
-		return (error);
-	}
+	uzfs_zinfo_init(zv, ds_name, nvprops);
 
 	return (0);
 }

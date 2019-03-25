@@ -353,6 +353,8 @@ zfs_prop_init(void)
 	zprop_register_index(ZFS_PROP_QUORUM, "quorum", 0, PROP_INHERIT,
 	    ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME, "on | off", "QUORUM",
 	    boolean_table);
+	zprop_register_string(ZFS_PROP_TARGETIP, "io.openebs:targetip", "",
+	    PROP_DEFAULT, ZFS_TYPE_VOLUME, "<ip token>", "TARGETIP");
 
 	/* readonly index (boolean) properties */
 	zprop_register_index(ZFS_PROP_MOUNTED, "mounted", 0, PROP_READONLY,

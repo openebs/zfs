@@ -154,6 +154,7 @@ create_disk()
 {
 	for disk in "$@"; do
 		disk_name=$disk
+		rm $disk_name
 		log_must truncate -s 2G $disk_name
 	done
 }
@@ -177,6 +178,54 @@ dump_data()
 	# wait for some data to be dumped
 	sleep 3
 	return $ret
+}
+
+test_stats_len()
+{
+	stats_len=`$ZFS stats | jq '.[] | length'`
+	test $stats_len = "$1" && return 0
+	return 1
+}
+
+run_zvol_targetip_tests()
+{
+	local pool vol
+	pool=`echo $1| awk -F '/' '{print $1}'`
+	vol=`echo $1| awk -F '/' '{print $2}'`
+	pool_disk="$TMPDIR/test_targetip.img"
+
+	create_disk $pool_disk
+	log_must $ZPOOL create -f $pool -o cachefile="$TMPDIR/zpool_$pool.cache" \
+	    $pool_disk
+	log_must $ZFS create -V $VOLSIZE -o io.openebs:targetip=127.0.0.1:6060 $pool/$vol"_targetip_1"
+	log_must test_stats_len 1
+
+	log_must $ZFS create -V $VOLSIZE $pool/$vol"_targetip_2"
+	log_must test_stats_len 1
+
+	log_must $ZFS set io.openebs:targetip= $pool/$vol"_targetip_1"
+	log_must test_stats_len 0
+
+	log_must $ZFS set io.openebs:targetip=127.0.0.1:6161 $pool/$vol"_targetip_2"
+	log_must test_stats_len 1
+
+	log_must $ZFS set io.openebs:targetip=127.0.0.1:6162 $pool/$vol"_targetip_1"
+	log_must test_stats_len 2
+
+	log_must_not $ZFS set io.openebs:targetip=127.0.0.1:5959 $pool/$vol"_targetip_1"
+	log_must test_stats_len 2
+
+	log_must $ZFS set io.openebs:targetip="" $pool/$vol"_targetip_1"
+	log_must test_stats_len 1
+
+	$ZFS create -V $VOLSIZE -o io.openebs:targetip=127.0.0.1:6161 $pool/$vol"_targetip_3"
+	log_must test_stats_len 2
+
+	log_must export_pool $pool
+	log_must import_pool $pool
+	log_must test_stats_len 2
+	log_must destroy_pool $pool
+	destroy_disk $pool_disk
 }
 
 run_zvol_tests()
@@ -1205,6 +1254,7 @@ run_pool_test()
 {
 	local stripe_pid mirror_pid raidz_pid
 
+	log_must run_zvol_targetip_tests pool_test_targetip/vol
 	log_must test_stripe_pool pool_test_ss_pool/ss_vol pool_test_ds_pool/ds_vol &
 	stripe_pid=$!
 

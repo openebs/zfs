@@ -760,6 +760,10 @@ typedef struct spa_stats_ex {
 	spa_stats_history_t	disk_meta_non_l0_size_histo[ZIO_TYPES];
 	spa_stats_history_t	disk_meta_non_l0_lat_histo[ZIO_TYPES];
 
+	spa_stats_history_t	dmu_write_size_histo;
+	spa_stats_history_t	dmu_write_lat_histo;
+	spa_stats_history_t	dmu_read_size_histo;
+	spa_stats_history_t	dmu_read_lat_histo;
 } spa_stats_ex_t;
 
 typedef enum txg_state {
@@ -789,6 +793,8 @@ extern txg_stat_t *spa_txg_history_init_io(spa_t *, uint64_t,
     struct dsl_pool *);
 extern void spa_txg_history_fini_io(spa_t *, txg_stat_t *);
 extern void spa_tx_assign_add_nsecs(spa_t *spa, uint64_t nsecs);
+extern void spa_dmu_write_add_nsecs(spa_t *spa, uint64_t size, uint64_t nsecs);
+extern void spa_dmu_read_add_nsecs(spa_t *spa, uint64_t size, uint64_t nsecs);
 extern void spa_l0_add_values(spa_t *spa, int type, uint64_t size, uint64_t nsecs);
 extern void spa_non_l0_add_values(spa_t *spa, int type, uint64_t size, uint64_t nsecs);
 extern void spa_meta_l0_add_values(spa_t *spa, int type, uint64_t size, uint64_t nsecs);

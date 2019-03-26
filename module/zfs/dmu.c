@@ -953,12 +953,16 @@ dmu_read(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
 	dnode_t *dn;
 	int err;
 
+	hrtime_t before;
+	before = gethrtime();
+
 	err = dnode_hold(os, object, FTAG, &dn);
 	if (err != 0)
 		return (err);
 
 	err = dmu_read_impl(dn, offset, size, buf, flags);
 	dnode_rele(dn, FTAG);
+	spa_dmu_read_add_nsecs(os->os_spa, size, gethrtime() - before);
 	return (err);
 }
 
@@ -1010,6 +1014,9 @@ dmu_write(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
 	dmu_buf_t **dbp;
 	int numbufs;
 
+	hrtime_t before;
+	before = gethrtime();
+
 	if (size == 0)
 		return;
 
@@ -1017,6 +1024,7 @@ dmu_write(objset_t *os, uint64_t object, uint64_t offset, uint64_t size,
 	    FALSE, FTAG, &numbufs, &dbp));
 	dmu_write_impl(dbp, numbufs, offset, size, buf, tx);
 	dmu_buf_rele_array(dbp, numbufs, FTAG);
+	spa_dmu_write_add_nsecs(os->os_spa, size, gethrtime() - before);
 }
 
 void

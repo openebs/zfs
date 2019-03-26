@@ -695,6 +695,24 @@ spa_txg_stats_init(spa_t *spa)
 	    "txg_sync_time", 37, "ns");
 }
 
+static void
+spa_dmu_stats_init(spa_t *spa)
+{
+	char ks_name[KSTAT_STRLEN];
+	(void) snprintf(ks_name, KSTAT_STRLEN, "dmu_write_size");
+	spa_kstat_init(&spa->spa_stats_ex->dmu_write_size_histo, spa, ks_name, 25,
+	    "bytes");
+	(void) snprintf(ks_name, KSTAT_STRLEN, "dmu_write_lat");
+	spa_kstat_init(&spa->spa_stats_ex->dmu_write_lat_histo, spa, ks_name, 37,
+	    "ns");
+
+	(void) snprintf(ks_name, KSTAT_STRLEN, "dmu_read_size");
+	spa_kstat_init(&spa->spa_stats_ex->dmu_read_size_histo, spa, ks_name, 25,
+	    "bytes");
+	(void) snprintf(ks_name, KSTAT_STRLEN, "dmu_read_lat");
+	spa_kstat_init(&spa->spa_stats_ex->dmu_read_lat_histo, spa, ks_name, 37,
+	    "ns");
+}
 
 static void
 spa_io_stats_init(spa_t *spa)
@@ -753,9 +771,8 @@ spa_io_stats_init(spa_t *spa)
 }
 
 static void
-spa_tx_assign_destroy(spa_t *spa)
+spa_kstat_destroy(spa_stats_history_t *ssh)
 {
-	spa_stats_history_t *ssh = &spa->spa_stats.tx_assign_histogram;
 	kstat_t *ksp;
 
 	ksp = ssh->kstat;
@@ -764,6 +781,52 @@ spa_tx_assign_destroy(spa_t *spa)
 
 	kmem_free(ssh->priv, ssh->size);
 	mutex_destroy(&ssh->lock);
+}
+
+static void
+spa_io_stats_destroy(spa_t *spa)
+{
+	for (int i = 0; i < ZIO_TYPES; i++) {
+		spa_kstat_destroy(&spa->spa_stats_ex->l0_size_histo[i]);
+		spa_kstat_destroy(&spa->spa_stats_ex->l0_lat_histo[i]);
+
+		spa_kstat_destroy(&spa->spa_stats_ex->non_l0_size_histo[i]);
+		spa_kstat_destroy(&spa->spa_stats_ex->non_l0_lat_histo[i]);
+
+		spa_kstat_destroy(&spa->spa_stats_ex->meta_l0_size_histo[i]);
+		spa_kstat_destroy(&spa->spa_stats_ex->meta_l0_lat_histo[i]);
+
+		spa_kstat_destroy(&spa->spa_stats_ex->meta_non_l0_size_histo[i]);
+		spa_kstat_destroy(&spa->spa_stats_ex->meta_non_l0_lat_histo[i]);
+
+		spa_kstat_destroy(&spa->spa_stats_ex->disk_l0_size_histo[i]);
+		spa_kstat_destroy(&spa->spa_stats_ex->disk_l0_lat_histo[i]);
+
+		spa_kstat_destroy(&spa->spa_stats_ex->disk_non_l0_size_histo[i]);
+		spa_kstat_destroy(&spa->spa_stats_ex->disk_non_l0_lat_histo[i]);
+
+		spa_kstat_destroy(&spa->spa_stats_ex->disk_meta_l0_size_histo[i]);
+		spa_kstat_destroy(&spa->spa_stats_ex->disk_meta_l0_lat_histo[i]);
+
+		spa_kstat_destroy(&spa->spa_stats_ex->disk_meta_non_l0_size_histo[i]);
+		spa_kstat_destroy(&spa->spa_stats_ex->disk_meta_non_l0_lat_histo[i]);
+	}
+}
+
+static void
+spa_dmu_stats_destroy(spa_t *spa)
+{
+	spa_kstat_destroy(&spa->spa_stats_ex->dmu_write_size_histo);
+	spa_kstat_destroy(&spa->spa_stats_ex->dmu_write_lat_histo);
+
+	spa_kstat_destroy(&spa->spa_stats_ex->dmu_read_size_histo);
+	spa_kstat_destroy(&spa->spa_stats_ex->dmu_read_lat_histo);
+}
+
+static void
+spa_tx_assign_destroy(spa_t *spa)
+{
+	spa_kstat_destroy(&spa->spa_stats.tx_assign_histogram);
 }
 
 void
@@ -820,6 +883,20 @@ spa_l0_add_values(spa_t *spa, int type, uint64_t size, uint64_t nsecs)
 {
 	spa_kstat_add(&spa->spa_stats_ex->l0_size_histo[type], size);
 	spa_kstat_add(&spa->spa_stats_ex->l0_lat_histo[type], nsecs);
+}
+
+void
+spa_dmu_write_add_nsecs(spa_t *spa, uint64_t size, uint64_t nsecs)
+{
+	spa_kstat_add(&spa->spa_stats_ex->dmu_write_size_histo, size);
+	spa_kstat_add(&spa->spa_stats_ex->dmu_write_lat_histo, nsecs);
+}
+
+void
+spa_dmu_read_add_nsecs(spa_t *spa, uint64_t size, uint64_t nsecs)
+{
+	spa_kstat_add(&spa->spa_stats_ex->dmu_read_size_histo, size);
+	spa_kstat_add(&spa->spa_stats_ex->dmu_read_lat_histo, nsecs);
 }
 
 void
@@ -1171,6 +1248,7 @@ spa_stats_init(spa_t *spa)
 	spa_io_stats_init(spa);
 	spa_io_history_init(spa);
 	spa_mmp_history_init(spa);
+	spa_dmu_stats_init(spa);
 }
 
 void
@@ -1181,6 +1259,8 @@ spa_stats_destroy(spa_t *spa)
 	spa_read_history_destroy(spa);
 	spa_io_history_destroy(spa);
 	spa_mmp_history_destroy(spa);
+	spa_io_stats_destroy(spa);
+	spa_dmu_stats_destroy(spa);
 }
 
 #if defined(_KERNEL) && defined(HAVE_SPL)

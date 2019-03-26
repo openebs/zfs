@@ -28,6 +28,7 @@ extern unsigned long zfs_arc_max;
 extern unsigned long zfs_arc_min;
 extern int zfs_autoimport_disable;
 extern int zfs_do_write_coalesce;
+extern int vdev_queue_io_disable;
 
 #if DEBUG
 inject_error_t	inject_error;
@@ -161,6 +162,14 @@ main(int argc, char **argv)
 	if (env != NULL) {
 		uzfs_write_size = atoi(env);
 		LOG_INFO("uzfs write size = %d", uzfs_write_size);
+	}
+
+	if (getenv("VDEV_QUEUE_IO_DISABLE") == NULL) {
+		LOG_INFO("enables queueing IOs to vdev");
+		vdev_queue_io_disable = 0;
+	} else {
+		LOG_INFO("disables queueing IOs to vdev");
+		vdev_queue_io_disable = 1;
 	}
 
 	SLIST_INIT(&uzfs_mgmt_conns);

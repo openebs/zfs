@@ -75,6 +75,7 @@ uint64_t zio_buf_cache_allocs[SPA_MAXBLOCKSIZE >> SPA_MINBLOCKSHIFT];
 uint64_t zio_buf_cache_frees[SPA_MAXBLOCKSIZE >> SPA_MINBLOCKSHIFT];
 #endif
 
+int vdev_queue_io_disable = 0;
 int zio_delay_max = ZIO_DELAY_MAX;
 
 #define	ZIO_PIPELINE_CONTINUE		0x100
@@ -3289,8 +3290,9 @@ zio_vdev_io_start(zio_t *zio)
 		    (zio->io_type == ZIO_TYPE_WRITE))
 			zio->io_flags |= ZIO_FLAG_DONT_QUEUE;
 
-		if ((zio = vdev_queue_io(zio)) == NULL)
-			return (ZIO_PIPELINE_STOP);
+		if (vdev_queue_io_disable == 0)
+			if ((zio = vdev_queue_io(zio)) == NULL)
+				return (ZIO_PIPELINE_STOP);
 
 		if (!vdev_accessible(vd, zio)) {
 			zio->io_error = SET_ERROR(ENXIO);

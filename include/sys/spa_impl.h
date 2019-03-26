@@ -292,6 +292,7 @@ struct spa {
 	spa_avz_action_t	spa_avz_action;	/* destroy/rebuild AVZ? */
 	uint64_t	spa_errata;		/* errata issues detected */
 	spa_stats_t	spa_stats;		/* assorted spa statistics */
+	spa_stats_ex_t	*spa_stats_ex;		/* assorted spa ex-statistics */
 	hrtime_t	spa_ccw_fail_time;	/* Conf cache write fail time */
 	taskq_t		*spa_zvol_taskq;	/* Taskq for minor management */
 	taskq_t		*spa_prefetch_taskq;	/* Taskq for prefetch threads */

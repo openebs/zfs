@@ -737,6 +737,11 @@ typedef struct spa_stats {
 	spa_stats_history_t	txg_quiesce_time;
 	spa_stats_history_t	txg_wait_for_sync_time;
 	spa_stats_history_t	txg_sync_time;
+	spa_stats_history_t	io_history;
+	spa_stats_history_t	mmp_history;
+} spa_stats_t;
+
+typedef struct spa_stats_ex {
 	spa_stats_history_t	l0_size_histo[ZIO_TYPES];
 	spa_stats_history_t	l0_lat_histo[ZIO_TYPES];
 	spa_stats_history_t	non_l0_size_histo[ZIO_TYPES];
@@ -755,9 +760,7 @@ typedef struct spa_stats {
 	spa_stats_history_t	disk_meta_non_l0_size_histo[ZIO_TYPES];
 	spa_stats_history_t	disk_meta_non_l0_lat_histo[ZIO_TYPES];
 
-	spa_stats_history_t	io_history;
-	spa_stats_history_t	mmp_history;
-} spa_stats_t;
+} spa_stats_ex_t;
 
 typedef enum txg_state {
 	TXG_STATE_BIRTH		= 0,

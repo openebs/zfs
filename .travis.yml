@@ -36,6 +36,8 @@ install:
     - sudo make -j4
     - sudo cp *.a /usr/lib
     - popd
+    # save the current location to get back
+    - pushd .
     - cd ..
     # we need fio repo to build zfs replica fio engine
     - git clone https://github.com/axboe/fio
@@ -55,7 +57,8 @@ install:
         make --no-print-directory -s pkg-utils pkg-kmod;
         sudo dpkg -i *.deb;
       fi
-    - cd ../zfs
+    # return to cstor code 
+    - popd
     - sh autogen.sh
     - if [ $ZFS_BUILD_TAGS = 0 ]; then
         ./configure --with-config=user --enable-code-coverage=yes --enable-debug --enable-uzfs=yes --with-jemalloc --with-fio=$PWD/../fio || travis_terminate 1;

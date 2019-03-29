@@ -32,6 +32,8 @@ before_script:
   - sudo make -j4
   - sudo cp *.a /usr/lib
   - popd
+  - pushd .
+  - pushd .
   - cd ..
   # we need fio repo to build zfs replica fio engine
   - git clone https://github.com/axboe/fio
@@ -50,7 +52,7 @@ build-zfs-0:
    stage: build
    script: 
     - make -j4
-    - cd ../zfs
+    - popd
     - sh autogen.sh
     - echo $PWD
     - ./configure --with-config=user --enable-code-coverage=yes --enable-debug --enable-uzfs=yes --with-jemalloc --with-fio=$PWD/../fio
@@ -67,7 +69,7 @@ build-zfs-1:
    script: 
     - make --no-print-directory -s pkg-utils pkg-kmod
     - sudo dpkg -i *.deb
-    - cd ../zfs
+    - popd
     - echo $FIO_SRCDIR
     - sh autogen.sh
     - ./configure --enable-code-coverage=yes --enable-debug

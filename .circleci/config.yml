@@ -33,6 +33,7 @@ jobs:
             sudo make -j4
             sudo cp *.a /usr/lib
             popd
+            pushd .
             cd ..
             git clone https://github.com/axboe/fio
             cd fio
@@ -46,7 +47,7 @@ jobs:
             sh autogen.sh
             ./configure
             make -j4;
-            cd ../zfs
+            popd
             sh autogen.sh
             ./configure --with-config=user --enable-code-coverage=yes --enable-debug --enable-uzfs=yes --with-jemalloc --with-fio=$PWD/../fio
             make -j4;
@@ -74,6 +75,7 @@ jobs:
             sudo apt-get install gdb
             sudo unlink /usr/bin/gcc && sudo ln -s /usr/bin/gcc-6 /usr/bin/gcc
             sudo unlink /usr/bin/g++ && sudo ln -s /usr/bin/g++-6 /usr/bin/g++
+            pushd .
             cd ..
             git clone https://github.com/openebs/spl
             cd spl
@@ -82,7 +84,7 @@ jobs:
             ./configure
             make --no-print-directory -s pkg-utils pkg-kmod;
             sudo dpkg -i *.deb;
-            cd ../zfs
+            popd
             sh autogen.sh
             ./configure --enable-code-coverage=yes --enable-debug
             make --no-print-directory -s pkg-utils pkg-kmod

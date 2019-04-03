@@ -206,7 +206,11 @@ static abd_stats_t abd_stats = {
 	for_each_sg(ABD_SCATTER(abd).abd_sgl, sg, n, i)
 
 /* see block comment above for description */
+#ifdef _ENABLE_TUNING
+int zfs_abd_scatter_enabled = B_FALSE;
+#else
 int zfs_abd_scatter_enabled = B_TRUE;
+#endif
 unsigned zfs_abd_scatter_max_order = MAX_ORDER - 1;
 
 static kmem_cache_t *abd_cache = NULL;

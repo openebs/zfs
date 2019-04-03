@@ -42,7 +42,11 @@
  * so it can't hurt performance.
  */
 
+#ifdef	_ENABLE_TUNING
+int zfs_prefetch_disable = B_TRUE;
+#else
 int zfs_prefetch_disable = B_FALSE;
+#endif
 
 /* max # of streams per zfetch */
 unsigned int	zfetch_max_streams = 8;

@@ -100,7 +100,11 @@
  */
 unsigned long zfs_dirty_data_max = 0;
 unsigned long zfs_dirty_data_max_max = 0;
+#ifdef	_ENABLE_TUNING
+int zfs_dirty_data_max_percent = 40;
+#else
 int zfs_dirty_data_max_percent = 10;
+#endif
 int zfs_dirty_data_max_max_percent = 25;
 
 /*

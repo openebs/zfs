@@ -151,6 +151,16 @@ const uint32_t zfs_vdev_max_active = 128;
  * more quickly, but reads and writes to have higher latency and lower
  * throughput.
  */
+#ifdef	_ENABLE_TUNING
+uint32_t zfs_vdev_sync_read_min_active = 8;
+uint32_t zfs_vdev_sync_read_max_active = 32;
+uint32_t zfs_vdev_sync_write_min_active = 8;
+uint32_t zfs_vdev_sync_write_max_active = 32;
+uint32_t zfs_vdev_async_read_min_active = 8;
+uint32_t zfs_vdev_async_read_max_active = 32;
+uint32_t zfs_vdev_async_write_min_active = 8;
+uint32_t zfs_vdev_async_write_max_active = 32;
+#else
 uint32_t zfs_vdev_sync_read_min_active = 10;
 uint32_t zfs_vdev_sync_read_max_active = 20;
 uint32_t zfs_vdev_sync_write_min_active = 10;
@@ -159,6 +169,7 @@ uint32_t zfs_vdev_async_read_min_active = 1;
 uint32_t zfs_vdev_async_read_max_active = 6;
 uint32_t zfs_vdev_async_write_min_active = 2;
 uint32_t zfs_vdev_async_write_max_active = 20;
+#endif
 uint32_t zfs_vdev_scrub_min_active = 1;
 uint32_t zfs_vdev_scrub_max_active = 4;
 

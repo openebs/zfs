@@ -3401,9 +3401,6 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 	    is_insensitive ? DS_FLAG_CI_DATASET : 0, cbfunc, &zct);
 	nvlist_free(zct.zct_zplprops);
 
-#if !defined(_KERNEL)
-	(void) uzfs_zvol_create_cb((char *)fsname, nvprops);
-#endif
 	/*
 	 * It would be nice to do this atomically.
 	 */
@@ -3428,6 +3425,10 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 				}
 				error2 = dsl_destroy_head(fsname);
 			}
+		} else {
+#if !defined(_KERNEL)
+			(void) uzfs_zvol_create_cb((char *)fsname, nvprops);
+#endif
 		}
 	}
 	return (error);

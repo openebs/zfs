@@ -172,7 +172,7 @@ chunk_io:
 		error = dmu_tx_assign(tx, TXG_WAIT);
 		if (error) {
 			dmu_tx_abort(tx);
-			ret = UZFS_IO_TX_ASSIGN_FAIL;
+			ret = error;
 			goto exit_with_error;
 		}
 		dmu_write(os, ZVOL_OBJ, offset, bytes, buf + wrote, tx);

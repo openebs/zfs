@@ -1,4 +1,5 @@
 ![img](http://zfsonlinux.org/images/zfs-linux.png)
+[![FOSSA Status](https://app.fossa.io/api/projects/git%2Bgithub.com%2Fopenebs%2Fcstor.svg?type=shield)](https://app.fossa.io/projects/git%2Bgithub.com%2Fopenebs%2Fcstor?ref=badge_shield)
 
 ZFS on Linux is an advanced file system and volume manager which was originally
 developed for Solaris and is now maintained by the OpenZFS community, on which
@@ -162,3 +163,7 @@ tests/cbtest/gtest/test_uzfs
 tests/cbtest/gtest/test_zrepl_prot
 sudo tests/cbtest/script/test_uzfs.sh
 ```
+
+
+## License
+[![FOSSA Status](https://app.fossa.io/api/projects/git%2Bgithub.com%2Fopenebs%2Fcstor.svg?type=large)](https://app.fossa.io/projects/git%2Bgithub.com%2Fopenebs%2Fcstor?ref=badge_large)

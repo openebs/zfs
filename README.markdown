@@ -7,16 +7,15 @@
 uZFS enables running the DMU layer of [ZFS on Linux](https://github.com/zfsonlinux/zfs)
 in userspace. Unlike ZFS that acts on the kernel IOCTLs for both IO and CLI operations, 
 uZFS does the following:
--  Exposes an IOCTL service over unix domain sockets
--  The DMU Layer(or ZVOL objects) IO operations are exposed as API that can be consumed
-   by any embedded libary as opposed to accessing via system calls. 
--  The uZFS CLI operations that interact directly with the embedded IOCTL server in uZFS. 
-   uZFS CLI will be used to create Pool(zpool) and Volumes(zvol).
+
+-   Exposes an IOCTL service over unix domain sockets
+-   The DMU Layer(or ZVOL objects) IO operations are exposed as API that can be consumed by any embedded libary as opposed to accessing via system calls. 
+-   The uZFS CLI operations that interact directly with the embedded IOCTL server in uZFS. uZFS CLI will be used to create Pool(zpool) and Volumes(zvol).
 
 uZFS embedds the [cStor Data Engine](https://github.com/openebs/libcstor) that helps with:
-- Exposing a Logical Block volume as a network service
-- Read/Write the data from/to the underlying uZFS ZVOL
-- Interact with the other uZFS ZVOLs in the cluster to resync the data
+-   Exposing a Logical Block volume as a network service
+-   Read/Write the data from/to the underlying uZFS ZVOL
+-   Interact with the other uZFS ZVOLs in the cluster to resync the data
 
 *Note: The uZFS server binary with embedded IOCTL server and cStor Data Engine is referred
 to in the below document as zrepl.*

@@ -1,6 +1,7 @@
 include $(top_srcdir)/config/Rules.am
 
 DEFAULT_INCLUDES += \
+	${UZFS_HEADER}	\
 	-I$(top_srcdir)/include \
 	-I$(top_srcdir)/lib/libspl/include
 
@@ -19,4 +20,4 @@ zfs_LDADD = \
 	$(top_builddir)/lib/libzfs/libzfs.la \
 	$(top_builddir)/lib/libzfs_core/libzfs_core.la
 
-zfs_LDFLAGS = -pthread -ljson-c
+zfs_LDFLAGS = -pthread -ljson-c ${UZFS_LIB}

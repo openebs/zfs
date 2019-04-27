@@ -7,6 +7,7 @@ AM_CFLAGS += $(FRAME_LARGER_THAN) $(NO_FORMAT_TRUNCATION)
 AM_LDFLAGS = -rdynamic
 
 DEFAULT_INCLUDES += \
+	${UZFS_HEADER}	\
 	-I$(top_srcdir)/include \
 	-I$(top_srcdir)/lib/libspl/include
 
@@ -20,6 +21,7 @@ zrepl_LDADD = \
 	$(top_builddir)/lib/libnvpair/libnvpair.la \
 	$(top_builddir)/lib/libuutil/libuutil.la \
 	$(top_builddir)/lib/libzpool/libzpool.la \
-	$(top_builddir)/lib/libzrepl/libzrepl.la \
 	$(top_builddir)/lib/libzfs/libzfs.la \
 	$(top_builddir)/lib/libzfs_core/libzfs_core.la
+
+zrepl_LDADD += ${UZFS_LIB}

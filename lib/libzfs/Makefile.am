@@ -8,6 +8,7 @@ libzfs_pcdir = $(datarootdir)/pkgconfig
 libzfs_pc_DATA = libzfs.pc libzfs_core.pc
 
 DEFAULT_INCLUDES += \
+	${UZFS_HEADER}	\
 	-I$(top_srcdir)/include \
 	-I$(top_srcdir)/lib/libspl/include
 
@@ -25,9 +26,7 @@ USER_C = \
 	libzfs_pool.c \
 	libzfs_sendrecv.c \
 	libzfs_status.c \
-	libzfs_util.c \
-	libuzfs_handle.c \
-	libuzfs_server.c
+	libzfs_util.c
 
 KERNEL_C = \
 	zfs_ioctl.c \

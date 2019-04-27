@@ -3,6 +3,7 @@ include $(top_srcdir)/config/Rules.am
 AM_CPPFLAGS += $(DEBUG_CFLAGS) $(DEBUG_STACKFLAGS)
 
 DEFAULT_INCLUDES += \
+	${UZFS_HEADER}	\
 	-I$(top_srcdir)/include \
 	-I$(top_srcdir)/lib/libspl/include
 
@@ -17,7 +18,6 @@ test_uzfs_LDADD = \
 	$(top_builddir)/lib/libnvpair/libnvpair.la \
 	$(top_builddir)/lib/libuutil/libuutil.la \
 	$(top_builddir)/lib/libzpool/libzpool.la \
-	$(top_builddir)/lib/libzrepl/libzrepl.la \
 	$(top_builddir)/lib/libzfs/libzfs.la \
 	$(top_builddir)/lib/libzfs_core/libzfs_core.la
 
@@ -25,13 +25,16 @@ test_uzfsserver_LDADD = \
 	$(top_builddir)/lib/libnvpair/libnvpair.la \
 	$(top_builddir)/lib/libuutil/libuutil.la \
 	$(top_builddir)/lib/libzpool/libzpool.la \
-	$(top_builddir)/lib/libzrepl/libzrepl.la \
 	$(top_builddir)/lib/libzfs/libzfs.la \
 	$(top_builddir)/lib/libzfs_core/libzfs_core.la
 
 test_uzfsserver_CXXFLAGS = -std=c++11
-test_uzfsserver_LDFLAGS = -pthread -lgtest -lgtest_main
+test_uzfsserver_LDFLAGS = -pthread -lgtest -lgtest_main ${UZFS_LIB}
 test_uzfs_CXXFLAGS = -std=c++11
-test_uzfs_LDFLAGS = -pthread -lgtest -lgtest_main
+test_uzfs_LDFLAGS = -pthread -lgtest -lgtest_main ${UZFS_LIB}
+
+#to resolve dependency for zrepl
+#LDFLAGS+= -lzfs
+
 test_zrepl_prot_LDFLAGS = -pthread -lgtest -lgtest_main -ljson-c
 test_zfs_LDFLAGS = -pthread -lgtest -lgtest_main

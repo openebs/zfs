@@ -19,6 +19,8 @@ many_fds_LDADD = \
 	$(top_builddir)/lib/libzfs/libzfs.la \
 	$(top_builddir)/lib/libzfs_core/libzfs_core.la
 
+many_fds_LDADD += ${UZFS_LIB}
+
 pkgexec_PROGRAMS = many_fds
 many_fds_SOURCES = many_fds.c
 

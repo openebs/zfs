@@ -1,6 +1,7 @@
 include $(top_srcdir)/config/Rules.am
 
 DEFAULT_INCLUDES += \
+	${UZFS_HEADER}	\
 	-I$(top_srcdir)/include \
 	-I$(top_srcdir)/lib/libspl/include
 

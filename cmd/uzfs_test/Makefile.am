@@ -6,6 +6,7 @@ AM_CFLAGS += $(DEBUG_STACKFLAGS) $(FRAME_LARGER_THAN) $(NO_FORMAT_TRUNCATION)
 AM_CPPFLAGS += -DDEBUG
 
 DEFAULT_INCLUDES += \
+	${UZFS_HEADER}	\
 	-I$(top_srcdir)/include \
 	-I$(top_srcdir)/lib/libspl/include
 
@@ -18,13 +19,14 @@ uzfs_test_SOURCES = \
 	zrepl_utest.c \
 	uzfs_test_rebuilding.c
 
-uzfs_test_LDADD = \
+uzfs_test_LDFLAGS = \
+	-Wl,--start-group	\
 	$(top_builddir)/lib/libnvpair/libnvpair.la \
 	$(top_builddir)/lib/libuutil/libuutil.la \
 	$(top_builddir)/lib/libzpool/libzpool.la \
-	$(top_builddir)/lib/libzrepl/libzrepl.la \
+	${UZFS_LIB}	\
 	$(top_builddir)/lib/libzfs/libzfs.la \
-	$(top_builddir)/lib/libzfs_core/libzfs_core.la
+	$(top_builddir)/lib/libzfs_core/libzfs_core.la -Wl,--end-group
 
-uzfs_test_LDADD += -lm -ljson-c
+uzfs_test_LDFLAGS += -lm -ljson-c
 

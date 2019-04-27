@@ -21,4 +21,4 @@ ztest_LDADD = \
 	$(top_builddir)/lib/libzfs/libzfs.la \
 	$(top_builddir)/lib/libzfs_core/libzfs_core.la
 
-ztest_LDADD += -lm
+ztest_LDADD += -lm ${UZFS_LIB}

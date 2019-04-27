@@ -120,10 +120,6 @@ KERNEL_H = \
 	${top_srcdir}/include/sys/zpl.h \
 	$(top_srcdir)/include/sys/zvol.h
 
-USER_H = \
-	$(top_srcdir)/include/sys/uzfs_zvol.h \
-	$(top_srcdir)/include/sys/vdev_disk_aio.h
-
 EXTRA_DIST = $(COMMON_H) $(KERNEL_H) $(USER_H)
 
 if CONFIG_USER

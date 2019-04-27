@@ -14,9 +14,10 @@ sbin_PROGRAMS = mount.zfs
 mount_zfs_SOURCES = \
 	mount_zfs.c
 
-mount_zfs_LDADD = \
+mount_zfs_LDFLAGS = -Wl,--start-group \
+	$(top_builddir)/lib/libzpool/libzpool.la \
 	$(top_builddir)/lib/libnvpair/libnvpair.la \
 	$(top_builddir)/lib/libuutil/libuutil.la \
-	$(top_builddir)/lib/libzpool/libzpool.la \
 	$(top_builddir)/lib/libzfs/libzfs.la \
-	$(top_builddir)/lib/libzfs_core/libzfs_core.la
+	${UZFS_LIB}	\
+	$(top_builddir)/lib/libzfs_core/libzfs_core.la -Wl,--end-group

@@ -1,6 +1,7 @@
 include $(top_srcdir)/config/Rules.am
 
 DEFAULT_INCLUDES += \
+	${UZFS_HEADER}	\
 	-I$(top_srcdir)/include \
 	-I$(top_srcdir)/lib/libspl/include
 
@@ -20,6 +21,8 @@ zpool_LDADD = \
 	$(top_builddir)/lib/libzfs/libzfs.la \
 	$(top_builddir)/lib/libzfs_core/libzfs_core.la \
 	-lm $(LIBBLKID)
+
+zpool_LDADD += ${UZFS_LIB}
 
 zpoolconfdir = $(sysconfdir)/zfs/zpool.d
 zpoolexecdir = $(libexecdir)/zfs/zpool.d

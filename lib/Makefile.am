@@ -6,10 +6,6 @@ SUBDIRS = libspl libavl libefi libshare libunicode libicp
 # incorporate the six convenience libraries given above.
 SUBDIRS += libuutil libnvpair libzpool libzfs_core libzfs
 
-if ENABLE_UZFS
-SUBDIRS += libzrepl
-endif
-
 if CONFIG_FIO
 SUBDIRS += fio
 endif

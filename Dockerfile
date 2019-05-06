@@ -1,5 +1,5 @@
 #
-# This Dockerfile builds a recent base image containing cstor binaries and 
+# This Dockerfile builds a recent base image containing cstor binaries and
 # libraries.
 #
 
@@ -18,7 +18,6 @@ COPY cmd/zpool/.libs/zpool /usr/local/bin/
 COPY cmd/zfs/.libs/zfs /usr/local/bin/
 COPY cmd/zstreamdump/.libs/zstreamdump /usr/local/bin/
 
-COPY lib/libzrepl/.libs/*.so* /usr/lib/
 COPY lib/libzpool/.libs/*.so* /usr/lib/
 COPY lib/libuutil/.libs/*.so* /usr/lib/
 COPY lib/libnvpair/.libs/*.so* /usr/lib/

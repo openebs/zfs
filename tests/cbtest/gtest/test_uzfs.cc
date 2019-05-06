@@ -59,7 +59,8 @@ int rebuild_test_case = 0;
 int mgmt_test_case = 0;
 
 /* This will be used to identify that clone rebuild thread is also done */
-int done_thread_count = 0;
+uint64_t started_thread_count = 0;
+uint64_t done_thread_count = 0;
 pthread_mutex_t done_thread_count_mtx = PTHREAD_MUTEX_INITIALIZER;
 int data_conn_fd = -1;
 int data_conn_fd_todelete = -1;
@@ -400,7 +401,7 @@ exit:
 	shutdown(fd, SHUT_RDWR);
 	close(fd);
 	pthread_mutex_lock(&done_thread_count_mtx);
-	done_thread_count++;
+	atomic_inc_64(&done_thread_count);
 	if (rebuild_test_case != 6) {
 		if (done_thread_count == 2)
 			rebuild_test_case = 0;
@@ -650,7 +651,7 @@ exit:
 	close(fd);
 
 	pthread_mutex_lock(&done_thread_count_mtx);
-	done_thread_count++;
+	atomic_inc_64(&done_thread_count);
 	if (rebuild_test_case == 13) {
 		if (done_thread_count == 2)
 			rebuild_test_case = 0;
@@ -739,7 +740,7 @@ exit:
 	close(fd);
 
 	pthread_mutex_lock(&done_thread_count_mtx);
-	done_thread_count++;
+	atomic_inc_64(&done_thread_count);
 	if (rebuild_test_case == 14) {
 		if (done_thread_count == 2)
 			rebuild_test_case = 0;
@@ -1577,6 +1578,7 @@ uzfs_mock_zvol_rebuild_dw_replica(void *arg)
 {
 	rebuild_thread_arg_t *rebuild_args = (rebuild_thread_arg_t *)arg;
 
+	int		rebuild_io_cnt = 0;
 	struct sockaddr_in replica_ip;
 
 	int		rc = 0;
@@ -1590,8 +1592,13 @@ uzfs_mock_zvol_rebuild_dw_replica(void *arg)
 	struct linger lo = { 1, 0 };
 	char zvol_name[MAXNAMELEN];
 	int writelen = 0;
+	int thread_num = 0;
+
+	atomic_inc_64(&started_thread_count);
+	thread_num = started_thread_count;
 
 	strncpy(rebuild_args->zvol_name, "vol3", MAXNAMELEN);
+
 	sfd = rebuild_args->fd;
 	zinfo = rebuild_args->zinfo;
 
@@ -1618,10 +1625,14 @@ uzfs_mock_zvol_rebuild_dw_replica(void *arg)
 		goto exit;
 	}
 
+	if ((thread_num == 2) && (rebuild_test_case == 13))
+		sleep(5);
 send_hdr_again:
 	/* Set state in-progess state now */
 	uzfs_zvol_get_last_committed_io_no(zinfo->main_zv,
 	    (char *)HEALTHY_IO_SEQNUM, &checkpointed_ionum);
+	if ((thread_num == 1) && (rebuild_test_case == 13))
+		checkpointed_ionum = 100000350;
 	zvol_state = zinfo->main_zv;
 	bzero(&hdr, sizeof (hdr));
 	hdr.status = ZVOL_OP_STATUS_OK;
@@ -1702,7 +1713,7 @@ next_step:
 		rc = 0;
 		LOG_INFO("Rebuilding zvol %s completed", zinfo->name);
 		goto exit;
-	} else if (rebuild_test_case == 12) {
+	} else if ((rebuild_test_case == 12) || (rebuild_test_case == 13)) {
 	    	if (offset >= ZVOL_VOLUME_SIZE(zvol_state))
 			hdr.opcode = ZVOL_OPCODE_REBUILD_COMPLETE;
 		rc = uzfs_zvol_socket_write(sfd, (char *)&hdr, sizeof (hdr));
@@ -1715,8 +1726,13 @@ next_step:
 		}
 	}
 
-	while (1) {
+#if DEBUG
+	if ((thread_num == 2) && (rebuild_test_case == 13))
+		inject_error.delay.helping_replica_ack_sender = 1;
+#endif
 
+	rebuild_io_cnt = 0;
+	while (1) {
 		if ((rebuild_test_case == 7) || (rebuild_test_case == 8) || (rebuild_test_case == 9))
 		{
 			/*
@@ -1793,6 +1809,7 @@ next_step:
 			LOG_ERR("Socket read writeIO failed");
 			goto exit;
 		}
+		LOG_INFO("completed rebuild IO %lu %lu for cnt %d %s", hdr.io_seq, hdr.offset, rebuild_io_cnt, zinfo->name);
 
 		/*
 		 * Take refcount for uzfs_zvol_worker to work on it.
@@ -1807,9 +1824,15 @@ next_step:
 			goto exit;
 		}
 		zio_cmd_free(&zio_cmd);
+		if ((thread_num == 2) && (rebuild_io_cnt >= 5) && (rebuild_test_case == 13)) {
+			LOG_ERR("failing dw_replica rebuild from clone for %s..", zinfo->name);
+			rc = -1;
+			goto exit;
+		}
+		rebuild_io_cnt++;
 	}
-
 exit:
+
 	mutex_enter(&zinfo->main_zv->rebuild_mtx);
 	if (rc != 0) {
 		uzfs_zvol_set_rebuild_status(zinfo->main_zv,
@@ -1844,11 +1867,14 @@ exit:
 	/* Parent thread have taken refcount, drop it now */
 	uzfs_zinfo_drop_refcnt(zinfo);
 
-	done_thread_count++;
-	if (rebuild_test_case == 12) {
+	atomic_inc_64(&done_thread_count);
+	/* Testcase 12 is for success. So, delete the internal clone */
+	if ((rebuild_test_case == 12) || (rebuild_test_case == 13)) {
 		if (done_thread_count == 2) {
-			uzfs_zvol_store_kv_pair(zinfo2->clone_zv, (char *)STALE, 1);
-			uzfs_zinfo_destroy_internal_clone(zinfo2);
+			if (rebuild_test_case == 12) {
+				uzfs_zvol_store_kv_pair(zinfo2->clone_zv, (char *)STALE, 1);
+				uzfs_zinfo_destroy_internal_clone(zinfo2);
+			}
 			rebuild_test_case = 0;
 		}
 	} else {
@@ -1926,6 +1952,7 @@ void execute_rebuild_test_case(const char *s, int test_case,
 	kthread_t *thrd;
 	rebuild_thread_arg_t *rebuild_args;
 
+	started_thread_count = 0;
 	done_thread_count = 0;
 	rebuild_test_case = test_case;
 	create_rebuild_args(&rebuild_args, helping_vol);
@@ -1940,7 +1967,7 @@ void execute_rebuild_test_case(const char *s, int test_case,
 	zk_thread_join(thrd->t_tid);
 
 	/* wait for rebuild thread to exit */
-	while (1 && test_case != 15) {
+	while (test_case != 15) {
 		if(rebuild_test_case != 0)
 			sleep(1);
 		else
@@ -2443,42 +2470,63 @@ TEST(RebuildScanner, AbruptClose) {
 }
 
 TEST(RebuildScanner, WrongVersion) {
+	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
+	dw_replica_fn = &uzfs_mock_zvol_rebuild_dw_replica;
+	io_receiver = &uzfs_zvol_io_receiver;
 	/* Rebuild thread sending wrong opcode after connectg */
 	execute_rebuild_test_case("Wrong version", 11,
 	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
 }
 
 TEST(RebuildScanner, WrongOpcode) {
+	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
+	dw_replica_fn = &uzfs_mock_zvol_rebuild_dw_replica;
+	io_receiver = &uzfs_zvol_io_receiver;
 	/* Rebuild thread sending wrong opcode after connectg */
 	execute_rebuild_test_case("Wrong opcode", 2,
 	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
 }
 
 TEST(RebuildScanner, ErrorOut) {
+	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
+	dw_replica_fn = &uzfs_mock_zvol_rebuild_dw_replica;
+	io_receiver = &uzfs_zvol_io_receiver;
 	/* Rebuild thread exits after handshake */
 	execute_rebuild_test_case("Rebuild error out", 3,
 	    ZVOL_REBUILDING_ERRORED, ZVOL_REBUILDING_FAILED);
 }
 
 TEST(RebuildScanner, WrongVolname) {
+	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
+	dw_replica_fn = &uzfs_mock_zvol_rebuild_dw_replica;
+	io_receiver = &uzfs_zvol_io_receiver;
 	/* Rebuild thread sending wrong vol name */
 	execute_rebuild_test_case("Wrong vol name", 4,
 	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
 }
 
 TEST(RebuildScanner, HandshakeAgaian) {
+	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
+	dw_replica_fn = &uzfs_mock_zvol_rebuild_dw_replica;
+	io_receiver = &uzfs_zvol_io_receiver;
 	/* Rebuild thread sending handshake again on same volume */
 	execute_rebuild_test_case("Send handshake again", 5,
 	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
 }
 
 TEST(RebuildScanner, VolumeTooLargeToHandle) {
+	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
+	dw_replica_fn = &uzfs_mock_zvol_rebuild_dw_replica;
+	io_receiver = &uzfs_zvol_io_receiver;
 	/* Rebuild thread sending handshake again on same volume */
 	execute_rebuild_test_case("Volume offset and len too large", 6,
 	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
 }
 
 TEST(RebuildScanner, VolumeOffline) {
+	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
+	dw_replica_fn = &uzfs_mock_zvol_rebuild_dw_replica;
+	io_receiver = &uzfs_zvol_io_receiver;
 	zvol_rebuild_step_size = (1024ULL * 1024ULL * 1);
 
 	/* Set offline state on vol3 */
@@ -2489,6 +2537,9 @@ TEST(RebuildScanner, VolumeOffline) {
 }
 
 TEST(RebuildScanner, AckSenderCreatedFalse) {
+	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
+	dw_replica_fn = &uzfs_mock_zvol_rebuild_dw_replica;
+	io_receiver = &uzfs_zvol_io_receiver;
 	/* Set io_ack_sender_created as B_FALSE */
 	zinfo2->is_io_ack_sender_created = B_TRUE;
 	execute_rebuild_test_case("Ack Sender Created False", 8,
@@ -2497,6 +2548,9 @@ TEST(RebuildScanner, AckSenderCreatedFalse) {
 }
 
 TEST(RebuildScanner, ShutdownRebuildFd) {
+	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
+	dw_replica_fn = &uzfs_mock_zvol_rebuild_dw_replica;
+	io_receiver = &uzfs_zvol_io_receiver;
 	/* Set io_ack_sender_created as B_FALSE */
 	zinfo2->is_io_ack_sender_created = B_FALSE;
 	uzfs_zvol_set_rebuild_status(zv2, ZVOL_REBUILDING_INIT);
@@ -2505,7 +2559,25 @@ TEST(RebuildScanner, ShutdownRebuildFd) {
 	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
 }
 
+TEST(RebuildScanner, RebuildFailureWithAFS) {
+	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
+	dw_replica_fn = &uzfs_mock_zvol_rebuild_dw_replica;
+	io_receiver = &uzfs_zvol_io_receiver;
+	uzfs_zvol_set_rebuild_status(zv2, ZVOL_REBUILDING_INIT);
+	do_data_connection(data_conn_fd, "127.0.0.1", IO_SERVER_PORT, "vol3");
+	zvol_rebuild_step_size = (1024ULL * 1024ULL * 1024ULL);
+	execute_rebuild_test_case("Rebuild Failure with AFS", 13,
+	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
+}
+
 TEST(RebuildScanner, RebuildSuccessWithAFS) {
+	sleep(10);
+#if DEBUG
+	inject_error.delay.helping_replica_ack_sender = 0;
+#endif
+	sleep(5);
+	close(data_conn_fd);
+	data_conn_fd = -1;
 	uzfs_zvol_set_rebuild_status(zv2, ZVOL_REBUILDING_INIT);
 	do_data_connection(data_conn_fd, "127.0.0.1", IO_SERVER_PORT, "vol3");
 	zvol_rebuild_step_size = (1024ULL * 1024ULL * 100);

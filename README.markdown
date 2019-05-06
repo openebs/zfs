@@ -1,17 +1,25 @@
-![img](http://zfsonlinux.org/images/zfs-linux.png)
+[![Build Status](https://travis-ci.org/openebs/cstor.svg?branch=develop)](https://travis-ci.org/openebs/cstor)
+[![codecov](https://codecov.io/gh/zfsonlinux/zfs/branch/master/graph/badge.svg)](https://codecov.io/gh/zfsonlinux/zfs)
 [![FOSSA Status](https://app.fossa.io/api/projects/git%2Bgithub.com%2Fopenebs%2Fcstor.svg?type=shield)](https://app.fossa.io/projects/git%2Bgithub.com%2Fopenebs%2Fcstor?ref=badge_shield)
 
-ZFS on Linux is an advanced file system and volume manager which was originally
-developed for Solaris and is now maintained by the OpenZFS community, on which
-cStor data engine is built.
+# uZFS ( aka cStor ) 
 
-[![codecov](https://codecov.io/gh/zfsonlinux/zfs/branch/master/graph/badge.svg)](https://codecov.io/gh/zfsonlinux/zfs)
+uZFS enables running the DMU layer of [ZFS on Linux](https://github.com/zfsonlinux/zfs)
+in userspace. Unlike ZFS that acts on the kernel IOCTLs for both IO and CLI operations, 
+uZFS does the following:
 
-# Official Resources for Zol
-  * [Site](http://zfsonlinux.org)
-  * [Wiki](https://github.com/zfsonlinux/zfs/wiki)
-  * [Mailing lists](https://github.com/zfsonlinux/zfs/wiki/Mailing-Lists)
-  * [OpenZFS site](http://open-zfs.org/)
+-   Exposes an IOCTL service over unix domain sockets
+-   The DMU Layer(or ZVOL objects) IO operations are exposed as API that can be consumed by any embedded libary as opposed to accessing via system calls. 
+-   The uZFS CLI operations that interact directly with the embedded IOCTL server in uZFS. uZFS CLI will be used to create Pool(zpool) and Volumes(zvol).
+
+uZFS embedds the [cStor Data Engine](https://github.com/openebs/libcstor) that helps with:
+-   Exposing a Logical Block volume as a network service
+-   Read/Write the data from/to the underlying uZFS ZVOL
+-   Interact with the other uZFS ZVOLs in the cluster to resync the data
+
+*Note: The uZFS server binary with embedded IOCTL server and cStor Data Engine is referred
+to in the below document as zrepl.*
+
 
 # Contribute & Develop
 We have a separate document with [contribution guidelines](./.github/CONTRIBUTING.md).
@@ -59,8 +67,8 @@ instead call into uZFS process for serving "ioctls" using unix domain socket.
 Other than that the build steps are the same as for ZoL:
 
 ```bash
-git clone https://github.com/openebs/zfs.git
-cd zfs
+git clone https://github.com/openebs/cstor.git
+cd cstor
 ./autogen.sh
 CFLAGS="-g -O0" ./configure --enable-debug --enable-uzfs=yes
 make

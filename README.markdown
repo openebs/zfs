@@ -1,6 +1,8 @@
 [![Build Status](https://travis-ci.org/openebs/cstor.svg?branch=develop)](https://travis-ci.org/openebs/cstor)
 [![codecov](https://codecov.io/gh/zfsonlinux/zfs/branch/master/graph/badge.svg)](https://codecov.io/gh/zfsonlinux/zfs)
 [![FOSSA Status](https://app.fossa.io/api/projects/git%2Bgithub.com%2Fopenebs%2Fcstor.svg?type=shield)](https://app.fossa.io/projects/git%2Bgithub.com%2Fopenebs%2Fcstor?ref=badge_shield)
+[![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/2739/badge)](https://bestpractices.coreinfrastructure.org/projects/2739)
+
 
 # uZFS ( aka cStor ) 
 

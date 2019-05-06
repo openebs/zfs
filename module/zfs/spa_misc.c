@@ -1892,7 +1892,7 @@ spa_init(int mode)
 	vdev_cache_stat_init();
 	vdev_raidz_math_init();
 	vdev_file_init();
-#ifndef _KERNEL
+#ifdef  _UZFS
 	vdev_disk_aio_init();
 #endif
 	zfs_prop_init();
@@ -1910,7 +1910,7 @@ spa_fini(void)
 
 	spa_evict_all();
 
-#ifndef _KERNEL
+#ifdef  _UZFS
 	vdev_disk_aio_fini();
 #endif
 	vdev_file_fini();

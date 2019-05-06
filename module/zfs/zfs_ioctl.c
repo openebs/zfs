@@ -2853,7 +2853,7 @@ clear_received_props(const char *dsname, nvlist_t *props,
 	return (err);
 }
 
-#ifndef _KERNEL
+#ifdef  _UZFS
 /*
  * Setting or unsetting targetIP is allowed, but, doens't allow changing from
  * one IP to another.
@@ -2951,7 +2951,7 @@ zfs_ioc_set_prop(zfs_cmd_t *zc)
 	nvlist_t *errors;
 	int error;
 
-#ifndef _KERNEL
+#ifdef  _UZFS
 	int targetip_error;
 	char *targetip = NULL;
 	char curtargetip[MAXNAMELEN];
@@ -2973,7 +2973,7 @@ zfs_ioc_set_prop(zfs_cmd_t *zc)
 		error = dsl_prop_set_hasrecvd(zc->zc_name);
 	}
 
-#ifndef _KERNEL
+#ifdef  _UZFS
 	/*
 	 * Below code is to set/unset targetip property for zvol_info.
 	 * This should have been done during sync time similar to
@@ -2994,7 +2994,7 @@ zfs_ioc_set_prop(zfs_cmd_t *zc)
 		error = zfs_set_prop_nvlist(zc->zc_name, source, nvl, errors);
 
 	if (zc->zc_nvlist_dst != 0 && errors != NULL) {
-#ifndef _KERNEL
+#ifdef  _UZFS
 		if (nvlist_lookup_int32(errors, ZFS_PROP_TARGET_IP,
 		    &targetip_error) == 0)
 			zfs_set_targetip_posthook(zc->zc_name, targetip,
@@ -3534,7 +3534,7 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 			}
 		}
 	}
-#if !defined(_KERNEL)
+#ifdef  _UZFS
 	(void) uzfs_zvol_create_cb((char *)fsname, nvprops);
 #endif
 	return (error);
@@ -3578,7 +3578,7 @@ zfs_ioc_clone(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 		    nvprops, outnvl);
 		if (error != 0)
 			(void) dsl_destroy_head(fsname);
-#if !defined(_KERNEL)
+#ifdef  _UZFS
 		else
 			(void) uzfs_zvol_create_cb(fsname, nvprops);
 #endif
@@ -7456,6 +7456,7 @@ uzfs_handle_ioctl(const char *pool, zfs_cmd_t *zc, uzfs_info_t *ucmd_info)
 	case ZFS_IOC_ERROR_LOG:
 		err = zfs_ioc_error_log(zc);
 		break;
+#ifdef  _UZFS
 	case ZFS_IOC_STATS: {
 		nvlist_t *outnvl = fnvlist_alloc();
 		err = uzfs_ioc_stats(zc, outnvl);
@@ -7464,6 +7465,7 @@ uzfs_handle_ioctl(const char *pool, zfs_cmd_t *zc, uzfs_info_t *ucmd_info)
 		nvlist_free(outnvl);
 		break;
 	}
+#endif
 	case ZFS_IOC_CLEAR: {
 		err = zfs_ioc_clear(zc);
 		break;

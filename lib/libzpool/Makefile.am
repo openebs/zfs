@@ -8,7 +8,7 @@ VPATH = \
 AM_CFLAGS += $(DEBUG_STACKFLAGS) $(FRAME_LARGER_THAN)
 
 DEFAULT_INCLUDES += \
-	${UZFS_HEADER}	\
+	-I$(libcstordir)	\
 	-I$(top_srcdir)/include \
 	-I$(top_srcdir)/lib/libspl/include
 
@@ -17,8 +17,7 @@ lib_LTLIBRARIES = libzpool.la
 USER_C = \
 	kernel.c \
 	taskq.c \
-	util.c \
-	uzfs_test_mgmt.c
+	util.c
 
 KERNEL_C = \
 	zfs_comutil.c \
@@ -144,7 +143,7 @@ libzpool_la_LIBADD = \
 	$(top_builddir)/lib/libnvpair/libnvpair.la \
 	$(top_builddir)/lib/libicp/libicp.la
 
-libzpool_la_LIBADD += $(ZLIB) -ldl -lm -laio $(JEMALLOCLIB)  -L/tmp
+libzpool_la_LIBADD += $(ZLIB) -ldl -lm
 libzpool_la_LDFLAGS = -version-info 2:0:0
 
 EXTRA_DIST = $(USER_C)

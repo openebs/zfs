@@ -57,11 +57,20 @@ install:
         make --no-print-directory -s pkg-utils pkg-kmod;
         sudo dpkg -i *.deb;
       fi
-    # return to cstor code 
+    - cd ..
+    # Build libcstor for uzfs feature
+    - git clone https://github.com/openebs/libcstor.git
+    - cd libcstor
+    - sh autogen.sh;
+    - ./configure --enable-debug --with-zfs-headers=$PWD/../cstor/include --with-spl-headers=$PWD/../cstor/lib/libspl/include
+    - make -j4;
+    - sudo make install;
+    - sudo ldconfig
+    # return to cstor code
     - popd
     - sh autogen.sh
     - if [ $ZFS_BUILD_TAGS = 0 ]; then
-        ./configure --with-config=user --enable-code-coverage=yes --enable-debug --enable-uzfs=yes --with-jemalloc --with-fio=$PWD/../fio || travis_terminate 1;
+        ./configure --with-config=user --enable-code-coverage=yes --enable-debug --enable-uzfs=yes --with-jemalloc --with-fio=$PWD/../fio --with-libcstor=$PWD/../libcstor/include || travis_terminate 1;
         make -j4;
       else
         ./configure --enable-code-coverage=yes --enable-debug || travis_terminate 1;

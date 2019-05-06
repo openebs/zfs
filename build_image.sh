@@ -4,7 +4,7 @@ set -e
 pwd
 make clean
 sh autogen.sh
-./configure --enable-uzfs=yes --with-config=user --with-jemalloc
+./configure --enable-uzfs=yes --with-config=user --with-jemalloc --with-libcstor=$PWD/../libcstor/include
 make clean
 make
 

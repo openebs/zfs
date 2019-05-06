@@ -42,7 +42,9 @@
 #include <sys/dsl_deleg.h>
 #include <sys/dmu_impl.h>
 #include <sys/zvol.h>
+#ifdef  _UZFS
 #include <uzfs_mgmt.h>
+#endif
 
 typedef struct dmu_snapshots_destroy_arg {
 	nvlist_t *dsda_snaps;
@@ -930,7 +932,7 @@ dsl_destroy_head(const char *name)
 	zfs_destroy_unmount_origin(name);
 #endif
 
-#ifndef _KERNEL
+#ifdef  _UZFS
 	uzfs_zvol_destroy_cb(name, NULL);
 #endif
 	error = spa_open(name, &spa, FTAG);

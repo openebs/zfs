@@ -1536,7 +1536,9 @@ kernel_init(int mode)
 	random_init();
 	kstat_nvl = fnvlist_alloc();
 	VERIFY0(uname(&hw_utsname));
+#ifdef  _UZFS
 	mutex_init(&zvol_list_mutex, NULL, MUTEX_DEFAULT, NULL);
+#endif
 	thread_init();
 	system_taskq_init();
 	icp_init();
@@ -1558,7 +1560,9 @@ kernel_fini(void)
 	thread_fini();
 	random_fini();
 	fnvlist_free(kstat_nvl);
+#ifdef  _UZFS
 	mutex_destroy(&zvol_list_mutex);
+#endif
 }
 
 uid_t

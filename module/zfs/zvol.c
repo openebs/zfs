@@ -323,12 +323,12 @@ zvol_create_cb(objset_t *os, void *arg, cred_t *cr, dmu_tx_t *tx)
 	error = zap_update(os, ZVOL_ZAP_OBJ, "size", 8, 1, &volsize, tx);
 	ASSERT(error == 0);
 
-#if !defined(_KERNEL)
+#ifdef  _UZFS
 	VERIFY(uzfs_zvol_create_meta(os, volblocksize, volblocksize, tx) == 0);
 #endif
 }
 
-#if !defined(_KERNEL)
+#ifdef  _UZFS
 
 static const char *
 status_to_str(zvol_info_t *zv)
@@ -652,10 +652,12 @@ zvol_set_volsize(const char *name, uint64_t volsize)
 		return (SET_ERROR(EROFS));
 
 #if !defined(_KERNEL)
+#ifdef  _UZFS
 	zvol_info_t *zinfo = uzfs_zinfo_lookup(name);
 	if (zinfo == NULL)
 		return (SET_ERROR(ENOENT));
 	zv = zinfo->main_zv;
+#endif
 #else
 	zv = zvol_find_by_name(name, RW_READER);
 	ASSERT(zv == NULL || (MUTEX_HELD(&zv->zv_state_lock) &&
@@ -705,7 +707,9 @@ out:
 	}
 
 #if !defined(_KERNEL)
+#ifdef  _UZFS
 	uzfs_zinfo_drop_refcnt(zinfo);
+#endif
 #else
 	if (zv != NULL)
 		mutex_exit(&zv->zv_state_lock);

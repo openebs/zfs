@@ -5,11 +5,11 @@ AC_DEFUN([ZFS_ZOL_UZFS], [
         [UZFS_LIB="-lcstor"],
         [enable_uzfs=no])
 
-    AC_ARG_WITH(uzfsheaders,
-        AC_HELP_STRING([--with-uzfsheaders],
-            [uzfs headers path]),
-        [UZFS_HEADER="-I$withval"],
-        [UZFS_HEADER])
+    AC_ARG_WITH(libcstor,
+        AC_HELP_STRING([--with-libcstor=DIR],
+            [libcstor headers path]),
+        [libcstordir=$withval],
+        [libcstordir=check])
 
 
 	AS_IF([test "x$enable_uzfs" = xyes],
@@ -17,9 +17,12 @@ AC_DEFUN([ZFS_ZOL_UZFS], [
 		UZFS_CFLAGS="-D_UZFS -Werror"
 	])
 
+    AS_IF([test "x$libcstordir" == xcheck], [
+        libcstordir=/usr/local/include/libcstor],[])
+
 	AC_SUBST(UZFS_CFLAGS)
+	AC_SUBST(libcstordir)
 	AC_SUBST(UZFS_LIB)
-	AC_SUBST(UZFS_HEADER)
 	AC_MSG_RESULT([$enable_uzfs])
 	AM_CONDITIONAL([ENABLE_UZFS],
 	    [test "x$enable_uzfs" = xyes])

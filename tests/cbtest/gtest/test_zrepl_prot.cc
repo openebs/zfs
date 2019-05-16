@@ -417,6 +417,58 @@ public:
 	int m_listenfd;
 };
 
+/*
+ * Stale Snapshot deletion verification
+ */
+TEST(StaleSnapshot, Destroy) {
+	Zrepl zrepl;
+	Target target;
+	int rc, control_fd;
+	SocketFd datasock;
+	TestPool pool("stale_snap_pool");
+	std::string vol_name = pool.getZvolName("vol");
+	std::string snap_name1 = pool.getZvolName("vol@usersnap");
+	std::string snap_name2 = pool.getZvolName("vol@.io_snap");
+	std::string snap_name3 = pool.getZvolName("vol@.io_snap1.2");
+	std::string snap_name4 = pool.getZvolName("vol@rebuild_snap");
+	std::string snap_name5 = pool.getZvolName("vol_rebuild_clone@.io_snap");
+	std::string snap_name6 = pool.getZvolName("vol_rebuild_clone@.io_snap1.2");
+	std::string host;
+	uint16_t port;
+	std::string output;
+
+	zrepl.start();
+	pool.create();
+	pool.createZvol("vol", "-o io.openebs:targetip=127.0.0.1");
+	pool.createZvol("vol_rebuild_clone", "-o io.openebs:targetip=127.0.0.2");
+	output = execCmd("zfs", std::string("snapshot ") + snap_name1);
+	output = execCmd("zfs", std::string("snapshot ") + snap_name2);
+	output = execCmd("zfs", std::string("snapshot ") + snap_name3);
+	output = execCmd("zfs", std::string("snapshot ") + snap_name4);
+	output = execCmd("zfs", std::string("snapshot ") + snap_name5);
+	output = execCmd("zfs", std::string("snapshot ") + snap_name6);
+	output = execCmd("zfs", std::string("list -t all"));
+
+	printf("%s\n", output.c_str());
+
+	zrepl.kill();
+
+	zrepl.start();
+	pool.import();
+
+	rc = target.listen();
+	ASSERT_GE(rc, 0);
+	control_fd = target.accept(-1);
+	ASSERT_GE(control_fd, 0);
+
+	do_handshake(vol_name, host, port, NULL, NULL, control_fd, ZVOL_OP_STATUS_OK);
+	do_data_connection(datasock.fd(), host, port, vol_name, 4096, 2);
+
+	output = execCmd("zfs", std::string("list -t all"));
+	printf("%s\n", output.c_str());
+	ASSERT_EQ(output.find(".io_snap"), std::string::npos);
+}
+
 class ZreplHandshakeTest : public testing::Test {
 protected:
 	/* Shared setup hook for all zrepl handshake tests - called just once */

@@ -621,7 +621,7 @@ uzfs_zvol_stats(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp, zvol_info_t *zinfo)
 
 	strlcpy(stat.label, "used", sizeof (stat.label));
 	stat.value = dsl_dir_phys(
-	    zv_objset->os_dsl_dataset->ds_dir)->dd_used_bytes;
+	    zv_objset->os_dsl_dataset->ds_dir)->dd_uncompressed_bytes;
 
 	bzero(&hdr, sizeof (hdr));
 	hdr.version = REPLICA_VERSION;

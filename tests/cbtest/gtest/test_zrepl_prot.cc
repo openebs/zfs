@@ -112,7 +112,7 @@ static void do_handshake(std::string zvol_name, std::string &host,
  * This fn does data conn for a host:ip and volume, and fills data fd
  *
  * NOTE: Return value must be void otherwise we could not use asserts
- * (pecularity of gtest framework).
+ * (peculiarity of gtest framework).
  */
 static void do_data_connection(int &data_fd, std::string host, uint16_t port,
     std::string zvol_name, int bs=4096, int timeout=120,
@@ -139,7 +139,10 @@ retry:
 	hdr_out.version = version;
 	hdr_out.opcode = ZVOL_OPCODE_OPEN;
 	hdr_out.status = ZVOL_OP_STATUS_OK;
-	hdr_out.len = sizeof (open_data);
+	if (version == 3)
+		hdr_out.len = sizeof (zvol_op_open_data_ver_3_t);
+	else
+		hdr_out.len = sizeof (open_data);
 
 	rc = write(fd, &hdr_out, sizeof (hdr_out));
 	ASSERT_EQ(rc, sizeof (hdr_out));
@@ -153,7 +156,7 @@ retry:
 
 	rc = read(fd, &hdr_in, sizeof (hdr_in));
 	ASSERT_EQ(rc, sizeof (hdr_in));
-	ASSERT_EQ(hdr_in.version, REPLICA_VERSION);
+	ASSERT_EQ(hdr_in.version, hdr_out.version);
 	ASSERT_EQ(hdr_in.opcode, ZVOL_OPCODE_OPEN);
 	ASSERT_EQ(hdr_in.len, 0);
 	if (hdr_in.status != res) {
@@ -260,12 +263,12 @@ static void write_two_chunks_and_verify_resp(int data_fd, uint64_t &ioseq,
 }
 
 static void get_zvol_status(std::string zvol_name, uint64_t &ioseq, int control_fd,
-    int state, int rebuild_status)
+    int state, int rebuild_status, int version = REPLICA_VERSION)
 {
 	zvol_io_hdr_t hdr_in, hdr_out = {0};
 	struct zrepl_status_ack status;
 	int rc;
-	hdr_out.version = REPLICA_VERSION;
+	hdr_out.version = version;
 	hdr_out.opcode = ZVOL_OPCODE_REPLICA_STATUS;
 	hdr_out.status = ZVOL_OP_STATUS_OK;
 	hdr_out.io_seq = ++ioseq;
@@ -279,6 +282,7 @@ static void get_zvol_status(std::string zvol_name, uint64_t &ioseq, int control_
 	rc = read(control_fd, &hdr_in, sizeof (hdr_in));
 	ASSERT_ERRNO("read", rc >= 0);
 	ASSERT_EQ(rc, sizeof (hdr_in));
+	EXPECT_EQ(hdr_in.version, hdr_out.version);
 	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_REPLICA_STATUS);
 	EXPECT_EQ(hdr_in.io_seq, ioseq);
 	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
@@ -291,13 +295,13 @@ static void get_zvol_status(std::string zvol_name, uint64_t &ioseq, int control_
 }
 
 static void transition_zvol_to_online(uint64_t &ioseq, int control_fd,
-    std::string zvol_name, int res = ZVOL_OP_STATUS_OK)
+    std::string zvol_name, int res = ZVOL_OP_STATUS_OK, int version = REPLICA_VERSION)
 {
 	zvol_io_hdr_t hdr_in, hdr_out = {0};
 	struct mgmt_ack mgmt_ack = {0};
 	int rc;
 
-	hdr_out.version = REPLICA_VERSION;
+	hdr_out.version = version;
 	hdr_out.opcode = ZVOL_OPCODE_START_REBUILD;
 	hdr_out.status = ZVOL_OP_STATUS_OK;
 	hdr_out.io_seq = ++ioseq;
@@ -547,6 +551,41 @@ TEST_F(ZreplHandshakeTest, HandshakeOk) {
 	EXPECT_EQ(mgmt_ack.zvol_guid, std::stoul(output));
 }
 
+TEST_F(ZreplHandshakeTest, HandshakeMinVersion) {
+	zvol_io_hdr_t hdr_in, hdr_out = {0};
+	std::string output;
+	mgmt_ack_t mgmt_ack;
+	int rc;
+
+	hdr_out.version = MIN_SUPPORTED_REPLICA_VERSION;
+	hdr_out.opcode = ZVOL_OPCODE_HANDSHAKE;
+	hdr_out.status = ZVOL_OP_STATUS_OK;
+	hdr_out.len = m_zvol_name.length() + 1;
+
+	rc = write(m_control_fd, &hdr_out, sizeof (hdr_out));
+	ASSERT_EQ(rc, sizeof (hdr_out));
+	rc = write(m_control_fd, m_zvol_name.c_str(), hdr_out.len);
+	ASSERT_EQ(rc, hdr_out.len);
+
+	rc = read(m_control_fd, &hdr_in, sizeof (hdr_in));
+	ASSERT_EQ(rc, sizeof (hdr_in));
+	EXPECT_EQ(hdr_in.version, hdr_out.version);
+	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_HANDSHAKE);
+	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
+	EXPECT_EQ(hdr_in.io_seq, 0);
+	EXPECT_EQ(hdr_in.offset, 0);
+	ASSERT_EQ(hdr_in.len, sizeof (mgmt_ack));
+	rc = read(m_control_fd, &mgmt_ack, sizeof (mgmt_ack));
+	ASSERT_EQ(rc, sizeof (mgmt_ack));
+	EXPECT_STREQ(mgmt_ack.volname, m_zvol_name.c_str());
+	output = execCmd("zpool", std::string("get guid -Hpo value ") +
+	    m_pool->m_name);
+	EXPECT_EQ(mgmt_ack.pool_guid, std::stoul(output));
+	output = execCmd("zfs", std::string("get guid -Hpo value ") +
+	    m_zvol_name);
+	EXPECT_EQ(mgmt_ack.zvol_guid, std::stoul(output));
+}
+
 TEST_F(ZreplHandshakeTest, HandshakeWrongVersion) {
 	zvol_io_hdr_t hdr_in, hdr_out = {0};
 	// use unique ptr to implicitly dealloc mem when exiting from func
@@ -584,7 +623,7 @@ TEST_F(ZreplHandshakeTest, HandshakeUnknownZvol) {
 	int rc;
 	const char *volname = "handshake/unknown";
 
-	hdr_out.version = REPLICA_VERSION;
+	hdr_out.version = MIN_SUPPORTED_REPLICA_VERSION;
 	hdr_out.opcode = ZVOL_OPCODE_HANDSHAKE;
 	hdr_out.status = ZVOL_OP_STATUS_OK;
 	hdr_out.len = strlen(volname) + 1;
@@ -599,7 +638,7 @@ TEST_F(ZreplHandshakeTest, HandshakeUnknownZvol) {
 	rc = read(m_control_fd, &hdr_in, sizeof (hdr_in));
 	ASSERT_ERRNO("read", rc >= 0);
 	ASSERT_EQ(rc, sizeof (hdr_in));
-	EXPECT_EQ(hdr_in.version, REPLICA_VERSION);
+	EXPECT_EQ(hdr_in.version, hdr_out.version);
 	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_HANDSHAKE);
 	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_FAILED);
 	EXPECT_EQ(hdr_in.io_seq, 0);
@@ -981,7 +1020,8 @@ TEST_F(ZreplDataTest, RebuildFlag) {
 	write_data_and_verify_resp(m_datasock1.fd(), m_ioseq1, buf, 0, sizeof (buf), 654);
 
 	/* Get zvol status before rebuild */
-	get_zvol_status(m_zvol_name1, m_ioseq1, m_control_fd1, ZVOL_STATUS_DEGRADED, ZVOL_REBUILDING_INIT);
+	get_zvol_status(m_zvol_name1, m_ioseq1, m_control_fd1, ZVOL_STATUS_DEGRADED,
+	    ZVOL_REBUILDING_INIT, MIN_SUPPORTED_REPLICA_VERSION);
 
 	output = execCmd("zfs", std::string("stats ") + m_zvol_name1);
 	ASSERT_NE(output.find("Degraded"), std::string::npos);
@@ -1089,13 +1129,14 @@ TEST(ReplicaState, SingleReplicaQuorumOff) {
 	ASSERT_GE(control_fd2, 0);
 	do_handshake(zvol_name2, host2, port2, NULL, NULL, control_fd2,
 	    ZVOL_OP_STATUS_OK);
-	do_data_connection(datasock2_fd, host2, port2, zvol_name2, 4096, 120, ZVOL_OP_STATUS_OK, 1);
+	do_data_connection(datasock2_fd, host2, port2, zvol_name2, 4096, 120, ZVOL_OP_STATUS_OK, 1,
+	    MIN_SUPPORTED_REPLICA_VERSION);
 
 	get_zvol_status(zvol_name1, ioseq1, control_fd1, ZVOL_STATUS_HEALTHY, ZVOL_REBUILDING_DONE);
 	get_zvol_status(zvol_name2, ioseq1, control_fd2, ZVOL_STATUS_DEGRADED, ZVOL_REBUILDING_INIT);
 
 	/* transition the zvol to online state */
-	transition_zvol_to_online(ioseq1, control_fd1, zvol_name1, ZVOL_OP_STATUS_FAILED);
+	transition_zvol_to_online(ioseq1, control_fd1, zvol_name1, ZVOL_OP_STATUS_FAILED, MIN_SUPPORTED_REPLICA_VERSION);
 
 	zrepl.kill();
 }
@@ -1881,13 +1922,13 @@ TEST(ZvolCloneTest, CloneZvol) {
  * parameter.
  */
 void
-get_used(int control_fd, std::string zvolname, uint64_t *val)
+get_used(int control_fd, std::string zvolname, uint64_t *val, int version = REPLICA_VERSION)
 {
 	zvol_io_hdr_t hdr_in, hdr_out = {0};
 	zvol_op_stat_t stat;
 	int rc;
 
-	hdr_out.version = REPLICA_VERSION;
+	hdr_out.version = version;
 	hdr_out.opcode = ZVOL_OPCODE_STATS;
 	hdr_out.status = ZVOL_OP_STATUS_OK;
 	hdr_out.io_seq = 1;
@@ -1899,6 +1940,7 @@ get_used(int control_fd, std::string zvolname, uint64_t *val)
 
 	rc = read(control_fd, &hdr_in, sizeof (hdr_in));
 	ASSERT_EQ(rc, sizeof (hdr_in));
+	EXPECT_EQ(hdr_in.version, hdr_out.version);
 	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
 	ASSERT_EQ(hdr_in.len, sizeof (stat));
 	rc = read(control_fd, &stat, sizeof (stat));
@@ -1935,7 +1977,7 @@ TEST(ZvolStatsTest, StatsZvol) {
 	    ZVOL_OP_STATUS_OK);
 
 	// get "used" before
-	get_used(control_fd, zvolname, &val1);
+	get_used(control_fd, zvolname, &val1, MIN_SUPPORTED_REPLICA_VERSION);
 	init_buf(buf, sizeof (buf), "cStor-data");
 	do_data_connection(datasock.fd(), host, port, zvolname, 4096);
 	for (int i = 0; i < 100; i++) {

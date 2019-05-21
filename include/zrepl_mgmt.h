@@ -223,6 +223,7 @@ typedef struct zvol_rebuild_scanner_info_s {
 		uint32_t flags;
 	};
 	int		fd;
+	uint16_t	version;
 } zvol_rebuild_scanner_info_t;
 
 typedef struct thread_args_s {

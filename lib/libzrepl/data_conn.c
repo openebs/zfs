@@ -184,7 +184,8 @@ uzfs_zvol_read_header(int fd, zvol_io_hdr_t *hdr)
 	if (rc != 0)
 		return (-1);
 
-	if (hdr->version != REPLICA_VERSION) {
+	if ((hdr->version > REPLICA_VERSION) ||
+	    (hdr->version < MIN_SUPPORTED_REPLICA_VERSION)) {
 		LOG_ERR("invalid replica protocol version %d",
 		    hdr->version);
 		return (1);
@@ -1392,7 +1393,7 @@ uzfs_zvol_rebuild_scanner_callback(off_t offset, size_t len,
 	warg = (zvol_rebuild_scanner_info_t *)args;
 	zinfo = warg->zinfo;
 
-	hdr.version = REPLICA_VERSION;
+	hdr.version = warg->version;
 	hdr.opcode = ZVOL_OPCODE_READ;
 	hdr.io_seq = metadata->io_num;
 	hdr.offset = offset;
@@ -1443,16 +1444,16 @@ uzfs_zvol_rebuild_scanner_callback(off_t offset, size_t len,
 	return (0);
 }
 
-void
+static void
 uzfs_zvol_send_zio_cmd(zvol_info_t *zinfo, zvol_io_hdr_t *hdrp,
     zvol_op_code_t opcode, int fd, char *payload, uint64_t payload_size,
-    uint64_t checkpointed_io_seq)
+    uint64_t checkpointed_io_seq, zvol_rebuild_scanner_info_t *warg)
 {
 
 	zvol_io_cmd_t	*zio_cmd;
 	bzero(hdrp, sizeof (*hdrp));
 	hdrp->status = ZVOL_OP_STATUS_OK;
-	hdrp->version = REPLICA_VERSION;
+	hdrp->version = warg->version;
 	hdrp->opcode = opcode;
 	hdrp->checkpointed_io_seq = checkpointed_io_seq;
 	hdrp->len = payload_size; // MAX_NAME_LEN + 1;
@@ -1591,6 +1592,7 @@ read_socket:
 			    KM_SLEEP);
 			warg->zinfo = zinfo;
 			warg->fd = fd;
+			warg->version = hdr.version;
 			uzfs_zvol_append_to_rebuild_scanner(zinfo, warg);
 
 			kmem_free(name, hdr.len);
@@ -1644,7 +1646,7 @@ read_socket:
 					}
 					uzfs_zvol_send_zio_cmd(zinfo, &hdr,
 					    ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE,
-					    fd, NULL, 0, 0);
+					    fd, NULL, 0, 0, warg);
 					all_snap_done = B_TRUE;
 				}
 				if (ZINFO_IS_DEGRADED(zinfo))
@@ -1669,7 +1671,7 @@ read_socket:
 
 			uzfs_zvol_send_zio_cmd(zinfo, &hdr,
 			    ZVOL_OPCODE_REBUILD_STEP_DONE,
-			    fd, NULL, 0, 0);
+			    fd, NULL, 0, 0, warg);
 			goto read_socket;
 
 		case ZVOL_OPCODE_REBUILD_COMPLETE:
@@ -1694,7 +1696,7 @@ read_socket:
 				uzfs_zvol_send_zio_cmd(zinfo, &hdr,
 				    ZVOL_OPCODE_REBUILD_SNAP_DONE,
 				    fd, payload, payload_size,
-				    checkpointed_io_seq + 1);
+				    checkpointed_io_seq + 1, warg);
 				free(payload);
 				/* Close snapshot dataset */
 				LOG_INFO("closing snap %s", snap_zv->zv_name);
@@ -2089,6 +2091,32 @@ find_apt_zvol_status(zvol_info_t *zinfo, zvol_op_open_data_t *open_data)
 	return (ZVOL_STATUS_DEGRADED);
 }
 
+uint64_t
+get_open_opcode_data_len(zvol_io_hdr_t *hdr)
+{
+	switch (hdr->version) {
+		case 3:
+			return (sizeof (zvol_op_open_data_ver_3_t));
+		case 4:
+			return (sizeof (zvol_op_open_data_t));
+		default:
+			return (-1);
+	}
+}
+
+void
+fill_default_values_for_version_change(zvol_io_hdr_t *hdr,
+    zvol_op_open_data_t *op)
+{
+	switch (hdr->version) {
+		case 3:
+			op->replication_factor = 0;
+			break;
+		default:
+			break;
+	}
+}
+
 /*
  * Process open request on data connection, the first message.
  *
@@ -2109,6 +2137,7 @@ open_zvol(int fd, zvol_info_t **zinfopp)
 	thread_args_t 	*thrd_arg;
 	int		rele_dataset_on_error = 0;
 	zvol_status_t	status;
+	uint64_t	exp_len;
 
 	/*
 	 * If we don't know the version yet, be more careful when
@@ -2122,16 +2151,18 @@ open_zvol(int fd, zvol_info_t **zinfopp)
 		LOG_ERR("zvol must be opened first");
 		return (-1);
 	}
-	if (hdr.len != sizeof (open_data)) {
+	exp_len = get_open_opcode_data_len(&hdr);
+	if (hdr.len != exp_len) {
 		LOG_ERR("Invalid payload length for open");
 		return (-1);
 	}
-	rc = uzfs_zvol_socket_read(fd, (char *)&open_data, sizeof (open_data));
+	rc = uzfs_zvol_socket_read(fd, (char *)&open_data, exp_len);
 	if (rc != 0) {
 		LOG_ERR("Payload read failed");
 		return (-1);
 	}
 
+	fill_default_values_for_version_change(&hdr, &open_data);
 	open_data.volname[MAX_NAME_LEN - 1] = '\0';
 	zinfo = uzfs_zinfo_lookup(open_data.volname);
 	if (zinfo == NULL) {

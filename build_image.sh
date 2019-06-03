@@ -24,6 +24,7 @@ cp lib/libuutil/.libs/*.so* ./docker/zfs/lib
 cp lib/libnvpair/.libs/*.so* ./docker/zfs/lib
 cp lib/libzfs/.libs/*.so* ./docker/zfs/lib
 cp lib/libzfs_core/.libs/*.so* ./docker/zfs/lib
+cp ../libcstor/src/.libs/*.so* ./docker/zfs/lib
 
 sudo docker version
 sudo docker build --help

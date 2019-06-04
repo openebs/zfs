@@ -152,4 +152,4 @@ baseline-image:
      - git commit -m "updated $CI_PROJECT_NAME commit:$COMMIT"
      - git push  https://$user:$pass@github.com/$REPO/e2e-infrastructure.git --all
      - if [[ "$BRANCH" == "zfs-0.7-release" ]] ; then export INFRA="master" ; else export INFRA=$BRANCH ; fi
-     - curl -X POST -F variables[INFRA_BRANCH]=$BRANCH -F token=$OPENSHIFT -F ref=OpenEBS-base https://gitlab.openebs.ci/api/v4/projects/15/trigger/pipeline       
+     - curl -X POST -F variables[INFRA_BRANCH]=$INFRA -F token=$OPENSHIFT -F ref=OpenEBS-base https://gitlab.openebs.ci/api/v4/projects/15/trigger/pipeline       

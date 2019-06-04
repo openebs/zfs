@@ -242,6 +242,9 @@ int nvlist_lookup_nvpair_embedded_index(nvlist_t *, const char *, nvpair_t **,
 boolean_t nvlist_exists(nvlist_t *, const char *);
 boolean_t nvlist_empty(nvlist_t *);
 
+int nvlist_dump_json(nvlist_t *, char **);
+void nvlist_dump_json_free(nvlist_t *, char *);
+
 /* processing nvpair */
 nvpair_t *nvlist_next_nvpair(nvlist_t *, nvpair_t *);
 nvpair_t *nvlist_prev_nvpair(nvlist_t *, nvpair_t *);

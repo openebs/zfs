@@ -18,6 +18,7 @@ USER_C = \
 
 KERNEL_C = \
 	nvpair_alloc_fixed.c \
+	nvpair_json.c \
 	nvpair.c \
 	fnvpair.c
 

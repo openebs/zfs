@@ -75,6 +75,7 @@ static int zpool_do_labelclear(int, char **);
 
 static int zpool_do_list(int, char **);
 static int zpool_do_iostat(int, char **);
+static int zpool_do_dump(int, char **);
 static int zpool_do_status(int, char **);
 
 static int zpool_do_online(int, char **);
@@ -142,6 +143,7 @@ typedef enum {
 	HELP_REMOVE,
 	HELP_SCRUB,
 	HELP_STATUS,
+	HELP_DUMP,
 	HELP_UPGRADE,
 	HELP_EVENTS,
 	HELP_GET,
@@ -254,6 +256,7 @@ static zpool_command_t command_table[] = {
 	{ "list",	zpool_do_list,		HELP_LIST		},
 	{ "iostat",	zpool_do_iostat,	HELP_IOSTAT		},
 	{ "status",	zpool_do_status,	HELP_STATUS		},
+	{ "dump",	zpool_do_dump,		HELP_DUMP		},
 	{ NULL },
 	{ "online",	zpool_do_online,	HELP_ONLINE		},
 	{ "offline",	zpool_do_offline,	HELP_OFFLINE		},
@@ -347,6 +350,8 @@ get_usage(zpool_help_t idx)
 	case HELP_STATUS:
 		return (gettext("\tstatus [-c [script1,script2,...]] [-gLPvxD]"
 		    "[-T d|u] [pool] ... [interval [count]]\n"));
+	case HELP_DUMP:
+		return (gettext("\tdump\n"));
 	case HELP_UPGRADE:
 		return (gettext("\tupgrade\n"
 		    "\tupgrade -v\n"
@@ -6554,6 +6559,51 @@ status_callback(zpool_handle_t *zhp, void *data)
 	}
 
 	return (0);
+}
+
+/*
+ * Dumps pool's config in json
+ * The current output is the raw configuration nvlist converted to JSON.
+ * Not all of the dumped values are represented by keys, some are arrays
+ * that represent internal structs. Hence their contents are not considered
+ * stable across different versions.
+ * TODO: convert struct arrays into key:value pairs
+ */
+int
+dump_callback(zpool_handle_t *zhp, void *data)
+{
+	nvlist_t *config;
+	char *buf;
+
+	config = zpool_get_config(zhp, NULL);
+
+	if (config != NULL) {
+		nvlist_dump_json(config, &buf);
+		printf("%s\n", buf);
+		nvlist_dump_json_free(config, buf);
+	}
+	return (0);
+}
+
+/*
+ * zpool dump
+ *
+ * Dumps entire config in json format
+ */
+int
+zpool_do_dump(int argc, char **argv)
+{
+	int ret;
+	status_cbdata_t cb = { 0 };
+	cb.cb_allpools = B_TRUE;
+	cb.cb_first = B_TRUE;
+
+	argc -= 1;
+	argv += 1;
+
+	ret = for_each_pool(argc, argv, B_TRUE, NULL,
+	    dump_callback, &cb);
+	return (ret);
 }
 
 /*

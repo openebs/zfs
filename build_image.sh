@@ -2,6 +2,18 @@
 set -e
 
 pwd
+
+# Build libcstor
+cd ../libcstor
+make clean
+sh autogen.sh
+./configure --with-zfs-headers=$PWD/../cstor/include --with-spl-headers=$PWD/../cstor/lib/libspl/include
+make -j4
+sudo make install
+sudo ldconfig
+
+# Build cstor
+cd ../cstor
 make clean
 sh autogen.sh
 ./configure --enable-uzfs=yes --with-config=user --with-jemalloc --with-libcstor=$PWD/../libcstor/include

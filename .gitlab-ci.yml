@@ -37,7 +37,6 @@ build-zfs-0:
      - sudo make -j4
      - sudo cp *.a /usr/lib
      - popd
-     - pushd .
      - cd ..
   # we need fio repo to build zfs replica fio engine
      - git clone https://github.com/axboe/fio
@@ -53,7 +52,7 @@ build-zfs-0:
      - ./configure
    script: 
     - make -j4
-    - popd
+    - cd ../zfs
     - sh autogen.sh
     - echo $PWD
     - ./configure --with-config=user --enable-code-coverage=yes --enable-debug --enable-uzfs=yes --with-jemalloc --with-fio=$PWD/../fio
@@ -100,7 +99,6 @@ build-zfs-1:
      - sudo make -j4
      - sudo cp *.a /usr/lib
      - popd
-     - pushd .
      - cd ..
   # we need fio repo to build zfs replica fio engine
      - git clone https://github.com/axboe/fio
@@ -117,7 +115,7 @@ build-zfs-1:
    script: 
     - make --no-print-directory -s pkg-utils pkg-kmod
     - sudo dpkg -i *.deb
-    - popd
+    - cd ../zfs
     - echo $FIO_SRCDIR
     - sh autogen.sh
     - ./configure --enable-code-coverage=yes --enable-debug
@@ -144,7 +142,7 @@ baseline-image:
      - echo $BRANCH
      - export COMMIT=${CI_COMMIT_SHORT_SHA}
      - echo $COMMIT
-     - git clone https://github.com/openebs/e2e-infrastructure.git
+     - git clone https://github.com/$REPO/e2e-infrastructure.git
      - if [[ "$BRANCH" == "zfs-0.7-release" ]] ; then git checkout master ; else git checkout $BRANCH ; fi
      - cd e2e-infrastructure/baseline
      - ansible-playbook commit-writer.yml --extra-vars "branch=$BRANCH repo=$CI_PROJECT_NAME commit=$COMMIT"
@@ -152,8 +150,6 @@ baseline-image:
      - git add baseline
      - git status
      - git commit -m "updated $CI_PROJECT_NAME commit:$COMMIT"
-     - git push  https://$user:$pass@github.com/openebs/e2e-infrastructure.git --all
+     - git push  https://$user:$pass@github.com/$REPO/e2e-infrastructure.git --all
      - if [[ "$BRANCH" == "zfs-0.7-release" ]] ; then export INFRA="master" ; else export INFRA=$BRANCH ; fi
-     - curl -X POST -F variable[INFRA_BRANCH]=$INFRA -F token=$PACKET -F ref=k8s-1-11 https://gitlab.openebs.ci/api/v4/projects/27/trigger/pipeline
-     - curl -X POST -F variable[INFRA_BRANCH]=$INFRA -F token=$PACKET -F ref=k8s-1-12 https://gitlab.openebs.ci/api/v4/projects/27/trigger/pipeline
-     - curl -X POST -F variable[INFRA_BRANCH]=$INFRA -F token=$PACKET -F ref=k8s-1-13 https://gitlab.openebs.ci/api/v4/projects/27/trigger/pipeline
+     - curl -X POST -F variables[INFRA_BRANCH]=$BRANCH -F token=$OPENSHIFT -F ref=OpenEBS-base https://gitlab.openebs.ci/api/v4/projects/15/trigger/pipeline       

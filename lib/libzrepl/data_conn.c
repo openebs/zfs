@@ -84,6 +84,7 @@ zio_cmd_alloc(zvol_io_hdr_t *hdr, int fd)
 		ASSERT((hdr->opcode == ZVOL_OPCODE_READ) ||
 		    (hdr->opcode == ZVOL_OPCODE_WRITE) ||
 		    (hdr->opcode == ZVOL_OPCODE_OPEN) ||
+		    (hdr->opcode == ZVOL_OPCODE_REBUILD_SNAP_START) ||
 		    (hdr->opcode == ZVOL_OPCODE_REBUILD_SNAP_DONE));
 	}
 	zio_cmd->conn = fd;
@@ -127,6 +128,7 @@ zio_cmd_free(zvol_io_cmd_t **cmd)
 		case ZVOL_OPCODE_SYNC:
 		case ZVOL_OPCODE_REBUILD_STEP_DONE:
 		case ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE:
+		case ZVOL_OPCODE_REBUILD_SNAP_START:
 			/* Nothing to do */
 			break;
 
@@ -402,6 +404,7 @@ uzfs_zvol_worker(void *arg)
 			break;
 
 		case ZVOL_OPCODE_REBUILD_SNAP_DONE:
+		case ZVOL_OPCODE_REBUILD_SNAP_START:
 		case ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE:
 		case ZVOL_OPCODE_REBUILD_STEP_DONE:
 			break;
@@ -636,6 +639,42 @@ uzfs_zvol_handle_rebuild_snap_done(zvol_io_hdr_t *hdrp,
 	return (rc);
 }
 
+int
+uzfs_zvol_handle_rebuild_snap_start(zvol_io_hdr_t *hdrp,
+    int sfd, zvol_info_t *zinfo)
+{
+	int rc = 0;
+	uint64_t dvolsize = ZVOL_VOLUME_SIZE(zinfo->main_zv);
+	uint64_t volsize;
+
+	if (hdrp->len != sizeof (volsize)) {
+		LOG_ERR("snap start Unexpected hdr.len:%ld on volume: %s",
+		    hdrp->len, zinfo->name);
+		return (rc = -1);
+	}
+
+	if ((rc = uzfs_zvol_socket_read(sfd, (char *)&volsize, hdrp->len)) != 0)
+		return (rc);
+
+	if (dvolsize < volsize) {
+		LOG_INFO("resize the volume %s old size = %lu, new size = %lu",
+		    zinfo->main_zv->zv_name, dvolsize, volsize);
+		rc = zvol_check_volsize(volsize,
+		    zinfo->main_zv->zv_volblocksize);
+		if (rc == 0) {
+			rc = zvol_update_volsize(volsize,
+			    zinfo->main_zv->zv_objset);
+			if (rc == 0)
+				zvol_size_changed(zinfo->main_zv, volsize);
+		}
+		if (rc != 0) {
+			LOG_ERR("Failed to resize zvol %s",
+			    zinfo->main_zv->zv_name);
+		}
+	}
+	return (rc);
+}
+
 void
 uzfs_zvol_rebuild_dw_replica(void *arg)
 {
@@ -829,6 +868,18 @@ next_step:
 
 		if (hdr.opcode == ZVOL_OPCODE_REBUILD_SNAP_DONE)
 			goto next_step;
+
+		if (hdr.opcode == ZVOL_OPCODE_REBUILD_SNAP_START) {
+			rc = uzfs_zvol_handle_rebuild_snap_start(&hdr,
+			    sfd, zinfo);
+			if (rc != 0) {
+				LOG_ERR("Rebuild snap start failed.."
+				    "for %s on fd(%d)",
+				    zinfo->name, sfd);
+				goto exit;
+			}
+			continue;
+		}
 
 		if (hdr.opcode == ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE) {
 			LOG_DEBUG("Received ALL_SNAP_DONE on fd: %d", sfd);
@@ -1622,11 +1673,17 @@ read_socket:
 					    " %s, err(%d)", zinfo->name, rc);
 					goto exit;
 				}
-#if DEBUG
-				if (snap_zv != NULL)
+				if (snap_zv != NULL) {
+					uint64_t volsize =
+					    ZVOL_VOLUME_SIZE(snap_zv);
+					uzfs_zvol_send_zio_cmd(zinfo, &hdr,
+					    ZVOL_OPCODE_REBUILD_SNAP_START,
+					    fd, (char *)&volsize,
+					    sizeof (volsize), 0, warg);
+
 					LOG_INFO("Rebuilding from zv:%s\n",
 					    snap_zv->zv_name);
-#endif
+				}
 			}
 
 			zvol_state_t *zv = zinfo->main_zv;
@@ -1658,6 +1715,11 @@ read_socket:
 					    " err(%d)", zinfo->name, rc);
 					goto exit;
 				}
+				uint64_t volsize = ZVOL_VOLUME_SIZE(snap_zv);
+				uzfs_zvol_send_zio_cmd(zinfo, &hdr,
+				    ZVOL_OPCODE_REBUILD_SNAP_START,
+				    fd, (char *)&volsize,
+				    sizeof (volsize), 0, warg);
 			}
 
 			rc = uzfs_get_io_diff(zv, &metadata,
@@ -1951,7 +2013,8 @@ uzfs_zvol_io_ack_sender(void *arg)
 		if (rc == -1)
 			goto error_check;
 
-		if (zio_cmd->hdr.opcode == ZVOL_OPCODE_REBUILD_SNAP_DONE) {
+		if ((zio_cmd->hdr.opcode == ZVOL_OPCODE_REBUILD_SNAP_DONE) ||
+		    (zio_cmd->hdr.opcode == ZVOL_OPCODE_REBUILD_SNAP_START)) {
 			rc = uzfs_zvol_socket_write(zio_cmd->conn,
 			    zio_cmd->buf, zio_cmd->hdr.len);
 error_check:

@@ -89,8 +89,16 @@ uzfs_get_io_diff(zvol_state_t *zv, blk_metadata_t *low, zvol_state_t *snap,
 	zvol_state_t *snap_zv;
 	metaobj_blk_offset_t snap_metablk;
 
-	if (!func || (lun_offset + lun_len) > zv->zv_volsize || snap == NULL)
+	if (!func || snap == NULL)
 		return (EINVAL);
+
+	// dont fail if rebuilding from lower size volume
+	// can we avoid rebuilding at all from smaller volume?
+	if (lun_offset >= zv->zv_volsize)
+		return (0);
+	if ((lun_offset + lun_len) > zv->zv_volsize) {
+		lun_len = zv->zv_volsize - lun_offset;
+	}
 
 	get_zv_metaobj_block_details(&snap_metablk, zv, lun_offset, lun_len);
 	offset = snap_metablk.m_offset;

@@ -706,6 +706,17 @@ uzfs_mock_rebuild_scanner_full(void *arg)
 		verify_rebuild_io(fd, zinfo);
 	}
 
+	/* Send REBUILD_SNAP_START */
+	uint64_t volsize = ZVOL_VOLUME_SIZE(zinfo->main_zv);
+	hdr.opcode = ZVOL_OPCODE_REBUILD_SNAP_START;
+	hdr.status = ZVOL_OP_STATUS_OK;
+	hdr.len = sizeof(volsize);
+	rc = uzfs_zvol_socket_write(fd, (char *)&hdr, sizeof(hdr));
+	EXPECT_NE(rc, -1);
+
+	rc = uzfs_zvol_socket_write(fd, (char *)&volsize, sizeof(volsize));
+	EXPECT_NE(rc, -1);
+
 	/* Write REBUILD_STEP_DONE */
 	hdr.opcode = ZVOL_OPCODE_REBUILD_STEP_DONE;
 	hdr.status = ZVOL_OP_STATUS_OK;
@@ -1828,6 +1839,19 @@ next_step:
 				uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 				    ZVOL_REBUILDING_AFS);
 				uzfs_zinfo_rebuild_from_clone(zinfo);
+			}
+			continue;
+		}
+
+		if (hdr.opcode == ZVOL_OPCODE_REBUILD_SNAP_START) {
+			LOG_INFO("ZVOL_OPCODE_REBUILD_SNAP_START received");
+			rc = uzfs_zvol_handle_rebuild_snap_start(&hdr,
+			    sfd, zinfo);
+			if (rc != 0) {
+				LOG_ERR("Rebuild snap start failed.."
+				    "for %s on fd(%d)",
+				    zinfo->name, sfd);
+				goto exit;
 			}
 			continue;
 		}

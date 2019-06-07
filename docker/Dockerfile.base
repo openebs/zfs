@@ -3,7 +3,7 @@
 # libraries.
 #
 
-FROM openebs/cstor-ubuntu:xenial-20181005
+FROM openebs/cstor-ubuntu:xenial-20190515
 
 RUN apt-get clean && \
     rm -rf /var/lib/apt/lists/* && \ 

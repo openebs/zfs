@@ -10,7 +10,6 @@ echo  "exit code:" $?
 echo "reference: "  $0 
 }
 
-service ssh start
 
 if [ -z "$LOGLEVEL" ]; then
 	LOGLEVEL=info

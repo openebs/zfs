@@ -11,7 +11,7 @@ RUN apt-get clean && \
     curl tcpdump dnsutils iputils-ping \
     libaio1 libaio-dev \
     libkqueue-dev libssl1.0.0 rsyslog net-tools gdb apt-utils \
-    sed libjemalloc-dev openssh-server
+    sed libjemalloc-dev
 RUN apt-get -y install apt-file && apt-file update
 
 COPY zfs/bin/* /usr/local/bin/

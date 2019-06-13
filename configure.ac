@@ -110,7 +110,6 @@ AC_CONFIG_FILES([
 	cmd/zstreamdump/Makefile
 	cmd/ztest/Makefile
 	cmd/zrepl/Makefile
-	cmd/zpios/Makefile
 	cmd/mount_zfs/Makefile
 	cmd/fsck_zfs/Makefile
 	cmd/zvol_id/Makefile
@@ -133,7 +132,6 @@ AC_CONFIG_FILES([
 	module/unicode/Makefile
 	module/zcommon/Makefile
 	module/zfs/Makefile
-	module/zpios/Makefile
 	module/icp/Makefile
 	include/Makefile
 	include/linux/Makefile

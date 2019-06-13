@@ -85,7 +85,7 @@ script:
     - if [ $ZFS_BUILD_TAGS = 0 ]; then
         export FIO_SRCDIR=$PWD/../fio;
         sudo bash ./print_debug_info.sh &
-        sudo bash ./tests/cbtest/script/test_uzfs.sh -T all || travis_terminate 1;
+        sudo bash ../libcstor/tests/cbtest/script/test_uzfs.sh -T all || travis_terminate 1;
         ./build_image.sh || travis_terminate 1;
       else
         sudo /sbin/modprobe zfs;

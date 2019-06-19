@@ -62,7 +62,8 @@ install:
     # Build libcstor for uzfs feature
     - git clone https://github.com/openebs/libcstor.git
     - cd libcstor
-    - git checkout v1.0.x
+    - [ ! -z ${TRAVIS_TAG} ] && git checkout ${TRAVIS_TAG} || git checkout master
+    - git branch
     - sh autogen.sh;
     - ./configure --enable-debug --with-zfs-headers=$PWD/../cstor/include --with-spl-headers=$PWD/../cstor/lib/libspl/include
     - make -j4;

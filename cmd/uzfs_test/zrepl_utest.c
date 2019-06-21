@@ -179,12 +179,12 @@ zrepl_utest_snap_create(int mgmt_fd, int data_fd, char *healthy_vol,
 	int		rc = 0;
 	char 		*buf;
 	zvol_io_hdr_t	hdr;
+	uint64_t	seq_id = io_seq++;
 
 	buf = (char *)malloc(sizeof (char) * MAXPATHLEN);
 
 	hdr.version = REPLICA_VERSION;
-	hdr.opcode = ZVOL_OPCODE_SNAP_CREATE;
-	hdr.io_seq = io_seq++;
+	hdr.io_seq = seq_id;
 
 	strcpy(buf, pool);
 	strcat(buf, "/");
@@ -192,24 +192,37 @@ zrepl_utest_snap_create(int mgmt_fd, int data_fd, char *healthy_vol,
 	strcat(buf, snapname);
 	hdr.len = strlen(buf) + 1;
 
-	rc = write(mgmt_fd, (void *)&hdr, sizeof (hdr));
-	if (rc == -1) {
-		printf("snap_create: sending hdr failed\n");
-		goto exit;
-	}
+	hdr.opcode = ZVOL_OPCODE_SNAP_PREPARE;
 
-	rc = write(mgmt_fd, buf, hdr.len);
-	if (rc == -1) {
-		printf("snap_create: sending snapname failed\n");
-		goto exit;
-	}
+	for (int i = 0; i <= 1; i++) {
+		rc = write(mgmt_fd, (void *)&hdr, sizeof (hdr));
+		if (rc == -1) {
+			printf("snap_%s: sending hdr failed\n",
+			    i ? "create" : "prep");
+			goto exit;
+		}
 
-	rc = read(mgmt_fd, (void *)&hdr, sizeof (hdr));
-	if (rc == -1) {
-		printf("Creation of snapshot failed\n");
-		goto exit;
+		rc = write(mgmt_fd, buf, hdr.len);
+		if (rc == -1) {
+			printf("snap_%s: sending snapname failed\n",
+			    i ? "create" : "prep");
+			goto exit;
+		}
+
+		rc = read(mgmt_fd, (void *)&hdr, sizeof (hdr));
+		if (rc == -1) {
+			printf("snap_%s of snapshot failed\n",
+			    i ? "create" : "prep");
+			goto exit;
+		}
+		if (i == 0) {
+			hdr.opcode = ZVOL_OPCODE_SNAP_CREATE;
+			hdr.version = REPLICA_VERSION;
+			hdr.io_seq = seq_id;
+			hdr.len = strlen(buf) + 1;
+		}
+		ASSERT(hdr.status == ZVOL_OP_STATUS_OK);
 	}
-	ASSERT(hdr.status == ZVOL_OP_STATUS_OK);
 exit:
 	free(buf);
 	return (rc);

@@ -102,6 +102,8 @@ extern struct uzfs_mgmt_conn_list uzfs_mgmt_conns;
 
 int handle_start_rebuild_req(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	void *payload, size_t payload_size);
+int handle_prepare_snap_req(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
+	void *payload, size_t payload_size);
 void zinfo_create_cb(zvol_info_t *zinfo, nvlist_t *create_props);
 void zinfo_destroy_cb(zvol_info_t *zinfo);
 void uzfs_zvol_mgmt_thread(void *arg);

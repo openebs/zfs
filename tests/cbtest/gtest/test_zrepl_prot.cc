@@ -1672,6 +1672,26 @@ static void verify_snapshot_details(std::string zvol_name, std::string json) {
 	json_object_put(jobj);
 }
 
+static
+void prep_snap(int control_fd, std::string snapname, uint64_t io_seq, int status)
+{
+	int rc;
+	zvol_io_hdr_t phdr_in, phdr_out = {0};
+	phdr_out.version = REPLICA_VERSION;
+	phdr_out.opcode = ZVOL_OPCODE_SNAP_PREPARE;
+	phdr_out.status = ZVOL_OP_STATUS_OK;
+	phdr_out.io_seq = io_seq;
+	phdr_out.len = snapname.length() + 1;
+	rc = write(control_fd, &phdr_out, sizeof (phdr_out));
+	ASSERT_EQ(rc, sizeof (phdr_out));
+	rc = write(control_fd, snapname.c_str(), phdr_out.len);
+	ASSERT_EQ(rc, phdr_out.len);
+	rc = read(control_fd, &phdr_in, sizeof (phdr_in));
+	ASSERT_EQ(rc, sizeof (phdr_in));
+	EXPECT_EQ(phdr_in.status, status);
+	ASSERT_EQ(phdr_in.len, 0);
+}
+
 /*
  * Snapshot create , list and destroy.
  */
@@ -1711,6 +1731,7 @@ TEST(Snapshot, CreateAndDestroy) {
 	hdr_out.status = ZVOL_OP_STATUS_OK;
 	hdr_out.io_seq = 0;
 	hdr_out.len = bad_snap_name.length() + 1;
+	prep_snap(control_fd, bad_snap_name, hdr_out.io_seq, ZVOL_OP_STATUS_FAILED);
 	rc = write(control_fd, &hdr_out, sizeof (hdr_out));
 	ASSERT_EQ(rc, sizeof (hdr_out));
 	rc = write(control_fd, bad_snap_name.c_str(), hdr_out.len);
@@ -1723,6 +1744,7 @@ TEST(Snapshot, CreateAndDestroy) {
 	// try to create snap of unknown zvol
 	hdr_out.io_seq = 1;
 	hdr_out.len = unknown_snap_name.length() + 1;
+	prep_snap(control_fd, unknown_snap_name, hdr_out.io_seq, ZVOL_OP_STATUS_FAILED);
 	rc = write(control_fd, &hdr_out, sizeof (hdr_out));
 	ASSERT_EQ(rc, sizeof (hdr_out));
 	rc = write(control_fd, unknown_snap_name.c_str(), hdr_out.len);
@@ -1735,6 +1757,7 @@ TEST(Snapshot, CreateAndDestroy) {
 	// try to create snap on degraded zvol
 	hdr_out.io_seq = 1;
 	hdr_out.len = snap_name.length() + 1;
+	prep_snap(control_fd, snap_name, hdr_out.io_seq, ZVOL_OP_STATUS_OK);
 	rc = write(control_fd, &hdr_out, sizeof (hdr_out));
 	ASSERT_EQ(rc, sizeof (hdr_out));
 	rc = write(control_fd, snap_name.c_str(), hdr_out.len);
@@ -1749,6 +1772,7 @@ TEST(Snapshot, CreateAndDestroy) {
 	sleep(5);
 	hdr_out.io_seq = 2;
 	hdr_out.len = snap_name.length() + 1;
+	prep_snap(control_fd, snap_name, hdr_out.io_seq, ZVOL_OP_STATUS_OK);
 	rc = write(control_fd, &hdr_out, sizeof (hdr_out));
 	ASSERT_EQ(rc, sizeof (hdr_out));
 	rc = write(control_fd, snap_name.c_str(), hdr_out.len);
@@ -1803,6 +1827,19 @@ TEST(Snapshot, CreateAndDestroy) {
 	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_SNAP_DESTROY);
 	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
 	EXPECT_EQ(hdr_in.io_seq, 4);
+	ASSERT_EQ(hdr_in.len, 0);
+
+	// try to create snap without snap prep
+	hdr_out.io_seq = 5;
+	hdr_out.len = snap_name.length() + 1;
+	hdr_out.opcode = ZVOL_OPCODE_SNAP_CREATE;
+	rc = write(control_fd, &hdr_out, sizeof (hdr_out));
+	ASSERT_EQ(rc, sizeof (hdr_out));
+	rc = write(control_fd, snap_name.c_str(), hdr_out.len);
+	ASSERT_EQ(rc, hdr_out.len);
+	rc = read(control_fd, &hdr_in, sizeof (hdr_in));
+	ASSERT_EQ(rc, sizeof (hdr_in));
+	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_FAILED);
 	ASSERT_EQ(hdr_in.len, 0);
 
 	ASSERT_THROW(execCmd("zfs", std::string("list ") + snap_name),

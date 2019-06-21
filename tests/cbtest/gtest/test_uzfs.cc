@@ -164,6 +164,10 @@ uzfs_mock_rebuild_scanner_write_snap_done(int fd, zvol_io_hdr_t *hdrp)
 	/* Write ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE */
 	rc = uzfs_zvol_socket_write(fd, (char *)hdrp, sizeof (*hdrp));
 	EXPECT_NE(rc, -1);
+
+	rc = uzfs_zvol_socket_read(fd, (char *)hdrp, sizeof (*hdrp));
+	EXPECT_NE(rc, -1);
+	EXPECT_EQ(hdrp->opcode, ZVOL_OPCODE_AFS_STARTED);
 }
 
 void
@@ -667,9 +671,6 @@ uzfs_mock_rebuild_scanner_snap_rebuild_related(void *arg)
 #endif
 
 exit:
-	shutdown(fd, SHUT_RDWR);
-	close(fd);
-
 	pthread_mutex_lock(&done_thread_count_mtx);
 	atomic_inc_64(&done_thread_count);
 	if (rebuild_test_case == 13) {
@@ -678,7 +679,16 @@ exit:
 	} else {
 		rebuild_test_case = 0;
 	}
+
+	while (rebuild_test_case) {
+		pthread_mutex_unlock(&done_thread_count_mtx);
+		sleep(1);
+		pthread_mutex_lock(&done_thread_count_mtx);
+	}
 	pthread_mutex_unlock(&done_thread_count_mtx);
+
+	shutdown(fd, SHUT_RDWR);
+	close(fd);
 
 	zk_thread_exit();
 }
@@ -726,6 +736,10 @@ uzfs_mock_rebuild_scanner_full(void *arg)
 	hdr.len = 0;
 	rc = uzfs_zvol_socket_write(fd, (char *)&hdr, sizeof(hdr));
 	EXPECT_NE(rc, -1);
+
+	rc = uzfs_zvol_socket_read(fd, (char *)&hdr, sizeof (hdr));
+	EXPECT_NE(rc, -1);
+	EXPECT_EQ(hdr.opcode, ZVOL_OPCODE_AFS_STARTED);
 
 	while (1) {
 		if ((ZVOL_REBUILDING_AFS !=
@@ -1829,6 +1843,13 @@ next_step:
 				    ZVOL_REBUILDING_AFS);
 				uzfs_zinfo_rebuild_from_clone(zinfo);
 			}
+			hdr.opcode = ZVOL_OPCODE_AFS_STARTED;
+			rc = uzfs_zvol_socket_write(sfd,
+			    (char *)&hdr, sizeof (hdr));
+			if (rc != 0) {
+				LOG_ERR("Socket write failed err(%d)", rc);
+				goto exit;
+			}
 			continue;
 		}
 
@@ -2742,7 +2763,7 @@ void mock_tgt_thread(void *arg)
 	char			*ack;
 	zvol_state_t		*zv;
 	socklen_t		in_len;
-	zvol_io_hdr_t		hdr;
+	zvol_io_hdr_t		hdr, phdr;
 	mgmt_ack_t		mgmt_ack;
 	struct sockaddr		in_addr;
 	zvol_op_resize_data_t	resize;
@@ -2786,6 +2807,9 @@ void mock_tgt_thread(void *arg)
 	hdr.len = strlen(zinfo->name) + 1;
 	strcpy(buf, zinfo->name);
 
+	bzero(&phdr, sizeof (phdr));
+	phdr.version = REPLICA_VERSION;
+
 	/* Send wrong protocol version */
 	if (mgmt_test_case == 2)
 		hdr.version = -1;
@@ -2809,6 +2833,8 @@ void mock_tgt_thread(void *arg)
 	if (mgmt_test_case == 11) {
 		hdr.opcode = ZVOL_OPCODE_SNAP_CREATE;
 		hdr.len = 512;
+		phdr.opcode = ZVOL_OPCODE_SNAP_PREPARE;
+		phdr.len = hdr.len;
 	}
 	
 	/*
@@ -2818,6 +2844,8 @@ void mock_tgt_thread(void *arg)
 	if (mgmt_test_case == 12) {
 		hdr.opcode = ZVOL_OPCODE_SNAP_CREATE;
 		hdr.len = 0;
+		phdr.opcode = ZVOL_OPCODE_SNAP_PREPARE;
+		phdr.len = hdr.len;
 	}
 
 	/*
@@ -2829,6 +2857,8 @@ void mock_tgt_thread(void *arg)
 		strcpy(buf, zinfo->name);
 		strcpy((buf + hdr.len -2), "@snap");
 		hdr.len = strlen(buf) + 1;
+		phdr.opcode = ZVOL_OPCODE_SNAP_PREPARE;
+		phdr.len = hdr.len;
 	}
 
 
@@ -2838,8 +2868,10 @@ void mock_tgt_thread(void *arg)
 		strcpy(buf, zinfo->name);
 		strcpy((buf + hdr.len -1), "@snap");
 		hdr.len = strlen(buf) + 1;
+		phdr.opcode = ZVOL_OPCODE_SNAP_PREPARE;
+		phdr.len = hdr.len;
 	}
-	
+
 	/* Snap destroy success case */	
 	if (mgmt_test_case == 15) {
 		hdr.opcode = ZVOL_OPCODE_SNAP_DESTROY;
@@ -2922,6 +2954,25 @@ void mock_tgt_thread(void *arg)
 	}
 
 send_hdr:
+
+	if (phdr.opcode == ZVOL_OPCODE_SNAP_PREPARE) {
+		rc = write(mgmt_fd, (void *)&phdr, sizeof (zvol_io_hdr_t));
+		if (rc != sizeof (zvol_io_hdr_t)) {
+			LOG_ERRNO("Write error during phdr write");
+			goto exit;
+		}
+		rc = write(mgmt_fd, buf, phdr.len);
+		if (rc != phdr.len) {
+			LOG_ERRNO("Write err during prep snapshot vol write");
+			goto exit;
+		}
+		rc = read(mgmt_fd, (void *)&phdr, sizeof (zvol_io_hdr_t));
+		if (rc != sizeof (zvol_io_hdr_t)) {
+			LOG_ERRNO("Read error during phdr read");
+			goto exit;
+		}
+	}
+
 	rc = write(mgmt_fd, (void *)&hdr, sizeof (zvol_io_hdr_t));
 	if (rc == -1) {
 		LOG_ERRNO("Write error during hdr write");

@@ -1404,13 +1404,13 @@ handle_prepare_snap_req(uzfs_mgmt_conn_t *conn, zvol_io_hdr_t *hdrp,
 	}
 
 	mutex_enter(&zinfo->main_zv->rebuild_mtx);
-	while (zinfo->disallow_snapshot || zinfo->is_snap_inprogress) {
+	if (zinfo->disallow_snapshot || zinfo->is_snap_inprogress) {
 		mutex_exit(&zinfo->main_zv->rebuild_mtx);
-		LOG_INFO("snapshot %s : %s snap %s",
+		LOG_INFO("prep snapshot failed %s : %s snap %s",
 		    zinfo->disallow_snapshot ? "disallowed" : "snap inprogress",
 		    zvol_name, snap);
-		sleep(1);
-		mutex_enter(&zinfo->main_zv->rebuild_mtx);
+		uzfs_zinfo_drop_refcnt(zinfo);
+		return (reply_nodata(conn, ZVOL_OP_STATUS_FAILED, hdrp));
 	}
 	zinfo->is_snap_inprogress = 1;
 	mutex_exit(&zinfo->main_zv->rebuild_mtx);

@@ -1683,23 +1683,29 @@ retry:
 					 * the snapshot command gracefully.
 					 */
 					rc = uzfs_zvol_read_header(fd, &hdr);
-					if (rc != 0) {
-						LOG_ERR("afs started read"
-						    " failed zvol %s err(%d)",
-						    zinfo->name, rc);
-						goto exit;
-					}
-					if (hdr.opcode !=
-					    ZVOL_OPCODE_AFS_STARTED) {
-						LOG_ERR("afs started not"
-						    "received zvol %s",
-						    zinfo->name);
-						rc = -1;
-						goto exit;
-					}
+					do {
+						if (rc != 0) {
+							LOG_ERR("afs started "
+							    "read failed zvol"
+							    "%s err(%d)",
+							    zinfo->name, rc);
+							break;
+						}
+						if (hdr.opcode !=
+						    ZVOL_OPCODE_AFS_STARTED) {
+							LOG_ERR("afs started "
+							    "not received "
+							    "zvol = %s",
+							    zinfo->name);
+							rc = -1;
+							break;
+						}
+					} while (0);
 					mutex_enter(&zv->rebuild_mtx);
 					zinfo->disallow_snapshot = 0;
 					mutex_exit(&zv->rebuild_mtx);
+					if (rc != 0)
+						goto exit;
 				}
 				if (ZINFO_IS_DEGRADED(zinfo))
 					zv = zinfo->clone_zv;
@@ -1828,9 +1834,6 @@ exit:
 		kmem_free(warg, sizeof (zvol_rebuild_scanner_info_t));
 
 		uzfs_zvol_remove_from_fd_list(zinfo, fd);
-		mutex_enter(&zinfo->main_zv->rebuild_mtx);
-		zinfo->disallow_snapshot = 0;
-		mutex_exit(&zinfo->main_zv->rebuild_mtx);
 
 		uzfs_zinfo_drop_refcnt(zinfo);
 	} else {

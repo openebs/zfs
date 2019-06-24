@@ -1629,6 +1629,18 @@ read_socket:
 #endif
 			io_seq = hdr.checkpointed_io_seq;
 retry:
+			if ((zinfo->state == ZVOL_INFO_STATE_OFFLINE) ||
+			    (!zinfo->is_io_ack_sender_created)) {
+				LOG_ERR("scanner [%s:%d] in err state",
+				    zinfo->name, warg->fd);
+				goto exit;
+			}
+			if (warg->is_fd_errored) {
+				LOG_ERR("[%s:%d] errored at ack_sender",
+				    zinfo->name, warg->fd);
+				goto exit;
+			}
+
 
 			if (snap_zv == NULL) {
 				rc = uzfs_get_snap_zv_ionum(zinfo,

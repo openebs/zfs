@@ -2,11 +2,11 @@ stages:
   - build
   - baseline
 
-build-zfs-0:
+build-cstor-0:
    stage: build
    only:
      refs:
-       - /^(v[0-9][.][0-9][.]x|zfs-0.7-release)?$/
+       - /^(v[0-9][.][0-9][.]x|develop)?$/
    before_script:
      - echo $HOME
      - export BRANCH=${CI_COMMIT_REF_NAME}
@@ -37,7 +37,6 @@ build-zfs-0:
      - sudo make -j4
      - sudo cp *.a /usr/lib
      - popd
-     - pushd .
      - cd ..
   # we need fio repo to build zfs replica fio engine
      - git clone https://github.com/axboe/fio
@@ -51,12 +50,23 @@ build-zfs-0:
      - git checkout spl-0.7.9
      - sudo sh autogen.sh
      - ./configure
+     - cd ..
+     # Build libcstor for uzfs feature
+     - git clone https://github.com/openebs/libcstor.git
+     - cd libcstor
+     - sh autogen.sh
+     - ./configure --enable-debug --with-zfs-headers=$PWD/../cstor/include --with-spl-headers=$PWD/../cstor/lib/libspl/include
+     - sudo make -j4
+     - sudo make install
+     - sudo ldconfig
+     # return to cstor code
+     - sh autogen.sh
    script: 
     - make -j4
-    - popd
+    - cd ../cstor
     - sh autogen.sh
     - echo $PWD
-    - ./configure --with-config=user --enable-code-coverage=yes --enable-debug --enable-uzfs=yes --with-jemalloc --with-fio=$PWD/../fio
+    - ./configure --with-config=user --enable-code-coverage=yes --enable-debug --enable-uzfs=yes --with-jemalloc --with-fio=$PWD/../fio --with-libcstor=$PWD/../libcstor/include
     - make -j4
     - make cstyle
     - export FIO_SRCDIR=$PWD/../fio
@@ -65,11 +75,11 @@ build-zfs-0:
 #    - bash ./tests/cbtest/script/test_uzfs.sh -T all
     - ./build_image.sh
 
-build-zfs-1:
+build-cstor-1:
    stage: build
    only:
      refs:
-       - /^(v[0-9][.][0-9][.]x|zfs-0.7-release)?$/
+       - /^(v[0-9][.][0-9][.]x|develop)?$/
    before_script:
      - echo $HOME
      - export BRANCH=${CI_COMMIT_REF_NAME}
@@ -100,9 +110,8 @@ build-zfs-1:
      - sudo make -j4
      - sudo cp *.a /usr/lib
      - popd
-     - pushd .
      - cd ..
-  # we need fio repo to build zfs replica fio engine
+     # we need fio repo to build zfs replica fio engine
      - git clone https://github.com/axboe/fio
      - cd fio
      - git checkout fio-3.7
@@ -114,24 +123,33 @@ build-zfs-1:
      - git checkout spl-0.7.9
      - sudo sh autogen.sh
      - ./configure
-   script: 
-    - make --no-print-directory -s pkg-utils pkg-kmod
-    - sudo dpkg -i *.deb
-    - popd
-    - echo $FIO_SRCDIR
-    - sh autogen.sh
-    - ./configure --enable-code-coverage=yes --enable-debug
-    - make --no-print-directory -s pkg-utils pkg-kmod
-    - sudo dpkg -i *.deb
-    - make cstyle
-    - sudo /sbin/modprobe zfs
-    - /sbin/ztest
+     - make --no-print-directory -s pkg-utils pkg-kmod
+     - sudo dpkg -i *.deb
+     - cd ..
+     # Build libcstor for uzfs feature
+     - git clone https://github.com/openebs/libcstor.git
+     - cd libcstor
+     - sh autogen.sh
+     - ./configure --enable-debug --with-zfs-headers=$PWD/../cstor/include --with-spl-headers=$PWD/../cstor/lib/libspl/include
+     - sudo make -j4
+     - sudo make install
+     - sudo ldconfig
+     # return to cstor code
+     - cd ../cstor
+   script:
+     - sh autogen.sh
+     - ./configure --enable-code-coverage=yes --enable-debug
+     - make --no-print-directory -s pkg-utils pkg-kmod
+     - sudo dpkg -i *.deb
+     - make cstyle
+     - sudo /sbin/modprobe zfs
+     - /sbin/ztest
 
 baseline-image:
   stage: baseline
   only:
     refs:
-      - /^(v[0-9][.][0-9][.]x|zfs-0.7-release)?$/
+      - /^(v[0-9][.][0-9][.]x|develop)?$/
   image: atulabhi/kops:v10
   before_script: []  
   script:
@@ -144,16 +162,16 @@ baseline-image:
      - echo $BRANCH
      - export COMMIT=${CI_COMMIT_SHORT_SHA}
      - echo $COMMIT
-     - git clone https://github.com/openebs/e2e-infrastructure.git
-     - if [[ "$BRANCH" == "zfs-0.7-release" ]] ; then git checkout master ; else git checkout $BRANCH ; fi
+     - git clone https://github.com/$REPO/e2e-infrastructure.git
+     - if [[ "$BRANCH" == "develop" ]] ; then git checkout master ; else git checkout $BRANCH ; fi
      - cd e2e-infrastructure/baseline
      - ansible-playbook commit-writer.yml --extra-vars "branch=$BRANCH repo=$CI_PROJECT_NAME commit=$COMMIT"
      - git status
      - git add baseline
      - git status
      - git commit -m "updated $CI_PROJECT_NAME commit:$COMMIT"
-     - git push  https://$user:$pass@github.com/openebs/e2e-infrastructure.git --all
-     - if [[ "$BRANCH" == "zfs-0.7-release" ]] ; then export INFRA="master" ; else export INFRA=$BRANCH ; fi
+     - git push  https://$user:$pass@github.com/$REPO/e2e-infrastructure.git --all
+     - if [[ "$BRANCH" == "develop" ]] ; then export INFRA="master" ; else export INFRA=$BRANCH ; fi
      - curl -X POST -F variable[INFRA_BRANCH]=$INFRA -F token=$PACKET -F ref=k8s-1-11 https://gitlab.openebs.ci/api/v4/projects/27/trigger/pipeline
      - curl -X POST -F variable[INFRA_BRANCH]=$INFRA -F token=$PACKET -F ref=k8s-1-12 https://gitlab.openebs.ci/api/v4/projects/27/trigger/pipeline
      - curl -X POST -F variable[INFRA_BRANCH]=$INFRA -F token=$PACKET -F ref=k8s-1-13 https://gitlab.openebs.ci/api/v4/projects/27/trigger/pipeline

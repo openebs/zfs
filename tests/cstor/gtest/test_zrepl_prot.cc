@@ -1842,6 +1842,23 @@ TEST(Snapshot, CreateAndDestroy) {
 	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
 	ASSERT_EQ(hdr_in.len, 0);
 
+	// destroy the snapshot
+	hdr_out.opcode = ZVOL_OPCODE_SNAP_DESTROY;
+	hdr_out.io_seq = 6;
+	hdr_out.len = snap_name.length() + 1;
+	rc = write(control_fd, &hdr_out, sizeof (hdr_out));
+	ASSERT_EQ(rc, sizeof (hdr_out));
+	rc = write(control_fd, snap_name.c_str(), hdr_out.len);
+	ASSERT_EQ(rc, hdr_out.len);
+
+	rc = read(control_fd, &hdr_in, sizeof (hdr_in));
+	ASSERT_EQ(rc, sizeof (hdr_in));
+	EXPECT_EQ(hdr_in.version, REPLICA_VERSION);
+	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_SNAP_DESTROY);
+	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
+	EXPECT_EQ(hdr_in.io_seq, 6);
+	ASSERT_EQ(hdr_in.len, 0);
+
 	ASSERT_THROW(execCmd("zfs", std::string("list ") + snap_name),
 	    std::runtime_error);
 

@@ -1839,7 +1839,7 @@ TEST(Snapshot, CreateAndDestroy) {
 	ASSERT_EQ(rc, hdr_out.len);
 	rc = read(control_fd, &hdr_in, sizeof (hdr_in));
 	ASSERT_EQ(rc, sizeof (hdr_in));
-	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_FAILED);
+	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
 	ASSERT_EQ(hdr_in.len, 0);
 
 	ASSERT_THROW(execCmd("zfs", std::string("list ") + snap_name),

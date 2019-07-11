@@ -116,7 +116,8 @@ static void do_handshake(std::string zvol_name, std::string &host,
  */
 static void do_data_connection(int &data_fd, std::string host, uint16_t port,
     std::string zvol_name, int bs=4096, int timeout=120,
-    int res=ZVOL_OP_STATUS_OK, int rep_factor = 3, int version = REPLICA_VERSION) {
+    int res=ZVOL_OP_STATUS_OK, int rep_factor = 3,
+    int version = REPLICA_VERSION, uint64_t size = 0) {
 	struct sockaddr_in addr;
 	zvol_io_hdr_t hdr_in, hdr_out = {0};
 	zvol_op_open_data_t open_data;
@@ -139,6 +140,7 @@ retry:
 	hdr_out.version = version;
 	hdr_out.opcode = ZVOL_OPCODE_OPEN;
 	hdr_out.status = ZVOL_OP_STATUS_OK;
+	hdr_out.volsize = size;
 	if (version == 3)
 		hdr_out.len = sizeof (zvol_op_open_data_ver_3_t);
 	else
@@ -1866,6 +1868,72 @@ TEST(Snapshot, CreateAndDestroy) {
 	graceful_close(control_fd);
 	sleep(3);
 }
+
+/*
+ * resize the cloned volume when while making
+ * the data conntection.
+ */
+TEST(ZvolResizeTest, DataConn) {
+	SocketFd datasock;
+	zvol_io_hdr_t hdr_in, hdr_out = {0};
+	Zrepl zrepl;
+	Target target;
+	int rc, control_fd;
+	std::string host;
+	std::string str;
+	uint64_t val1, val2, size;
+	uint16_t port;
+	TestPool pool("resizepool");
+	std::string zvolname = pool.getZvolName("vol");
+
+	zrepl.start();
+	pool.create();
+	pool.createZvol("vol", "-o io.openebs:targetip=127.0.0.1");
+
+	// get the zvol size before
+	str = execCmd("zfs", std::string("get -Hpo value volsize ") + zvolname);
+	val1 = atoi(str.c_str());
+
+	rc = target.listen();
+	ASSERT_GE(rc, 0);
+	control_fd = target.accept(-1);
+	ASSERT_GE(control_fd, 0);
+	do_handshake(zvolname, host, port, NULL, NULL, control_fd,
+	    ZVOL_OP_STATUS_OK);
+
+	// resize to lower size, it should not succeed
+	size = val1 - 4096;
+	do_data_connection(datasock.fd(), host, port, zvolname, 4096,
+	    120, ZVOL_OP_STATUS_OK, 1, REPLICA_VERSION, size);
+	str = execCmd("zfs", std::string("get -Hpo value volsize ") +
+	    zvolname + "_rebuild_clone");
+	val2 = atoi(str.c_str());
+	EXPECT_EQ(val2, val1);
+	datasock.graceful_close();
+
+	// resize to zero size, it should not succeed
+	size = 0;
+	do_data_connection(datasock.fd(), host, port, zvolname, 4096,
+	    120, ZVOL_OP_STATUS_OK, 1, REPLICA_VERSION, size);
+	str = execCmd("zfs", std::string("get -Hpo value volsize ") +
+	    zvolname + "_rebuild_clone");
+	val2 = atoi(str.c_str());
+	EXPECT_EQ(val2, val1);
+	datasock.graceful_close();
+
+	// resize to higher size, it should succeed
+	size = val1 + 4096;
+	do_data_connection(datasock.fd(), host, port, zvolname, 4096,
+	    120, ZVOL_OP_STATUS_OK, 1, REPLICA_VERSION, size);
+	str = execCmd("zfs", std::string("get -Hpo value volsize ") +
+	    zvolname + "_rebuild_clone");
+	val2 = atoi(str.c_str());
+	EXPECT_EQ(val2, size);
+	datasock.graceful_close();
+
+	graceful_close(control_fd);
+}
+
 
 /*
  * Test zvol resize

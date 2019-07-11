@@ -1762,7 +1762,7 @@ next_step:
 		rc = 0;
 		LOG_INFO("Rebuilding zvol %s completed", zinfo->name);
 		goto exit;
-	} else if ((rebuild_test_case == 12) || (rebuild_test_case == 13)) {
+	} else if ((rebuild_test_case == 12) || (rebuild_test_case == 13) || (rebuild_test_case == 16)) {
 	    	if (offset >= ZVOL_VOLUME_SIZE(zvol_state))
 			hdr.opcode = ZVOL_OPCODE_REBUILD_COMPLETE;
 		rc = uzfs_zvol_socket_write(sfd, (char *)&hdr, sizeof (hdr));
@@ -1782,6 +1782,11 @@ next_step:
 
 	rebuild_io_cnt = 0;
 	while (1) {
+		if (ZVOL_IS_REBUILDING_ERRORED(zinfo->main_zv)) {
+			LOG_ERR("rebuilding errored.. for %s.. on sock(%d)",
+			    zinfo->name, sfd);
+			goto exit;
+		}
 		if ((rebuild_test_case == 7) || (rebuild_test_case == 8) || (rebuild_test_case == 9))
 		{
 			/*
@@ -1848,18 +1853,22 @@ next_step:
 
 		if (hdr.opcode == ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE) {
 			all_snap_done_received = 1;
-			if (uzfs_zvol_get_rebuild_status(zinfo->main_zv) !=
-			    ZVOL_REBUILDING_AFS) {
-				uzfs_zvol_set_rebuild_status(zinfo->main_zv,
-				    ZVOL_REBUILDING_AFS);
-				uzfs_zinfo_rebuild_from_clone(zinfo);
+			if (rebuild_test_case == 16) {
+				hdr.opcode = ZVOL_OPCODE_REBUILD_COMPLETE;
+			} else {
+				hdr.opcode = ZVOL_OPCODE_AFS_STARTED;
 			}
-			hdr.opcode = ZVOL_OPCODE_AFS_STARTED;
 			rc = uzfs_zvol_socket_write(sfd,
 			    (char *)&hdr, sizeof (hdr));
 			if (rc != 0) {
 				LOG_ERR("Socket write failed err(%d)", rc);
 				goto exit;
+			}
+			if (uzfs_zvol_get_rebuild_status(zinfo->main_zv) !=
+			    ZVOL_REBUILDING_AFS) {
+				uzfs_zvol_set_rebuild_status(zinfo->main_zv,
+				    ZVOL_REBUILDING_AFS);
+				uzfs_zinfo_rebuild_from_clone(zinfo);
 			}
 			continue;
 		}
@@ -1947,7 +1956,7 @@ exit:
 
 	atomic_inc_64(&done_thread_count);
 	/* Testcase 12 is for success. So, delete the internal clone */
-	if ((rebuild_test_case == 12) || (rebuild_test_case == 13)) {
+	if ((rebuild_test_case == 12) || (rebuild_test_case == 13) || (rebuild_test_case == 16)) {
 		if (done_thread_count == 2) {
 			if (rebuild_test_case == 12) {
 				uzfs_zvol_store_kv_pair(zinfo2->clone_zv, (char *)STALE, 1);
@@ -2727,6 +2736,17 @@ TEST(RebuildScanner, RebuildSuccess) {
 	memset(&zinfo->main_zv->rebuild_info, 0, sizeof (zvol_rebuild_info_t));
 	close(data_conn_fd);
 	data_conn_fd = -1;
+}
+
+TEST(RebuildScanner, RebuildFailureOldHelper) {
+	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
+	dw_replica_fn = &uzfs_mock_zvol_rebuild_dw_replica;
+	io_receiver = &uzfs_zvol_io_receiver;
+	uzfs_zvol_set_rebuild_status(zv2, ZVOL_REBUILDING_INIT);
+	do_data_connection(data_conn_fd, "127.0.0.1", IO_SERVER_PORT, "vol3");
+	zvol_rebuild_step_size = (1024ULL * 1024ULL * 1024ULL);
+	execute_rebuild_test_case("Rebuild Failure with old helper version", 16,
+	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
 }
 
 TEST(Misc, DelayWriteAndBreakConn) {

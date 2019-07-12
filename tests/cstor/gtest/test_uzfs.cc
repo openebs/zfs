@@ -58,6 +58,9 @@ zvol_info_t *zinfo2;
 int rebuild_test_case = 0;
 int mgmt_test_case = 0;
 
+#define VOLSIZE		(1024 * 1024 * 1024ULL)
+#define BLOCKSIZE	(512)
+
 /* This will be used to identify that clone rebuild thread is also done */
 uint64_t started_thread_count = 0;
 uint64_t done_thread_count = 0;
@@ -87,7 +90,7 @@ make_vdev(const char *path)
 		printf("can't open %s", path);
 		exit(1);
 	}
-	if (ftruncate(fd, 1024*1024*1024) != 0) {
+	if (ftruncate(fd, VOLSIZE) != 0) {
 		printf("can't ftruncate %s", path);
 		exit(1);
 	}
@@ -845,7 +848,7 @@ TEST(uZFS, Setup) {
 	ret = uzfs_create_pool(pool, path, &spa);
 	EXPECT_EQ(0, ret);
 
-	uzfs_create_dataset(spa, ds_name, 1024*1024*1024, 512, &zv);
+	uzfs_create_dataset(spa, ds_name, VOLSIZE, BLOCKSIZE, &zv);
 	uzfs_hold_dataset(zv);
 	uzfs_update_metadata_granularity(zv, 512);
 
@@ -861,7 +864,7 @@ TEST(uZFS, Setup) {
 	/* give time to get the zfs threads created */
 	sleep(5);
 	/*Create vol3 */
-	uzfs_create_dataset(spa, ds_name2, 1024*1024*1024, 512, &zv2);
+	uzfs_create_dataset(spa, ds_name2, VOLSIZE, BLOCKSIZE, &zv2);
 	uzfs_hold_dataset(zv2);
 	uzfs_update_metadata_granularity(zv2, 512);
 	strncpy(zv2->zv_target_host,"127.0.0.1:5050", MAXNAMELEN);
@@ -869,7 +872,7 @@ TEST(uZFS, Setup) {
 	zinfo2 = uzfs_zinfo_lookup(ds_name2);
 	EXPECT_EQ(0, !zinfo2);
 
-	uzfs_create_dataset(spa, ds_name_todelete, 1024*1024*1024, 512, &zv_todelete);
+	uzfs_create_dataset(spa, ds_name_todelete, VOLSIZE, BLOCKSIZE, &zv_todelete);
 	uzfs_hold_dataset(zv_todelete);
 	uzfs_update_metadata_granularity(zv_todelete, 512);
 	strncpy(zv_todelete->zv_target_host,"127.0.0.1:5959", MAXNAMELEN);
@@ -2232,7 +2235,7 @@ TEST(uZFSRebuild, TestRebuildSnapDeletion) {
 	io_receiver = &uzfs_zvol_io_receiver;
 
 	zinfo->main_zv->zv_status = ZVOL_STATUS_DEGRADED;
-	zvol_rebuild_step_size = (1024ULL * 1024ULL * 1024ULL) / 2 + 1000;
+	zvol_rebuild_step_size = VOLSIZE / 2 + 1000;
 	do_data_connection(data_conn_fd1, "127.0.0.1", IO_SERVER_PORT, "vol1");
 	do_data_connection(data_conn_fd3, "127.0.0.1", IO_SERVER_PORT, "vol3");
 
@@ -2818,6 +2821,8 @@ void mock_tgt_thread(void *arg)
 	zv = NULL;
 	mgmt_fd = tgt_fd = -1;
 
+	uint64_t io_seq = zinfo->running_ionum + 1;
+
 	tgt_fd = create_and_bind("6060", B_TRUE, B_FALSE);
 	if (tgt_fd == -1) {
 		LOG_ERRNO("Binding failed");
@@ -2848,6 +2853,7 @@ void mock_tgt_thread(void *arg)
 	hdr.version = REPLICA_VERSION;
 	hdr.opcode = ZVOL_OPCODE_HANDSHAKE;
 	hdr.len = strlen(zinfo->name) + 1;
+	hdr.io_seq = io_seq;
 	strcpy(buf, zinfo->name);
 
 	bzero(&phdr, sizeof (phdr));
@@ -2943,7 +2949,7 @@ void mock_tgt_thread(void *arg)
 		hdr.opcode = ZVOL_OPCODE_RESIZE;
 		hdr.len = sizeof (zvol_op_resize_data_t);
 		strcpy(resize.volname, zinfo->name);
-		resize.size = 999936;
+		resize.size = VOLSIZE + BLOCKSIZE;
 		p = (char *)&resize;
 	}
 	
@@ -3295,7 +3301,7 @@ TEST(MgmtThreadTest, ResizeFailureWrongVolName) {
 /* Volume resize success */
 TEST(MgmtThreadTest, ResizeSuccess) {
 	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
-	mgmt_thread_test_case(18);
+	mgmt_thread_test_case(18, zinfo);
 	EXPECT_EQ(status, ZVOL_OP_STATUS_OK);
 }
 
@@ -3359,11 +3365,69 @@ TEST(RebuildMgmtTest, RebuildFailureOldHelper) {
 	uint16_t port2 = conn2->conn_port;
 	// change the port so that it can connect to mgmt
 	conn2->conn_port = 6060;
-	zvol_rebuild_step_size = (1024ULL * 1024ULL * 1024ULL);
+	zvol_rebuild_step_size = VOLSIZE;
 	execute_rebuild_test_case("Rebuild Failure with old helper version", 16,
 	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
 	close(data_conn_fd);
 	//restore the port numbers
 	conn1->conn_port = port1;
 	conn2->conn_port = port2;
+}
+
+TEST(RebuildMgmtTest, SnapRebuildResizeTest) {
+	int data_conn_fd, data_conn_fd1;
+	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
+	dw_replica_fn = &uzfs_zvol_rebuild_dw_replica;
+	io_receiver = &uzfs_zvol_io_receiver;
+	uzfs_zvol_set_rebuild_status(zv2, ZVOL_REBUILDING_INIT);
+	do_data_connection(data_conn_fd, "127.0.0.1", IO_SERVER_PORT, "vol3");
+
+	uzfs_zvol_set_rebuild_status(zv2, ZVOL_REBUILDING_DONE);
+	uzfs_zvol_set_status(zinfo2->main_zv, ZVOL_STATUS_HEALTHY);
+
+	uzfs_zvol_set_rebuild_status(zv, ZVOL_REBUILDING_INIT);
+	zinfo->main_zv->zv_status = ZVOL_STATUS_DEGRADED;
+	do_data_connection(data_conn_fd1, "127.0.0.1", IO_SERVER_PORT, "vol1");
+
+	uint64_t ionum = zinfo2->running_ionum;
+	zvol_state_t *snap1 = NULL, *snap2 = NULL;
+	int rc, err;
+
+	// resize the volume
+	uint64_t size1 = zv2->zv_volsize + VOLSIZE;
+	rc = uzfs_zvol_resize(zv2, size1);
+	EXPECT_EQ(rc, 0);
+	// take the snapshot
+	rc = uzfs_zvol_create_snapshot_update_zap(zinfo2, (char *)"rebuildsize1", ionum + 1);
+	EXPECT_EQ(rc, 0);
+	// resize the volume
+	uint64_t size2 = size1 + BLOCKSIZE;
+	rc = uzfs_zvol_resize(zv2, size2);
+	EXPECT_EQ(rc, 0);
+	// take the snapshot
+	rc = uzfs_zvol_create_snapshot_update_zap(zinfo2, (char *)"rebuildsize2", ionum + 2);
+	EXPECT_EQ(rc, 0);
+
+	/* Rebuild thread sending complete opcode */
+	zvol_rebuild_step_size = VOLSIZE;
+	execute_rebuild_test_case("complete rebuild", 15,
+	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_DONE, 4, "vol3");
+	EXPECT_EQ(ZVOL_STATUS_HEALTHY, uzfs_zvol_get_status(zinfo->main_zv));
+
+	err = uzfs_open_dataset(spa, "vol1@rebuildsize1", &snap1);
+	EXPECT_EQ(err, 0);
+	// old snapshot should have old size
+	EXPECT_EQ(snap1->zv_volsize, size1);
+	err = uzfs_open_dataset(spa, "vol1@rebuildsize2", &snap2);
+	EXPECT_EQ(err, 0);
+	// new snapshot should have resized volsize
+	EXPECT_EQ(snap2->zv_volsize, size2);
+	// volume should have resized volsize
+	EXPECT_EQ(zv->zv_volsize, size2);
+
+	uzfs_close_dataset(snap1);
+	uzfs_close_dataset(snap2);
+
+	close(data_conn_fd);
+	close(data_conn_fd1);
 }

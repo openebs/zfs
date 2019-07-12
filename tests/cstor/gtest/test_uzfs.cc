@@ -69,6 +69,10 @@ extern void (*zinfo_create_hook)(zvol_info_t *, nvlist_t *);
 extern void (*zinfo_destroy_hook)(zvol_info_t *);
 int receiver_created = 0;
 extern uint64_t zvol_rebuild_step_size;
+extern void mgmt_thread_test_case(int test_case, zvol_info_t *mzinfo);
+
+/* Global variable to check if status of op */
+zvol_op_status_t status;
 
 //void (*dw_replica_fn)(void *);
 #if DEBUG
@@ -1854,6 +1858,14 @@ next_step:
 		if (hdr.opcode == ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE) {
 			all_snap_done_received = 1;
 			if (rebuild_test_case == 16) {
+				/*
+				 * snapshot should fail if we
+				 * are transitioning to AFS
+				 * sending snapshot command to
+				 * scanner (zinfo2)
+				 */
+				mgmt_thread_test_case(14, zinfo2);
+				EXPECT_EQ(status, ZVOL_OP_STATUS_FAILED);
 				hdr.opcode = ZVOL_OPCODE_REBUILD_COMPLETE;
 			} else {
 				hdr.opcode = ZVOL_OPCODE_AFS_STARTED;
@@ -2738,17 +2750,6 @@ TEST(RebuildScanner, RebuildSuccess) {
 	data_conn_fd = -1;
 }
 
-TEST(RebuildScanner, RebuildFailureOldHelper) {
-	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
-	dw_replica_fn = &uzfs_mock_zvol_rebuild_dw_replica;
-	io_receiver = &uzfs_zvol_io_receiver;
-	uzfs_zvol_set_rebuild_status(zv2, ZVOL_REBUILDING_INIT);
-	do_data_connection(data_conn_fd, "127.0.0.1", IO_SERVER_PORT, "vol3");
-	zvol_rebuild_step_size = (1024ULL * 1024ULL * 1024ULL);
-	execute_rebuild_test_case("Rebuild Failure with old helper version", 16,
-	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
-}
-
 TEST(Misc, DelayWriteAndBreakConn) {
 	struct zvol_io_rw_hdr *io_hdr;
 	zvol_io_cmd_t *zio_cmd;
@@ -2796,9 +2797,6 @@ TEST(VolumeNameCompare, VolumeNameCompareTest) {
 	EXPECT_EQ(0, uzfs_zvol_name_compare(zinfo, "vol1"));
 }
 
-/* Global variable to check if status of op */
-zvol_op_status_t status;
-
 void mock_tgt_thread(void *arg)
 {
 	int			rc = 0;
@@ -2813,6 +2811,7 @@ void mock_tgt_thread(void *arg)
 	zvol_op_resize_data_t	resize;
 	char 			buf[512];
 	bool			executed = false;
+	zvol_info_t 		*zinfo = (zvol_info_t *)arg;
 
 	p = buf;
 	ack = NULL;
@@ -3095,16 +3094,15 @@ exit:
 	zk_thread_exit();
 }
 
-void mgmt_thread_test_case(int test_case)
+void mgmt_thread_test_case(int test_case, zvol_info_t *mzinfo = zinfo)
 {
 	kthread_t	*mock_tgt_thrd;
-	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
 
 	mgmt_test_case = test_case;
-	uzfs_zinfo_take_refcnt(zinfo);
+	uzfs_zinfo_take_refcnt(mzinfo);
 
 	mock_tgt_thrd = zk_thread_create(NULL, 0, mock_tgt_thread,
-	    NULL, 0, NULL, TS_RUN, 0, 0);
+	    mzinfo, 0, NULL, TS_RUN, 0, 0);
 
 	/* wait for mock_tgt_thread to exit */
 	while (1) {
@@ -3113,6 +3111,7 @@ void mgmt_thread_test_case(int test_case)
 		else
 			break;
 	}
+	uzfs_zinfo_drop_refcnt(mzinfo);
 }
 
 kthread_t	*mgmt_thread;
@@ -3125,7 +3124,6 @@ TEST(MgmtThreadTest, MgmtThreadCreation) {
 	sleep(1);
 	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
 	conn->conn_bufsiz = 0;
-	zinfo_destroy_cb(zinfo2);
 	EXPECT_EQ(0, !mgmt_thread);
 }
 
@@ -3341,4 +3339,31 @@ TEST(MgmtThreadTest, RebuildFailureSingleReplica) {
 	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
 	mgmt_thread_test_case(24);
 	EXPECT_EQ(status, ZVOL_OP_STATUS_FAILED); // errout on healthy replica
+}
+
+TEST(RebuildMgmtTest, RebuildFailureOldHelper) {
+	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
+	dw_replica_fn = &uzfs_mock_zvol_rebuild_dw_replica;
+	io_receiver = &uzfs_zvol_io_receiver;
+	uzfs_zvol_set_rebuild_status(zv2, ZVOL_REBUILDING_INIT);
+	do_data_connection(data_conn_fd, "127.0.0.1", IO_SERVER_PORT, "vol3");
+
+	uzfs_zvol_set_rebuild_status(zv2, ZVOL_REBUILDING_DONE);
+	uzfs_zvol_set_status(zinfo2->main_zv, ZVOL_STATUS_HEALTHY);
+
+	uzfs_mgmt_conn_t *conn1 = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+	uint16_t port1 = conn1->conn_port;
+	// change the port so that it can not connect to mgmt
+	conn1->conn_port = 5959;
+	uzfs_mgmt_conn_t *conn2 = (uzfs_mgmt_conn_t *)zinfo2->mgmt_conn;
+	uint16_t port2 = conn2->conn_port;
+	// change the port so that it can connect to mgmt
+	conn2->conn_port = 6060;
+	zvol_rebuild_step_size = (1024ULL * 1024ULL * 1024ULL);
+	execute_rebuild_test_case("Rebuild Failure with old helper version", 16,
+	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_FAILED);
+	close(data_conn_fd);
+	//restore the port numbers
+	conn1->conn_port = port1;
+	conn2->conn_port = port2;
 }

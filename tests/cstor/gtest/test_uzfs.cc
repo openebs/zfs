@@ -1860,24 +1860,26 @@ next_step:
 
 		if (hdr.opcode == ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE) {
 			all_snap_done_received = 1;
-			if (rebuild_test_case == 16) {
-				/*
-				 * snapshot should fail if we
-				 * are transitioning to AFS
-				 * sending snapshot command to
-				 * scanner (zinfo2)
-				 */
-				mgmt_thread_test_case(14, zinfo2);
-				EXPECT_EQ(status, ZVOL_OP_STATUS_FAILED);
-				hdr.opcode = ZVOL_OPCODE_REBUILD_COMPLETE;
-			} else {
-				hdr.opcode = ZVOL_OPCODE_AFS_STARTED;
-			}
-			rc = uzfs_zvol_socket_write(sfd,
-			    (char *)&hdr, sizeof (hdr));
-			if (rc != 0) {
-				LOG_ERR("Socket write failed err(%d)", rc);
-				goto exit;
+			if (version >= REPLICA_REBUILD_VERSION) {
+				if (rebuild_test_case == 16) {
+					/*
+					 * snapshot should fail if we
+					 * are transitioning to AFS
+					 * sending snapshot command to
+					 * scanner (zinfo2)
+					 */
+					mgmt_thread_test_case(14, zinfo2);
+					EXPECT_EQ(status, ZVOL_OP_STATUS_FAILED);
+					hdr.opcode = ZVOL_OPCODE_REBUILD_COMPLETE;
+				} else {
+					hdr.opcode = ZVOL_OPCODE_AFS_STARTED;
+				}
+				rc = uzfs_zvol_socket_write(sfd,
+				    (char *)&hdr, sizeof (hdr));
+				if (rc != 0) {
+					LOG_ERR("Socket write failed err(%d)", rc);
+					goto exit;
+				}
 			}
 			if (uzfs_zvol_get_rebuild_status(zinfo->main_zv) !=
 			    ZVOL_REBUILDING_AFS) {
@@ -3347,7 +3349,7 @@ TEST(MgmtThreadTest, RebuildFailureSingleReplica) {
 	EXPECT_EQ(status, ZVOL_OP_STATUS_FAILED); // errout on healthy replica
 }
 
-TEST(RebuildMgmtTest, RebuildFailureOldHelper) {
+TEST(RebuildMgmtTest, RebuildFailureOldDegraded) {
 	rebuild_scanner = &uzfs_zvol_rebuild_scanner;
 	dw_replica_fn = &uzfs_mock_zvol_rebuild_dw_replica;
 	io_receiver = &uzfs_zvol_io_receiver;

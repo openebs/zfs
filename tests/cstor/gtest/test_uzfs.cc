@@ -1860,7 +1860,7 @@ next_step:
 
 		if (hdr.opcode == ZVOL_OPCODE_REBUILD_ALL_SNAP_DONE) {
 			all_snap_done_received = 1;
-			if (version >= REPLICA_REBUILD_VERSION) {
+			if (version >= RESIZE_REBUILD_MIN_VERSION) {
 				if (rebuild_test_case == 16) {
 					/*
 					 * snapshot should fail if we

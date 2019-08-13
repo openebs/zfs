@@ -950,7 +950,7 @@ zpool_name_valid(libzfs_handle_t *hdl, boolean_t isopen, const char *pool)
 	    strcmp(pool, "log") == 0)) {
 		if (hdl != NULL)
 			zfs_error_aux(hdl,
-			    dgettext(TEXT_DOMAIN, "name is reserved"));
+			    dgettext(TEXT_DOMAIN, "reason=name is reserved"));
 		return (B_FALSE);
 	}
 
@@ -960,59 +960,59 @@ zpool_name_valid(libzfs_handle_t *hdl, boolean_t isopen, const char *pool)
 			switch (why) {
 			case NAME_ERR_TOOLONG:
 				zfs_error_aux(hdl,
-				    dgettext(TEXT_DOMAIN, "name is too long"));
+				    dgettext(TEXT_DOMAIN, "reason=name is too long"));
 				break;
 
 			case NAME_ERR_INVALCHAR:
 				zfs_error_aux(hdl,
-				    dgettext(TEXT_DOMAIN, "invalid character "
+				    dgettext(TEXT_DOMAIN, "reason=invalid character "
 				    "'%c' in pool name"), what);
 				break;
 
 			case NAME_ERR_NOLETTER:
 				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-				    "name must begin with a letter"));
+				    "reason=name must begin with a letter"));
 				break;
 
 			case NAME_ERR_RESERVED:
 				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-				    "name is reserved"));
+				    "reason=name is reserved"));
 				break;
 
 			case NAME_ERR_DISKLIKE:
 				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-				    "pool name is reserved"));
+				    "reason=pool name is reserved"));
 				break;
 
 			case NAME_ERR_LEADING_SLASH:
 				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-				    "leading slash in name"));
+				    "reason=leading slash in name"));
 				break;
 
 			case NAME_ERR_EMPTY_COMPONENT:
 				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-				    "empty component in name"));
+				    "reason=empty component in name"));
 				break;
 
 			case NAME_ERR_TRAILING_SLASH:
 				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-				    "trailing slash in name"));
+				    "reason=trailing slash in name"));
 				break;
 
 			case NAME_ERR_MULTIPLE_DELIMITERS:
 				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-				    "multiple '@' and/or '#' delimiters in "
+				    "reason=multiple '@' and/or '#' delimiters in "
 				    "name"));
 				break;
 
 			case NAME_ERR_NO_AT:
 				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-				    "permission set is missing '@'"));
+				    "reason=permission set is missing '@'"));
 				break;
 
 			default:
 				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-				    "(%d) not defined"), why);
+				    "reason=(%d) not defined"), why);
 				break;
 			}
 		}
@@ -1164,7 +1164,7 @@ zpool_create(libzfs_handle_t *hdl, const char *pool, nvlist_t *nvroot,
 	int ret = -1;
 
 	(void) snprintf(msg, sizeof (msg), dgettext(TEXT_DOMAIN,
-	    "cannot create '%s'"), pool);
+	    "ecode=cstor.cannot.create.pool rname=%s msg=cannot create '%s'"), pool, pool);
 
 	if (!zpool_name_valid(hdl, B_FALSE, pool))
 		return (zfs_error(hdl, EZFS_INVALIDNAME, msg));
@@ -1224,8 +1224,8 @@ zpool_create(libzfs_handle_t *hdl, const char *pool, nvlist_t *nvroot,
 			 * part of an active md or lvm device.
 			 */
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			    "one or more vdevs refer to the same device, or "
-			    "one of\nthe devices is part of an active md or "
+			    "reason=one or more vdevs refer to the same device, or "
+			    "one of the devices is part of an active md or "
 			    "lvm device"));
 			return (zfs_error(hdl, EZFS_BADDEV, msg));
 
@@ -1241,7 +1241,7 @@ zpool_create(libzfs_handle_t *hdl, const char *pool, nvlist_t *nvroot,
 			 * from the pool.
 			 */
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			    "record size invalid"));
+			    "reason=record size invalid"));
 			return (zfs_error(hdl, EZFS_BADPROP, msg));
 
 		case EOVERFLOW:
@@ -1258,19 +1258,19 @@ zpool_create(libzfs_handle_t *hdl, const char *pool, nvlist_t *nvroot,
 				    sizeof (buf));
 
 				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-				    "one or more devices is less than the "
+				    "reason=one or more devices is less than the "
 				    "minimum size (%s)"), buf);
 			}
 			return (zfs_error(hdl, EZFS_BADDEV, msg));
 
 		case ENOSPC:
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			    "one or more devices is out of space"));
+			    "reason=one or more devices is out of space"));
 			return (zfs_error(hdl, EZFS_BADDEV, msg));
 
 		case ENOTBLK:
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			    "cache device must be a disk or disk slice"));
+			    "reason=cache device must be a disk or disk slice"));
 			return (zfs_error(hdl, EZFS_BADDEV, msg));
 
 		default:
@@ -1306,11 +1306,11 @@ zpool_destroy(zpool_handle_t *zhp, const char *log_str)
 
 	if (zfs_ioctl(hdl, ZFS_IOC_POOL_DESTROY, &zc) != 0) {
 		(void) snprintf(msg, sizeof (msg), dgettext(TEXT_DOMAIN,
-		    "cannot destroy '%s'"), zhp->zpool_name);
+		    "ecode=cstor.cannot.destroy.pool rname=%s msg=cannot destroy '%s'"), zhp->zpool_name, zhp->zpool_name);
 
 		if (errno == EROFS) {
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			    "one or more devices is read only"));
+			    "reason=one or more devices is read only"));
 			(void) zfs_error(hdl, EZFS_BADDEV, msg);
 		} else {
 			(void) zpool_standard_error(hdl, errno, msg);
@@ -1344,13 +1344,13 @@ zpool_add(zpool_handle_t *zhp, nvlist_t *nvroot)
 	uint_t nspares, nl2cache;
 
 	(void) snprintf(msg, sizeof (msg), dgettext(TEXT_DOMAIN,
-	    "cannot add to '%s'"), zhp->zpool_name);
+	    "ecode=cstor.cannot.add.to.pool rname=%s msg=cannot add to '%s'"), zhp->zpool_name, zhp->zpool_name);
 
 	if (zpool_get_prop_int(zhp, ZPOOL_PROP_VERSION, NULL) <
 	    SPA_VERSION_SPARES &&
 	    nvlist_lookup_nvlist_array(nvroot, ZPOOL_CONFIG_SPARES,
 	    &spares, &nspares) == 0) {
-		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN, "pool must be "
+		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN, "reason=pool must be "
 		    "upgraded to add hot spares"));
 		return (zfs_error(hdl, EZFS_BADVERSION, msg));
 	}
@@ -1359,7 +1359,7 @@ zpool_add(zpool_handle_t *zhp, nvlist_t *nvroot)
 	    SPA_VERSION_L2CACHE &&
 	    nvlist_lookup_nvlist_array(nvroot, ZPOOL_CONFIG_L2CACHE,
 	    &l2cache, &nl2cache) == 0) {
-		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN, "pool must be "
+		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN, "reason=pool must be "
 		    "upgraded to add cache devices"));
 		return (zfs_error(hdl, EZFS_BADVERSION, msg));
 	}
@@ -1378,7 +1378,7 @@ zpool_add(zpool_handle_t *zhp, nvlist_t *nvroot)
 			 * label.
 			 */
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			    "one or more vdevs refer to the same device"));
+			    "reason=one or more vdevs refer to the same device"));
 			(void) zfs_error(hdl, EZFS_BADDEV, msg);
 			break;
 
@@ -1396,7 +1396,7 @@ zpool_add(zpool_handle_t *zhp, nvlist_t *nvroot)
 				    sizeof (buf));
 
 				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-				    "device is less than the minimum "
+				    "reason=device is less than the minimum "
 				    "size (%s)"), buf);
 			}
 			(void) zfs_error(hdl, EZFS_BADDEV, msg);
@@ -1404,13 +1404,13 @@ zpool_add(zpool_handle_t *zhp, nvlist_t *nvroot)
 
 		case ENOTSUP:
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			    "pool must be upgraded to add these vdevs"));
+			    "reason=pool must be upgraded to add these vdevs"));
 			(void) zfs_error(hdl, EZFS_BADVERSION, msg);
 			break;
 
 		case ENOTBLK:
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			    "cache device must be a disk or disk slice"));
+			    "reason=cache device must be a disk or disk slice"));
 			(void) zfs_error(hdl, EZFS_BADDEV, msg);
 			break;
 
@@ -1627,8 +1627,8 @@ zpool_import(libzfs_handle_t *hdl, nvlist_t *config, const char *newname,
 	if (altroot != NULL) {
 		if (nvlist_alloc(&props, NV_UNIQUE_NAME, 0) != 0) {
 			return (zfs_error_fmt(hdl, EZFS_NOMEM,
-			    dgettext(TEXT_DOMAIN, "cannot import '%s'"),
-			    newname));
+			    dgettext(TEXT_DOMAIN, "ecode=cstor.cannot.import.pool rname=%s msg=cannot import '%s'"),
+			    newname, newname));
 		}
 
 		if (nvlist_add_string(props,
@@ -1637,8 +1637,8 @@ zpool_import(libzfs_handle_t *hdl, nvlist_t *config, const char *newname,
 		    zpool_prop_to_name(ZPOOL_PROP_CACHEFILE), "none") != 0) {
 			nvlist_free(props);
 			return (zfs_error_fmt(hdl, EZFS_NOMEM,
-			    dgettext(TEXT_DOMAIN, "cannot import '%s'"),
-			    newname));
+			    dgettext(TEXT_DOMAIN, "ecode=cstor.cannot.import.pool rname=%s msg=cannot import '%s'"),
+			    newname, newname));
 		}
 	}
 
@@ -1725,13 +1725,13 @@ zpool_import_props(libzfs_handle_t *hdl, nvlist_t *config, const char *newname,
 	    &origname) == 0);
 
 	(void) snprintf(errbuf, sizeof (errbuf), dgettext(TEXT_DOMAIN,
-	    "cannot import pool '%s'"), origname);
+	    "ecode=cstor.cannot.import.pool rname=%s msg=cannot import pool '%s'"), origname, origname);
 
 	if (newname != NULL) {
 		if (!zpool_name_valid(hdl, B_FALSE, newname))
 			return (zfs_error_fmt(hdl, EZFS_INVALIDNAME,
-			    dgettext(TEXT_DOMAIN, "cannot import '%s'"),
-			    newname));
+			    dgettext(TEXT_DOMAIN, "ecode=cstor.cannot.import.pool rname=%s msg=cannot import '%s'"),
+			    newname, newname));
 		thename = (char *)newname;
 	} else {
 		thename = origname;
@@ -1802,29 +1802,29 @@ zpool_import_props(libzfs_handle_t *hdl, nvlist_t *config, const char *newname,
 
 		if (newname == NULL)
 			(void) snprintf(desc, sizeof (desc),
-			    dgettext(TEXT_DOMAIN, "cannot import '%s'"),
-			    thename);
+			    dgettext(TEXT_DOMAIN, "ecode=cstor.cannot.import.pool rname=%s msg=cannot import '%s'"),
+			    thename, thename);
 		else
 			(void) snprintf(desc, sizeof (desc),
-			    dgettext(TEXT_DOMAIN, "cannot import '%s' as '%s'"),
-			    origname, thename);
+			    dgettext(TEXT_DOMAIN, "ecode=cstor.cannot.import.pool rname=%s msg=cannot import '%s' as '%s'"),
+			    origname, origname, thename);
 
 		switch (error) {
 		case ENOTSUP:
 			if (nv != NULL && nvlist_lookup_nvlist(nv,
 			    ZPOOL_CONFIG_LOAD_INFO, &nvinfo) == 0 &&
 			    nvlist_exists(nvinfo, ZPOOL_CONFIG_UNSUP_FEAT)) {
-				(void) printf(dgettext(TEXT_DOMAIN, "This "
+				(void) printf(dgettext(TEXT_DOMAIN, "ecode=cstor.cannot.import.pool rname=%s msg=cannot import '%s' reason=This "
 				    "pool uses the following feature(s) not "
-				    "supported by this system:\n"));
+				    "supported by this system: "), thename, thename);
 				zpool_print_unsup_feat(nv);
 				if (nvlist_exists(nvinfo,
 				    ZPOOL_CONFIG_CAN_RDONLY)) {
 					(void) printf(dgettext(TEXT_DOMAIN,
 					    "All unsupported features are only "
 					    "required for writing to the pool."
-					    "\nThe pool can be imported using "
-					    "'-o readonly=on'.\n"));
+					    " The pool can be imported using "
+					    "'-o readonly=on'. "));
 				}
 			}
 			/*
@@ -1855,18 +1855,18 @@ zpool_import_props(libzfs_handle_t *hdl, nvlist_t *config, const char *newname,
 
 				if (mmp_state == MMP_STATE_ACTIVE) {
 					(void) snprintf(aux, sizeof (aux),
-					    dgettext(TEXT_DOMAIN, "pool is imp"
+					    dgettext(TEXT_DOMAIN, "ecode=cstor.cannot.import.pool rname=%s msg=cannot import '%s' reason=pool is imp"
 					    "orted on host '%s' (hostid=%lx).\n"
 					    "Export the pool on the other "
 					    "system, then run 'zpool import'."),
-					    hostname, (unsigned long) hostid);
+					    thename, thename, hostname, (unsigned long) hostid);
 				} else if (mmp_state == MMP_STATE_NO_HOSTID) {
 					(void) snprintf(aux, sizeof (aux),
-					    dgettext(TEXT_DOMAIN, "pool has "
+					    dgettext(TEXT_DOMAIN, "ecode=cstor.cannot.import.pool rname=%s msg=cannot import '%s' reason=pool has "
 					    "the multihost property on and "
-					    "the\nsystem's hostid is not set. "
+					    "the system's hostid is not set. "
 					    "Set a unique system hostid with "
-					    "the zgenhostid(8) command.\n"));
+					    "the zgenhostid(8) command. "), thename, thename);
 				}
 
 				(void) zfs_error_aux(hdl, aux);
@@ -1880,7 +1880,7 @@ zpool_import_props(libzfs_handle_t *hdl, nvlist_t *config, const char *newname,
 
 		case EROFS:
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			    "one or more devices is read only"));
+			    "reason=one or more devices is read only"));
 			(void) zfs_error(hdl, EZFS_BADDEV, desc);
 			break;
 
@@ -1890,10 +1890,10 @@ zpool_import_props(libzfs_handle_t *hdl, nvlist_t *config, const char *newname,
 			    nvlist_lookup_nvlist(nvinfo,
 			    ZPOOL_CONFIG_MISSING_DEVICES, &missing) == 0) {
 				(void) printf(dgettext(TEXT_DOMAIN,
-				    "The devices below are missing, use "
-				    "'-m' to import the pool anyway:\n"));
+				    "ecode=cstor.cannot.import.pool rname=%s msg=cannot import '%s' reason=The devices below are missing, use "
+				    "'-m' to import the pool anyway: "), thename, thename);
 				print_vdev_tree(hdl, NULL, missing, 2);
-				(void) printf("\n");
+				(void) printf(" ");
 			}
 			(void) zpool_standard_error(hdl, error, desc);
 			break;
@@ -1904,12 +1904,12 @@ zpool_import_props(libzfs_handle_t *hdl, nvlist_t *config, const char *newname,
 
 		case EBUSY:
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			    "one or more devices are already in use\n"));
+			    "reason=one or more devices are already in use\n"));
 			(void) zfs_error(hdl, EZFS_BADDEV, desc);
 			break;
 		case ENAMETOOLONG:
 			zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-			    "new name of at least one dataset is longer than "
+			    "reason=new name of at least one dataset is longer than "
 			    "the maximum allowable length"));
 			(void) zfs_error(hdl, EZFS_NAMETOOLONG, desc);
 			break;

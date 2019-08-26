@@ -1993,7 +1993,8 @@ TEST(ZvolResizeTest, ResizeZvol) {
 	ASSERT_EQ(hdr_in.len, 0);
 
 	// get the zvol size after
-	str = execCmd("zfs", std::string("get -Hpo value volsize ") + zvolname + "_rebuild_clone");
+	str = execCmd("zfs", std::string("get -Hpo value volsize ") +
+			zvolname + "_rebuild_clone");
 	val2 = atoi(str.c_str());
 	EXPECT_EQ(val1, val2);
 

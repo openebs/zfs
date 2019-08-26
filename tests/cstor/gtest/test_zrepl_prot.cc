@@ -1939,13 +1939,14 @@ TEST(ZvolResizeTest, DataConn) {
  * Test zvol resize
  */
 TEST(ZvolResizeTest, ResizeZvol) {
+	SocketFd datasock;
 	zvol_io_hdr_t hdr_in, hdr_out = {0};
 	Zrepl zrepl;
 	Target target;
 	int rc, control_fd;
 	std::string host;
 	std::string str;
-	uint64_t val1, val2;
+	uint64_t val1, val2, size;
 	uint16_t port;
 	zvol_op_resize_data_t resize_data;
 	TestPool pool("resizepool");
@@ -1966,6 +1967,11 @@ TEST(ZvolResizeTest, ResizeZvol) {
 	do_handshake(zvolname, host, port, NULL, NULL, control_fd,
 	    ZVOL_OP_STATUS_OK);
 
+	//TODO: Negative scenarios need to cover
+	// Making data connection because if replica is in degraded state
+	// then we are resizing clone volume
+	do_data_connection(datasock.fd(), host, port, zvolname, 4096,
+	    120, ZVOL_OP_STATUS_OK, 1, REPLICA_VERSION, val1);
 	hdr_out.version = REPLICA_VERSION;
 	hdr_out.opcode = ZVOL_OPCODE_RESIZE;
 	hdr_out.status = ZVOL_OP_STATUS_OK;
@@ -1987,7 +1993,7 @@ TEST(ZvolResizeTest, ResizeZvol) {
 	ASSERT_EQ(hdr_in.len, 0);
 
 	// get the zvol size after
-	str = execCmd("zfs", std::string("get -Hpo value volsize ") + zvolname);
+	str = execCmd("zfs", std::string("get -Hpo value volsize ") + zvolname + "_rebuild_clone");
 	val2 = atoi(str.c_str());
 	EXPECT_EQ(val1, val2);
 

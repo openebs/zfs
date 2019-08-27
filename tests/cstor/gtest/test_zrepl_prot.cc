@@ -1939,13 +1939,14 @@ TEST(ZvolResizeTest, DataConn) {
  * Test zvol resize
  */
 TEST(ZvolResizeTest, ResizeZvol) {
+	SocketFd datasock;
 	zvol_io_hdr_t hdr_in, hdr_out = {0};
 	Zrepl zrepl;
 	Target target;
 	int rc, control_fd;
 	std::string host;
 	std::string str;
-	uint64_t val1, val2;
+	uint64_t old_size, new_size, clone_zv_size, main_zv_size, ioseq;
 	uint16_t port;
 	zvol_op_resize_data_t resize_data;
 	TestPool pool("resizepool");
@@ -1957,7 +1958,7 @@ TEST(ZvolResizeTest, ResizeZvol) {
 
 	// get the zvol size before
 	str = execCmd("zfs", std::string("get -Hpo value volsize ") + zvolname);
-	val1 = atoi(str.c_str());
+	old_size = atoi(str.c_str());
 
 	rc = target.listen();
 	ASSERT_GE(rc, 0);
@@ -1966,6 +1967,11 @@ TEST(ZvolResizeTest, ResizeZvol) {
 	do_handshake(zvolname, host, port, NULL, NULL, control_fd,
 	    ZVOL_OP_STATUS_OK);
 
+	//TODO: Negative scenarios need to cover
+	// Making data connection because if replica is in degraded state
+	// then we are resizing clone volume
+	do_data_connection(datasock.fd(), host, port, zvolname, 4096,
+	    120, ZVOL_OP_STATUS_OK, 3, REPLICA_VERSION, old_size);
 	hdr_out.version = REPLICA_VERSION;
 	hdr_out.opcode = ZVOL_OPCODE_RESIZE;
 	hdr_out.status = ZVOL_OP_STATUS_OK;
@@ -1974,10 +1980,10 @@ TEST(ZvolResizeTest, ResizeZvol) {
 	rc = write(control_fd, &hdr_out, sizeof (hdr_out));
 	ASSERT_EQ(rc, sizeof (hdr_out));
 	// double the zvol size
-	val1 <<= 1;
+	new_size = old_size << 1;
 	GtestUtils::strlcpy(resize_data.volname, zvolname.c_str(),
 	    sizeof (resize_data.volname));
-	resize_data.size = val1;
+	resize_data.size = new_size;
 	rc = write(control_fd, &resize_data, sizeof (resize_data));
 	ASSERT_EQ(rc, sizeof (resize_data));
 
@@ -1986,10 +1992,23 @@ TEST(ZvolResizeTest, ResizeZvol) {
 	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
 	ASSERT_EQ(hdr_in.len, 0);
 
-	// get the zvol size after
-	str = execCmd("zfs", std::string("get -Hpo value volsize ") + zvolname);
-	val2 = atoi(str.c_str());
-	EXPECT_EQ(val1, val2);
+	// get the clone zvol size after triggering resize
+	str = execCmd("zfs", std::string("get -Hpo value volsize ") +
+			zvolname + "_rebuild_clone");
+	clone_zv_size = atoi(str.c_str());
+	EXPECT_EQ(new_size, clone_zv_size);
+
+	get_zvol_status(zvolname, ioseq, control_fd, ZVOL_STATUS_DEGRADED, ZVOL_REBUILDING_INIT);
+	transition_zvol_to_online(ioseq, control_fd, zvolname);
+	// TODO: Write function wait_for_replica_healthy which will wait
+	// untill replica become healthy
+	// waiting for volume to be healthy
+	sleep(6);
+	// get the main zvol size after it become healthy
+	str = execCmd("zfs", std::string("get -Hpo value volsize ") +
+			zvolname);
+	main_zv_size = atoi(str.c_str());
+	EXPECT_EQ(new_size, main_zv_size);
 
 	graceful_close(control_fd);
 }

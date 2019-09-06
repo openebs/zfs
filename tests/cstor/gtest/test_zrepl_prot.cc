@@ -269,38 +269,7 @@ static void get_zvol_status(std::string zvol_name, uint64_t &ioseq, int control_
 {
 	zvol_io_hdr_t hdr_in, hdr_out = {0};
 	struct zrepl_status_ack status;
-	int rc;
-	hdr_out.version = version;
-	hdr_out.opcode = ZVOL_OPCODE_REPLICA_STATUS;
-	hdr_out.status = ZVOL_OP_STATUS_OK;
-	hdr_out.io_seq = ++ioseq;
-	hdr_out.len = zvol_name.length() + 1;
-	rc = write(control_fd, &hdr_out, sizeof (hdr_out));
-	ASSERT_ERRNO("write", rc >= 0);
-	ASSERT_EQ(rc, sizeof (hdr_out));
-	rc = write(control_fd, zvol_name.c_str(), hdr_out.len);
-	ASSERT_ERRNO("write", rc >= 0);
-	ASSERT_EQ(rc, hdr_out.len);
-	rc = read(control_fd, &hdr_in, sizeof (hdr_in));
-	ASSERT_ERRNO("read", rc >= 0);
-	ASSERT_EQ(rc, sizeof (hdr_in));
-	EXPECT_EQ(hdr_in.version, hdr_out.version);
-	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_REPLICA_STATUS);
-	EXPECT_EQ(hdr_in.io_seq, ioseq);
-	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
-	EXPECT_EQ(hdr_in.len, sizeof (status));
-	rc = read(control_fd, &status, sizeof (status));
-	ASSERT_ERRNO("read", rc >= 0);
-	ASSERT_EQ(rc, sizeof (status));
-	EXPECT_EQ(status.state, state);
-	EXPECT_EQ(status.rebuild_status, rebuild_status);
-}
-
-static void wait_for_replica_status(std::string zvol_name, uint64_t &ioseq,
-    int control_fd, int state, struct zrepl_status_ack &status,
-    int version = REPLICA_VERSION) {
-	zvol_io_hdr_t hdr_in, hdr_out = {0};
-	int rc, max_retry_count=10, retry_count = 0;
+	int rc, max_retry_count=5, retry_count = 0;
 
 	while (retry_count < max_retry_count) {
 		hdr_out.version = version;
@@ -324,12 +293,15 @@ static void wait_for_replica_status(std::string zvol_name, uint64_t &ioseq,
 		EXPECT_EQ(hdr_in.len, sizeof (status));
 		rc = read(control_fd, &status, sizeof (status));
 		ASSERT_ERRNO("read", rc >= 0);
+		ASSERT_EQ(rc, sizeof (status));
 		if (status.state == state) {
 			break;
 		}
 		retry_count++;
 		sleep(3);
 	}
+	EXPECT_EQ(status.state, state);
+	EXPECT_EQ(status.rebuild_status, rebuild_status);
 }
 
 static void transition_zvol_to_online(uint64_t &ioseq, int control_fd,
@@ -1076,7 +1048,6 @@ TEST_F(ZreplDataTest, RebuildFlag) {
 		ASSERT_NE(output.find("Healthy"), std::string::npos);
 	else
 		ASSERT_NE(output.find("Rebuilding"), std::string::npos);
-	sleep(5);
 
 	/* Get zvol status after rebuild */
 	get_zvol_status(m_zvol_name1, m_ioseq1, m_control_fd1, ZVOL_STATUS_HEALTHY, ZVOL_REBUILDING_DONE);
@@ -2035,7 +2006,7 @@ TEST(ZvolResizeTest, ResizeHealthyZvol) {
 
 	// send resize opcode with lower size
 	new_size = 0;
-	execute_resize_opcode(new_size, zvolname, control_fd, ZVOL_OP_STATUS_OK);
+	execute_resize_opcode(new_size, zvolname, control_fd, ZVOL_OP_STATUS_FAILED);
 	// get the main zvol size
 	str = execCmd("zfs", std::string("get -Hpo value volsize ") +
 			zvolname);
@@ -2078,7 +2049,7 @@ TEST(ZvolResizeTest, ResizeDegradedZvol) {
 	zvol_op_resize_data_t resize_data;
 	TestPool pool("resizepool");
 	std::string zvolname = pool.getZvolName("vol");
-	struct zrepl_status_ack status;
+	//struct zrepl_status_ack status;
 
 	zrepl.start();
 	pool.create();
@@ -2111,11 +2082,16 @@ TEST(ZvolResizeTest, ResizeDegradedZvol) {
 	clone_zv_size = atoi(str.c_str());
 	EXPECT_EQ(new_size, clone_zv_size);
 
+	// get the main zvol size after triggering resize in degrade mode
+	str = execCmd("zfs", std::string("get -Hpo value volsize ") +
+			zvolname);
+	main_zv_size = atoi(str.c_str());
+	EXPECT_EQ(old_size, main_zv_size);
+
 	get_zvol_status(zvolname, ioseq, control_fd, ZVOL_STATUS_DEGRADED, ZVOL_REBUILDING_INIT);
 	transition_zvol_to_online(ioseq, control_fd, zvolname);
 	// waiting for volume to be healthy
-	wait_for_replica_status(zvolname, ioseq, control_fd, ZVOL_STATUS_HEALTHY, status);
-	EXPECT_EQ(status.state, ZVOL_STATUS_HEALTHY);
+	get_zvol_status(zvolname, ioseq, control_fd, ZVOL_STATUS_HEALTHY, ZVOL_REBUILDING_DONE);
 
 	// get the main zvol size after it become healthy
 	str = execCmd("zfs", std::string("get -Hpo value volsize ") +

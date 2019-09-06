@@ -264,14 +264,14 @@ static void write_two_chunks_and_verify_resp(int data_fd, uint64_t &ioseq,
 	EXPECT_EQ(hdr_in.io_seq, ioseq);
 }
 
-static void get_zvol_status(std::string zvol_name, uint64_t &ioseq, int control_fd,
-    int state, int rebuild_status, int version = REPLICA_VERSION)
+static void wait_for_zvol_status(std::string zvol_name, uint64_t &ioseq, int control_fd,
+    int state, int rebuild_status, int version = REPLICA_VERSION, int max_retry_count = 1)
 {
 	zvol_io_hdr_t hdr_in, hdr_out = {0};
 	struct zrepl_status_ack status;
-	int rc, max_retry_count=5, retry_count = 0;
+	int rc;
 
-	while (retry_count < max_retry_count) {
+	while (max_retry_count > 0) {
 		hdr_out.version = version;
 		hdr_out.opcode = ZVOL_OPCODE_REPLICA_STATUS;
 		hdr_out.status = ZVOL_OP_STATUS_OK;
@@ -297,8 +297,10 @@ static void get_zvol_status(std::string zvol_name, uint64_t &ioseq, int control_
 		if (status.state == state) {
 			break;
 		}
-		retry_count++;
-		sleep(3);
+		if (max_retry_count > 1) {
+			sleep(3);
+		}
+		max_retry_count--;
 	}
 	EXPECT_EQ(status.state, state);
 	EXPECT_EQ(status.rebuild_status, rebuild_status);
@@ -1032,8 +1034,8 @@ TEST_F(ZreplDataTest, RebuildFlag) {
 	/* write a data block with known ionum */
 	write_data_and_verify_resp(m_datasock1.fd(), m_ioseq1, buf, 0, sizeof (buf), 654);
 
-	/* Get zvol status before rebuild */
-	get_zvol_status(m_zvol_name1, m_ioseq1, m_control_fd1, ZVOL_STATUS_DEGRADED,
+	/* get zvol status before rebuild */
+	wait_for_zvol_status(m_zvol_name1, m_ioseq1, m_control_fd1, ZVOL_STATUS_DEGRADED,
 	    ZVOL_REBUILDING_INIT, MIN_SUPPORTED_REPLICA_VERSION);
 
 	output = execCmd("zfs", std::string("stats ") + m_zvol_name1);
@@ -1050,7 +1052,7 @@ TEST_F(ZreplDataTest, RebuildFlag) {
 		ASSERT_NE(output.find("Rebuilding"), std::string::npos);
 
 	/* Get zvol status after rebuild */
-	get_zvol_status(m_zvol_name1, m_ioseq1, m_control_fd1, ZVOL_STATUS_HEALTHY, ZVOL_REBUILDING_DONE);
+	wait_for_zvol_status(m_zvol_name1, m_ioseq1, m_control_fd1, ZVOL_STATUS_HEALTHY, ZVOL_REBUILDING_DONE, REPLICA_VERSION, 5);
 
 	output = execCmd("zfs", std::string("stats ") + m_zvol_name1);
 	ASSERT_NE(output.find("Healthy"), std::string::npos);
@@ -1144,8 +1146,8 @@ TEST(ReplicaState, SingleReplicaQuorumOff) {
 	do_data_connection(datasock2_fd, host2, port2, zvol_name2, 4096, 120, ZVOL_OP_STATUS_OK, 1,
 	    MIN_SUPPORTED_REPLICA_VERSION);
 
-	get_zvol_status(zvol_name1, ioseq1, control_fd1, ZVOL_STATUS_HEALTHY, ZVOL_REBUILDING_DONE);
-	get_zvol_status(zvol_name2, ioseq1, control_fd2, ZVOL_STATUS_DEGRADED, ZVOL_REBUILDING_INIT);
+	wait_for_zvol_status(zvol_name1, ioseq1, control_fd1, ZVOL_STATUS_HEALTHY, ZVOL_REBUILDING_DONE);
+	wait_for_zvol_status(zvol_name2, ioseq1, control_fd2, ZVOL_STATUS_DEGRADED, ZVOL_REBUILDING_INIT);
 
 	/* transition the zvol to online state */
 	transition_zvol_to_online(ioseq1, control_fd1, zvol_name1, ZVOL_OP_STATUS_FAILED, MIN_SUPPORTED_REPLICA_VERSION);
@@ -1177,7 +1179,7 @@ TEST(ReplicaState, MultiReplicaAndDegradedSingleReplicaDuringUpgrade) {
 	    ZVOL_OP_STATUS_OK);
 	do_data_connection(datasock1_fd, host1, port1, zvol_name1, 4096, 120, ZVOL_OP_STATUS_OK, 3);
 
-	get_zvol_status(zvol_name1, ioseq1, control_fd1, ZVOL_STATUS_DEGRADED, ZVOL_REBUILDING_INIT);
+	wait_for_zvol_status(zvol_name1, ioseq1, control_fd1, ZVOL_STATUS_DEGRADED, ZVOL_REBUILDING_INIT);
 
 	zrepl.kill();
 
@@ -1190,7 +1192,7 @@ TEST(ReplicaState, MultiReplicaAndDegradedSingleReplicaDuringUpgrade) {
 	    ZVOL_OP_STATUS_OK);
 	do_data_connection(datasock1_fd, host1, port1, zvol_name1, 4096, 120, ZVOL_OP_STATUS_OK, 1);
 
-	get_zvol_status(zvol_name1, ioseq1, control_fd1, ZVOL_STATUS_DEGRADED, ZVOL_REBUILDING_INIT);
+	wait_for_zvol_status(zvol_name1, ioseq1, control_fd1, ZVOL_STATUS_DEGRADED, ZVOL_REBUILDING_INIT);
 
 	zrepl.kill();
 }
@@ -2035,7 +2037,7 @@ TEST(ZvolResizeTest, ResizeHealthyZvol) {
 }
 
 /*
- * Test zvol resize when it is healthy
+ * Test zvol resize when it is degrade
  */
 TEST(ZvolResizeTest, ResizeDegradedZvol) {
 	SocketFd datasock;
@@ -2088,10 +2090,10 @@ TEST(ZvolResizeTest, ResizeDegradedZvol) {
 	main_zv_size = atoi(str.c_str());
 	EXPECT_EQ(old_size, main_zv_size);
 
-	get_zvol_status(zvolname, ioseq, control_fd, ZVOL_STATUS_DEGRADED, ZVOL_REBUILDING_INIT);
+	wait_for_zvol_status(zvolname, ioseq, control_fd, ZVOL_STATUS_DEGRADED, ZVOL_REBUILDING_INIT);
 	transition_zvol_to_online(ioseq, control_fd, zvolname);
 	// waiting for volume to be healthy
-	get_zvol_status(zvolname, ioseq, control_fd, ZVOL_STATUS_HEALTHY, ZVOL_REBUILDING_DONE);
+	wait_for_zvol_status(zvolname, ioseq, control_fd, ZVOL_STATUS_HEALTHY, ZVOL_REBUILDING_DONE, REPLICA_VERSION, 5);
 
 	// get the main zvol size after it become healthy
 	str = execCmd("zfs", std::string("get -Hpo value volsize ") +

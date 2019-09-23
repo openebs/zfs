@@ -42,7 +42,7 @@ TEST(RedundantMetadata, NoneValue) {
 
 	zrepl.start();
 	pool.create();
-	pool.createZvol("vol1", "-o io.openebs:targetip=127.0.0.1");
+	pool.createZvol("vol1", "-o io.openebs:targetip=127.0.0.1 -o io.openebs:zvol_replica_id=12345");
 
 	s = execCmd("zfs", std::string("get -Ho value redundant_metadata ") + zvol_name);
 	EXPECT_STREQ(s.c_str(), "none");

@@ -445,8 +445,8 @@ TEST(StaleSnapshot, Destroy) {
 
 	zrepl.start();
 	pool.create();
-	pool.createZvol("vol", "-o io.openebs:targetip=127.0.0.1");
-	pool.createZvol("vol_rebuild_clone", "-o io.openebs:targetip=127.0.0.2");
+	pool.createZvol("vol", "-o io.openebs:targetip=127.0.0.1 -o io.openebs:zvol_replica_id=12345");
+	pool.createZvol("vol_rebuild_clone", "-o io.openebs:targetip=127.0.0.2 -o io.openebs:zvol_replica_id=12345");
 	output = execCmd("zfs", std::string("snapshot ") + snap_name1);
 	output = execCmd("zfs", std::string("snapshot ") + snap_name2);
 	output = execCmd("zfs", std::string("snapshot ") + snap_name3);
@@ -483,7 +483,7 @@ protected:
 		m_pool = new TestPool("handshake");
 		m_zrepl->start();
 		m_pool->create();
-		m_pool->createZvol("vol1", "-o io.openebs:targetip=127.0.0.1:6060");
+		m_pool->createZvol("vol1", "-o io.openebs:targetip=127.0.0.1:6060 -o io.openebs:zvol_replica_id=12345");
 		m_zvol_name = m_pool->getZvolName("vol1");
 	}
 
@@ -556,7 +556,7 @@ TEST_F(ZreplHandshakeTest, HandshakeOk) {
 TEST_F(ZreplHandshakeTest, HandshakeMinVersion) {
 	zvol_io_hdr_t hdr_in, hdr_out = {0};
 	std::string output;
-	mgmt_ack_t mgmt_ack;
+	mgmt_ack_ver_5_t mgmt_ack;
 	int rc;
 
 	hdr_out.version = MIN_SUPPORTED_REPLICA_VERSION;
@@ -695,7 +695,7 @@ protected:
 
 		m_zrepl->start();
 		m_pool1->create();
-		m_pool1->createZvol("ivol1", "-o io.openebs:targetip=127.0.0.1:6060");
+		m_pool1->createZvol("ivol1", "-o io.openebs:targetip=127.0.0.1:6060 -o io.openebs:zvol_replica_id=12345");
 		m_zvol_name1 = m_pool1->getZvolName("ivol1");
 
 		rc = target1.listen();
@@ -716,7 +716,7 @@ protected:
 		    ZVOL_OP_STATUS_OK);
 
 		m_pool2->create();
-		m_pool2->createZvol("vol1", "-o io.openebs:targetip=127.0.0.1:12345");
+		m_pool2->createZvol("vol1", "-o io.openebs:targetip=127.0.0.1:12345 -o io.openebs:zvol_replica_id=12345");
 		m_zvol_name2 = m_pool1->getZvolName("ivol1");
 
 		rc = target2.listen(12345);
@@ -1111,8 +1111,8 @@ TEST(ReplicaState, SingleReplicaQuorumOff) {
 
 	zrepl.start();
 	pool.create();
-	pool.createZvol("quorumon", "-o quorum=on -o io.openebs:targetip=127.0.0.1:6060");
-	pool.createZvol("quorumoff", "-o io.openebs:targetip=127.0.0.1:6161");
+	pool.createZvol("quorumon", "-o quorum=on -o io.openebs:targetip=127.0.0.1:6060 -o io.openebs:zvol_replica_id=12345");
+	pool.createZvol("quorumoff", "-o io.openebs:targetip=127.0.0.1:6161 -o io.openebs:zvol_replica_id=12345");
 	zvol_name1 = pool.getZvolName("quorumon");
 	zvol_name2 = pool.getZvolName("quorumoff");
 
@@ -1155,7 +1155,7 @@ TEST(ReplicaState, MultiReplicaAndDegradedSingleReplicaDuringUpgrade) {
 
 	zrepl.start();
 	pool.create();
-	pool.createZvol("quorumon", "-o quorum=on -o io.openebs:targetip=127.0.0.1:6060");
+	pool.createZvol("quorumon", "-o quorum=on -o io.openebs:targetip=127.0.0.1:6060 -o io.openebs:zvol_replica_id=12345");
 	zvol_name1 = pool.getZvolName("quorumon");
 
 	rc = targetQuorumOn.listen();
@@ -1209,8 +1209,8 @@ TEST(TargetIPTest, CreateAndDestroy) {
 
 	zrepl.start();
 	pool.create();
-	pool.createZvol("implicit1", "-o io.openebs:targetip=127.0.0.1:6060");
-	pool.createZvol("explicit1", "-o io.openebs:targetip=127.0.0.1:12345");
+	pool.createZvol("implicit1", "-o io.openebs:targetip=127.0.0.1:6060 -o io.openebs:zvol_replica_id=12345");
+	pool.createZvol("explicit1", "-o io.openebs:targetip=127.0.0.1:12345 -o io.openebs:zvol_replica_id=12345");
 
 	output = execCmd("zfs", std::string("stats ") + pool.getZvolName("implicit1"));
 	ASSERT_NE(output.find("Offline"), std::string::npos);
@@ -1231,8 +1231,8 @@ TEST(TargetIPTest, CreateAndDestroy) {
 	fdExpl = targetExpl.accept(50);
 	ASSERT_GE(fdExpl, 0);
 
-	pool.createZvol("implicit2", "-o io.openebs:targetip=127.0.0.1:6060");
-	pool.createZvol("explicit2", "-o io.openebs:targetip=127.0.0.1:12345");
+	pool.createZvol("implicit2", "-o io.openebs:targetip=127.0.0.1:6060 -o io.openebs:zvol_replica_id=12345");
+	pool.createZvol("explicit2", "-o io.openebs:targetip=127.0.0.1:12345 -o io.openebs:zvol_replica_id=12345");
 
 	// no new connections
 	rc = targetImpl.accept(5);
@@ -1281,7 +1281,7 @@ TEST(TargetIPTest, Reconnect) {
 
 	zrepl.start();
 	pool.create();
-	pool.createZvol("reconnect", "-o io.openebs:targetip=127.0.0.1:6060");
+	pool.createZvol("reconnect", "-o io.openebs:targetip=127.0.0.1:6060 -o io.openebs:zvol_replica_id=12345");
 
 	// First we test that zrepl connects even if it could not connect
 	// first couple of times after start
@@ -1346,8 +1346,8 @@ TEST(Misc, ZreplCheckpointInterval) {
 
 	zrepl.start();
 	pool.create();
-	pool.createZvol("slow", "-o io.openebs:targetip=127.0.0.1:6060");
-	pool.createZvol("fast", "-o io.openebs:targetip=127.0.0.1:6060");
+	pool.createZvol("slow", "-o io.openebs:targetip=127.0.0.1:6060 -o io.openebs:zvol_replica_id=12345");
+	pool.createZvol("fast", "-o io.openebs:targetip=127.0.0.1:6060 -o io.openebs:zvol_replica_id=12345");
 	zvol_name_slow = pool.getZvolName("slow");
 	zvol_name_fast = pool.getZvolName("fast");
 
@@ -1456,7 +1456,7 @@ protected:
 		rc = target.listen();
 		ASSERT_GE(rc, 0);
 
-		m_pool->createZvol("vol", "-o io.openebs:targetip=127.0.0.1");
+		m_pool->createZvol("vol", "-o io.openebs:targetip=127.0.0.1 -o io.openebs:zvol_replica_id=12345");
 		m_zvol_name = m_pool->getZvolName("vol");
 		m_control_fd = target.accept(-1);
 		ASSERT_GE(m_control_fd, 0);
@@ -1568,7 +1568,7 @@ TEST(DiskReplaceTest, SpareReplacement) {
 	vdev2.create();
 	spare.create();
 	pool.create();
-	pool.createZvol("vol", "-o io.openebs:targetip=127.0.0.1");
+	pool.createZvol("vol", "-o io.openebs:targetip=127.0.0.1 -o io.openebs:zvol_replica_id=12345");
 	init_buf(buf, sizeof (buf), "cStor-data");
 
 	rc = target.listen();
@@ -1717,7 +1717,7 @@ TEST(Snapshot, CreateAndDestroy) {
 
 	zrepl.start();
 	pool.create();
-	pool.createZvol("vol", "-o io.openebs:targetip=127.0.0.1");
+	pool.createZvol("vol", "-o io.openebs:targetip=127.0.0.1 -o io.openebs:zvol_replica_id=12345");
 
 	rc = target.listen();
 	ASSERT_GE(rc, 0);
@@ -1888,7 +1888,7 @@ TEST(ZvolResizeTest, DataConn) {
 
 	zrepl.start();
 	pool.create();
-	pool.createZvol("vol", "-o io.openebs:targetip=127.0.0.1");
+	pool.createZvol("vol", "-o io.openebs:targetip=127.0.0.1 -o io.openebs:zvol_replica_id=12345");
 
 	// get the zvol size before
 	str = execCmd("zfs", std::string("get -Hpo value volsize ") + zvolname);
@@ -1954,7 +1954,7 @@ TEST(ZvolResizeTest, ResizeZvol) {
 
 	zrepl.start();
 	pool.create();
-	pool.createZvol("vol", "-o io.openebs:targetip=127.0.0.1");
+	pool.createZvol("vol", "-o io.openebs:targetip=127.0.0.1 -o io.openebs:zvol_replica_id=12345");
 
 	// get the zvol size before
 	str = execCmd("zfs", std::string("get -Hpo value volsize ") + zvolname);
@@ -2035,7 +2035,7 @@ TEST(ZvolCloneTest, CloneZvol) {
 
 	zrepl.start();
 	pool.create();
-	pool.createZvol("vol", "-o io.openebs:targetip=127.0.0.1");
+	pool.createZvol("vol", "-o io.openebs:targetip=127.0.0.1 -o io.openebs:zvol_replica_id=12345");
 	execCmd("zfs", std::string("snapshot " + snapname));
 
 	// clone the zvol
@@ -2108,7 +2108,7 @@ TEST(ZvolStatsTest, StatsZvol) {
 
 	zrepl.start();
 	pool.create();
-	pool.createZvol("vol", "-o io.openebs:targetip=127.0.0.1");
+	pool.createZvol("vol", "-o io.openebs:targetip=127.0.0.1 -o io.openebs:zvol_replica_id=12345");
 
 	rc = target.listen();
 	ASSERT_GE(rc, 0);

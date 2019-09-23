@@ -2929,6 +2929,36 @@ zfs_set_targetip_posthook(const char *name, char *targetip, char *curtargetip)
 		nvlist_free(props);
 	}
 }
+
+/*
+ * zfs_set_replicaid_hook is used to set replica_id from given properties.
+ * inputs:
+ * - name: name of the dataset
+ * - nvl: property list
+ */
+int
+zfs_set_replicaid_hook(const char *name, nvlist_t *nvl)
+{
+	char *replica_id = NULL, *end = NULL;
+	nvlist_t *props;
+	int error = 0;
+
+	if (nvlist_lookup_string(nvl, ZFS_PROP_ZVOL_REPLICA_ID,
+	    &replica_id) == 0) {
+		if (strtoul(replica_id, &end, 10) == 0) {
+			error = SET_ERROR(EINVAL);
+		} else if (*end != '\0') {
+			error = SET_ERROR(EINVAL);
+		} else {
+			nvlist_alloc(&props, NV_UNIQUE_NAME, 0);
+			nvlist_add_string(props, ZFS_PROP_ZVOL_REPLICA_ID,
+			    replica_id);
+			error = uzfs_zvol_create_cb(name, props);
+			nvlist_free(props);
+		}
+	}
+	return (error);
+}
 #endif
 
 /*
@@ -2975,6 +3005,11 @@ zfs_ioc_set_prop(zfs_cmd_t *zc)
 
 #ifdef  _UZFS
 	/*
+	 * Let's try to set replica_id for given dataset
+	 */
+	error = zfs_set_replicaid_hook(zc->zc_name, nvl);
+
+	/*
 	 * Below code is to set/unset targetip property for zvol_info.
 	 * This should have been done during sync time similar to
 	 * dsl_dir_set_quorum_sync, but, doing it here as it involves
@@ -2984,7 +3019,7 @@ zfs_ioc_set_prop(zfs_cmd_t *zc)
 	 */
 	curtargetip[0] = '\0';
 	(void) nvlist_lookup_string(nvl, ZFS_PROP_TARGET_IP, &targetip);
-	if (targetip != NULL)
+	if (targetip != NULL && error == 0)
 		error = zfs_set_targetip_prehook(zc->zc_name, source, targetip,
 		    &curtargetip[0]);
 #endif
@@ -3483,6 +3518,22 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 		    (error = zvol_check_volsize(volsize,
 		    volblocksize)) != 0)
 			return (error);
+
+#ifdef  _UZFS
+		char *replicaid;
+		if (nvlist_lookup_string(nvprops,
+		    zfs_prop_to_name(ZFS_PROP_REPLICA_ID),
+		    &replicaid) != 0) {
+			return (SET_ERROR(EINVAL));
+		} else {
+			char *end;
+			if (strtol(replicaid, &end, 10) == 0) {
+				return (SET_ERROR(EINVAL));
+			}
+			if (*end != '\0')
+				return (SET_ERROR(EINVAL));
+		}
+#endif
 	}
 #ifdef _KERNEL
 	else if (type == DMU_OST_ZFS) {

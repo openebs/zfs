@@ -1357,6 +1357,15 @@ set_start_rebuild_mgmt_ack(mgmt_ack_t *mack, const char *dw_name, const char *vo
 }
 
 void
+set_start_rebuild_mgmt_ack_ver_5(mgmt_ack_ver_5_t *mack, const char *dw_name, const char *volname, uint64_t ioseq=0)
+{
+	GtestUtils::strlcpy(mack->dw_volname, dw_name, MAXNAMELEN);
+	if (volname != NULL)
+		GtestUtils::strlcpy(mack->volname, volname, MAXNAMELEN);
+	mack->checkpointed_io_seq = ioseq;
+}
+
+void
 set_mgmt_ack_ip_port(mgmt_ack_t *mack, const char *ip, uint16_t port)
 {
 	GtestUtils::strlcpy(mack->ip, ip, MAX_IP_LEN);
@@ -1365,9 +1374,9 @@ set_mgmt_ack_ip_port(mgmt_ack_t *mack, const char *ip, uint16_t port)
 
 void
 set_zvol_io_hdr(zvol_io_hdr_t *hdrp, zvol_op_status_t status,
-    zvol_op_code_t opcode, int len)
+    zvol_op_code_t opcode, int len, uint16_t version)
 {
-	hdrp->version = REPLICA_VERSION;
+	hdrp->version = version;
 	hdrp->status = status;
 	hdrp->opcode = opcode;
 	hdrp->len = len;
@@ -1392,7 +1401,7 @@ TEST(uZFSRebuildStart, TestStartRebuild) {
 	zvol_io_hdr_t *hdrp = (zvol_io_hdr_t *)kmem_zalloc(sizeof (*hdrp), KM_SLEEP);
 	void *payload = kmem_zalloc(sizeof (mgmt_ack_t) * 5, KM_SLEEP);
 	mack = (mgmt_ack_t *)payload;
-	set_zvol_io_hdr(hdrp, ZVOL_OP_STATUS_OK, ZVOL_OPCODE_PREPARE_FOR_REBUILD, 0);
+	set_zvol_io_hdr(hdrp, ZVOL_OP_STATUS_OK, ZVOL_OPCODE_PREPARE_FOR_REBUILD, 0, REPLICA_VERSION);
 
 	/* payload is 0 */
 	conn->conn_buf = NULL;
@@ -1502,6 +1511,69 @@ TEST(uZFSRebuildStart, TestStartRebuild) {
 	set_start_rebuild_mgmt_ack(mack + 1, "pool1/vol1", "vol3", 2000);
 	zinfo->checkpointed_ionum = 300;
 	handle_start_rebuild_req(conn, hdrp, payload, sizeof (mgmt_ack_t)*2);
+	EXPECT_EQ(ZVOL_OP_STATUS_FAILED, ((zvol_io_hdr_t *)conn->conn_buf)->status);
+	while (1) {
+		/* Wait for refcnt to 2 */
+		if (2 != zinfo->refcnt)
+			sleep(1);
+		else
+			break;
+	}
+}
+
+/*
+ * Test Rebuild for replica having older version(<6)
+ */
+TEST(uZFSRebuildStart, TestStartRebuildOlderVersion) {
+	int i;
+	uzfs_mgmt_conn_t *conn;
+	mgmt_ack_ver_5_t *mack;
+
+	zvol_rebuild_status_t rebuild_status[5];
+	rebuild_status[0] = ZVOL_REBUILDING_INIT;
+	rebuild_status[1] = ZVOL_REBUILDING_SNAP;
+	rebuild_status[2] = ZVOL_REBUILDING_DONE;
+	rebuild_status[3] = ZVOL_REBUILDING_ERRORED;
+	rebuild_status[4] = ZVOL_REBUILDING_FAILED;
+
+	EXPECT_EQ(3, uzfs_mgmt_conn_list_count(&uzfs_mgmt_conns));
+	EXPECT_EQ(2, zinfo->refcnt);
+	conn = SLIST_FIRST(&uzfs_mgmt_conns);
+
+	zvol_io_hdr_t *hdrp = (zvol_io_hdr_t *)kmem_zalloc(sizeof (*hdrp), KM_SLEEP);
+	void *payload = kmem_zalloc(sizeof (mgmt_ack_ver_5_t) * 5, KM_SLEEP);
+	mack = (mgmt_ack_ver_5_t *)payload;
+	set_zvol_io_hdr(hdrp, ZVOL_OP_STATUS_OK, ZVOL_OPCODE_PREPARE_FOR_REBUILD, 0, MIN_SUPPORTED_REPLICA_VERSION);
+
+	/* rebuild in three replicas case with 'connect' failing and mesh rebuild */
+	conn->conn_buf = NULL;
+	uzfs_zinfo_set_status(zinfo, ZVOL_STATUS_DEGRADED);
+	uzfs_zvol_set_rebuild_status(zinfo->main_zv,
+	    ZVOL_REBUILDING_INIT);
+	set_start_rebuild_mgmt_ack_ver_5(mack, "pool1/vol1", "vol3", 1000);
+	set_start_rebuild_mgmt_ack_ver_5(mack + 1, "pool1/vol1", "vol3", 2000);
+	zinfo->checkpointed_ionum = 3000;
+	handle_start_rebuild_req(conn, hdrp, payload, sizeof (mgmt_ack_ver_5_t)*2);
+	EXPECT_EQ(ZVOL_OP_STATUS_OK, ((zvol_io_hdr_t *)conn->conn_buf)->status);
+	while (1) {
+		/* wait to get FAILD status, and threads to return with refcnt to 2 */
+		if (ZVOL_REBUILDING_FAILED != uzfs_zvol_get_rebuild_status(zinfo->main_zv))
+			sleep(1);
+		else if (2 != zinfo->refcnt)
+			sleep(1);
+		else
+			break;
+	}
+
+	/* rebuild in three replicas case with selecting replica of lower ioseq and mesh rebuild */
+	conn->conn_buf = NULL;
+	uzfs_zinfo_set_status(zinfo, ZVOL_STATUS_DEGRADED);
+	uzfs_zvol_set_rebuild_status(zinfo->main_zv,
+	    ZVOL_REBUILDING_INIT);
+	set_start_rebuild_mgmt_ack_ver_5(mack, "pool1/vol1", "vol3", 1000);
+	set_start_rebuild_mgmt_ack_ver_5(mack + 1, "pool1/vol1", "vol3", 2000);
+	zinfo->checkpointed_ionum = 300;
+	handle_start_rebuild_req(conn, hdrp, payload, sizeof (mgmt_ack_ver_5_t)*2);
 	EXPECT_EQ(ZVOL_OP_STATUS_FAILED, ((zvol_io_hdr_t *)conn->conn_buf)->status);
 	while (1) {
 		/* Wait for refcnt to 2 */

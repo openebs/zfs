@@ -2939,15 +2939,13 @@ zfs_set_targetip_posthook(const char *name, char *targetip, char *curtargetip)
 int
 zfs_set_replicaid_hook(const char *name, nvlist_t *nvl)
 {
-	char *replica_id = NULL, *end = NULL;
+	char *replica_id = NULL;
 	nvlist_t *props;
 	int error = 0;
 
 	if (nvlist_lookup_string(nvl, ZFS_PROP_ZVOL_REPLICA_ID,
 	    &replica_id) == 0) {
-		if (strtoul(replica_id, &end, 10) == 0) {
-			error = SET_ERROR(EINVAL);
-		} else if (*end != '\0') {
+		if (!replica_id || strlen(replica_id) == 0) {
 			error = SET_ERROR(EINVAL);
 		} else {
 			nvlist_alloc(&props, NV_UNIQUE_NAME, 0);
@@ -3520,17 +3518,13 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 			return (error);
 
 #ifdef  _UZFS
-		char *replicaid;
+		char *replicaid = NULL;
 		if (nvlist_lookup_string(nvprops,
 		    zfs_prop_to_name(ZFS_PROP_REPLICA_ID),
 		    &replicaid) != 0) {
 			return (SET_ERROR(EINVAL));
 		} else {
-			char *end;
-			if (strtol(replicaid, &end, 10) == 0) {
-				return (SET_ERROR(EINVAL));
-			}
-			if (*end != '\0')
+			if (!replicaid  || strlen(replicaid) == 0)
 				return (SET_ERROR(EINVAL));
 		}
 #endif

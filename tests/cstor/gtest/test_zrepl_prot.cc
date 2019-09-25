@@ -553,7 +553,7 @@ TEST_F(ZreplHandshakeTest, HandshakeOk) {
 	EXPECT_EQ(mgmt_ack.zvol_guid, std::stoul(output));
 	output = execCmd("zfs", std::string("get io.openebs:zvol_replica_id  -Hpo value ") +
 	    m_zvol_name);
-	EXPECT_EQ(mgmt_ack.replica_id, std::stoul(output));
+	EXPECT_STREQ(mgmt_ack.replica_id, output.c_str());
 }
 
 TEST_F(ZreplHandshakeTest, HandshakeMinVersion) {

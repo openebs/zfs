@@ -300,24 +300,24 @@ static void transition_zvol_to_online(uint64_t &ioseq, int control_fd,
     std::string zvol_name, int res = ZVOL_OP_STATUS_OK, int version = REPLICA_VERSION)
 {
 	zvol_io_hdr_t hdr_in, hdr_out = {0};
-	struct mgmt_ack mgmt_ack = {0};
+	rebuild_req_t req = {0};
 	int rc;
 
 	hdr_out.version = version;
 	hdr_out.opcode = ZVOL_OPCODE_START_REBUILD;
 	hdr_out.status = ZVOL_OP_STATUS_OK;
 	hdr_out.io_seq = ++ioseq;
-	hdr_out.len = sizeof (mgmt_ack);
+	hdr_out.len = sizeof (req);
 	rc = write(control_fd, &hdr_out, sizeof (hdr_out));
 	ASSERT_ERRNO("write", rc >= 0);
 	ASSERT_EQ(rc, sizeof (hdr_out));
 	// Hack to tell the replica that it is the only replica
 	//  -> rebuild will immediately finish
-	GtestUtils::strlcpy(mgmt_ack.dw_volname, zvol_name.c_str(),
-	    sizeof (mgmt_ack.dw_volname));
-	rc = write(control_fd, &mgmt_ack, sizeof (mgmt_ack));
+	GtestUtils::strlcpy(req.dw_volname, zvol_name.c_str(),
+	    sizeof (req.dw_volname));
+	rc = write(control_fd, &req, sizeof (req));
 	ASSERT_ERRNO("write", rc >= 0);
-	ASSERT_EQ(rc, sizeof (mgmt_ack));
+	ASSERT_EQ(rc, sizeof (req));
 
 	rc = read(control_fd, &hdr_in, sizeof (hdr_in));
 	ASSERT_ERRNO("read", rc >= 0);
@@ -579,9 +579,9 @@ TEST_F(ZreplHandshakeTest, HandshakeMinVersion) {
 	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
 	EXPECT_EQ(hdr_in.io_seq, 0);
 	EXPECT_EQ(hdr_in.offset, 0);
-	ASSERT_EQ(hdr_in.len, sizeof (mgmt_ack));
-	rc = read(m_control_fd, &mgmt_ack, sizeof (mgmt_ack));
-	ASSERT_EQ(rc, sizeof (mgmt_ack));
+	ASSERT_EQ(hdr_in.len, sizeof (mgmt_ack_ver_5_t));
+	rc = read(m_control_fd, &mgmt_ack, sizeof (mgmt_ack_ver_5_t));
+	ASSERT_EQ(rc, sizeof (mgmt_ack_ver_5_t));
 	EXPECT_STREQ(mgmt_ack.volname, m_zvol_name.c_str());
 	output = execCmd("zpool", std::string("get guid -Hpo value ") +
 	    m_pool->m_name);

@@ -2929,34 +2929,6 @@ zfs_set_targetip_posthook(const char *name, char *targetip, char *curtargetip)
 		nvlist_free(props);
 	}
 }
-
-/*
- * zfs_set_replicaid_hook is used to set replica_id from given properties.
- * inputs:
- * - name: name of the dataset
- * - nvl: property list
- */
-int
-zfs_set_replicaid_hook(const char *name, nvlist_t *nvl)
-{
-	char *replica_id = NULL;
-	nvlist_t *props;
-	int error = 0;
-
-	if (nvlist_lookup_string(nvl, ZFS_PROP_ZVOL_REPLICA_ID,
-	    &replica_id) == 0) {
-		if (!replica_id || strlen(replica_id) == 0) {
-			error = SET_ERROR(EINVAL);
-		} else {
-			nvlist_alloc(&props, NV_UNIQUE_NAME, 0);
-			nvlist_add_string(props, ZFS_PROP_ZVOL_REPLICA_ID,
-			    replica_id);
-			error = uzfs_zvol_create_cb(name, props);
-			nvlist_free(props);
-		}
-	}
-	return (error);
-}
 #endif
 
 /*
@@ -3002,11 +2974,6 @@ zfs_ioc_set_prop(zfs_cmd_t *zc)
 	}
 
 #ifdef  _UZFS
-	/*
-	 * Let's try to set replica_id for given dataset
-	 */
-	error = zfs_set_replicaid_hook(zc->zc_name, nvl);
-
 	/*
 	 * Below code is to set/unset targetip property for zvol_info.
 	 * This should have been done during sync time similar to
@@ -3524,7 +3491,7 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 		    &replicaid) != 0) {
 			return (SET_ERROR(EINVAL));
 		} else {
-			if (!replicaid  || strlen(replicaid) == 0)
+			if (!replicaid || strlen(replicaid) == 0)
 				return (SET_ERROR(EINVAL));
 		}
 #endif

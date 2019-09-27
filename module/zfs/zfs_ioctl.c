@@ -3483,6 +3483,18 @@ zfs_ioc_create(const char *fsname, nvlist_t *innvl, nvlist_t *outnvl)
 		    (error = zvol_check_volsize(volsize,
 		    volblocksize)) != 0)
 			return (error);
+
+#ifdef  _UZFS
+		char *replicaid = NULL;
+		if (nvlist_lookup_string(nvprops,
+		    zfs_prop_to_name(ZFS_PROP_REPLICA_ID),
+		    &replicaid) != 0) {
+			return (SET_ERROR(EINVAL));
+		} else {
+			if (!replicaid || strlen(replicaid) == 0)
+				return (SET_ERROR(EINVAL));
+		}
+#endif
 	}
 #ifdef _KERNEL
 	else if (type == DMU_OST_ZFS) {

@@ -355,6 +355,10 @@ zfs_prop_init(void)
 	    boolean_table);
 	zprop_register_string(ZFS_PROP_TARGETIP, "io.openebs:targetip", "",
 	    PROP_DEFAULT, ZFS_TYPE_VOLUME, "<ip token>", "TARGETIP");
+	zprop_register_string(ZFS_PROP_WORKERS, "io.openebs:zvol_workers", "",
+	    PROP_DEFAULT, ZFS_TYPE_VOLUME, "<zvol worker>", "NWORKER");
+	zprop_register_string(ZFS_PROP_REPLICA_ID, "io.openebs:zvol_replica_id",
+	    "", PROP_DEFAULT, ZFS_TYPE_VOLUME, "<replica id>", "REPLICA_ID");
 
 	/* readonly index (boolean) properties */
 	zprop_register_index(ZFS_PROP_MOUNTED, "mounted", 0, PROP_READONLY,

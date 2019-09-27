@@ -1336,10 +1336,10 @@ TEST(SnapCreate, SnapRetrieve) {
 	/* Create snapshot */
 	EXPECT_EQ(0, uzfs_zvol_get_snap_dataset_with_io(zinfo,
 	    snapname, &io, &snap_zv));
-	
+
 	EXPECT_EQ(snapshot_io_num -1, io);
 	EXPECT_EQ(NULL, !snap_zv);
-	
+
 	/* Release dataset and close it */
 	uzfs_close_dataset(snap_zv);
 	char *longsnap = kmem_asprintf("%s@%s", zinfo->name, snapname);
@@ -1348,12 +1348,12 @@ TEST(SnapCreate, SnapRetrieve) {
 }
 
 void
-set_start_rebuild_mgmt_ack(mgmt_ack_t *mack, const char *dw_name, const char *volname, uint64_t ioseq=0)
+set_start_rebuild_mgmt_ack(rebuild_req_t *req, const char *dw_name, const char *volname, uint64_t ioseq=0)
 {
-	GtestUtils::strlcpy(mack->dw_volname, dw_name, MAXNAMELEN);
+	GtestUtils::strlcpy(req->dw_volname, dw_name, MAXNAMELEN);
 	if (volname != NULL)
-		GtestUtils::strlcpy(mack->volname, volname, MAXNAMELEN);
-	mack->checkpointed_io_seq = ioseq;
+		GtestUtils::strlcpy(req->volname, volname, MAXNAMELEN);
+	req->checkpointed_io_seq = ioseq;
 }
 
 void
@@ -1365,9 +1365,9 @@ set_mgmt_ack_ip_port(mgmt_ack_t *mack, const char *ip, uint16_t port)
 
 void
 set_zvol_io_hdr(zvol_io_hdr_t *hdrp, zvol_op_status_t status,
-    zvol_op_code_t opcode, int len)
+    zvol_op_code_t opcode, int len, uint16_t version)
 {
-	hdrp->version = REPLICA_VERSION;
+	hdrp->version = version;
 	hdrp->status = status;
 	hdrp->opcode = opcode;
 	hdrp->len = len;
@@ -1376,7 +1376,7 @@ set_zvol_io_hdr(zvol_io_hdr_t *hdrp, zvol_op_status_t status,
 TEST(uZFSRebuildStart, TestStartRebuild) {
 	int i;
 	uzfs_mgmt_conn_t *conn;
-	mgmt_ack_t *mack;
+	rebuild_req_t *req;
 
 	zvol_rebuild_status_t rebuild_status[5];
 	rebuild_status[0] = ZVOL_REBUILDING_INIT;
@@ -1390,9 +1390,9 @@ TEST(uZFSRebuildStart, TestStartRebuild) {
 	conn = SLIST_FIRST(&uzfs_mgmt_conns);
 
 	zvol_io_hdr_t *hdrp = (zvol_io_hdr_t *)kmem_zalloc(sizeof (*hdrp), KM_SLEEP);
-	void *payload = kmem_zalloc(sizeof (mgmt_ack_t) * 5, KM_SLEEP);
-	mack = (mgmt_ack_t *)payload;
-	set_zvol_io_hdr(hdrp, ZVOL_OP_STATUS_OK, ZVOL_OPCODE_PREPARE_FOR_REBUILD, 0);
+	void *payload = kmem_zalloc(sizeof (rebuild_req_t) * 5, KM_SLEEP);
+	req = (rebuild_req_t *)payload;
+	set_zvol_io_hdr(hdrp, ZVOL_OP_STATUS_OK, ZVOL_OPCODE_PREPARE_FOR_REBUILD, 0, REPLICA_VERSION);
 
 	/* payload is 0 */
 	conn->conn_buf = NULL;
@@ -1402,14 +1402,14 @@ TEST(uZFSRebuildStart, TestStartRebuild) {
 
 	/* NULL name in payload */
 	conn->conn_buf = NULL;
-	handle_start_rebuild_req(conn, hdrp, payload, sizeof (mgmt_ack_t));
+	handle_start_rebuild_req(conn, hdrp, payload, sizeof (rebuild_req_t));
 	EXPECT_EQ(ZVOL_OP_STATUS_FAILED, ((zvol_io_hdr_t *)conn->conn_buf)->status);
 	EXPECT_EQ(2, zinfo->refcnt);
 
 	/* invalid name in payload */
 	conn->conn_buf = NULL;
-	set_start_rebuild_mgmt_ack(mack, "vol2", NULL);
-	handle_start_rebuild_req(conn, hdrp, payload, sizeof (mgmt_ack_t));
+	set_start_rebuild_mgmt_ack(req, "vol2", NULL);
+	handle_start_rebuild_req(conn, hdrp, payload, sizeof (rebuild_req_t));
 	EXPECT_EQ(ZVOL_OP_STATUS_FAILED, ((zvol_io_hdr_t *)conn->conn_buf)->status);
 	EXPECT_EQ(2, zinfo->refcnt);
 
@@ -1418,8 +1418,8 @@ TEST(uZFSRebuildStart, TestStartRebuild) {
 		conn->conn_buf = NULL;
 		uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 		    rebuild_status[i]);
-		set_start_rebuild_mgmt_ack(mack, "vol1", NULL);
-		handle_start_rebuild_req(conn, hdrp, payload, sizeof (mgmt_ack_t));
+		set_start_rebuild_mgmt_ack(req, "vol1", NULL);
+		handle_start_rebuild_req(conn, hdrp, payload, sizeof (rebuild_req_t));
 		EXPECT_EQ(ZVOL_OP_STATUS_FAILED, ((zvol_io_hdr_t *)conn->conn_buf)->status);
 		EXPECT_EQ(2, zinfo->refcnt);
 	}
@@ -1441,8 +1441,8 @@ TEST(uZFSRebuildStart, TestStartRebuild) {
 	uzfs_zinfo_set_status(zinfo, ZVOL_STATUS_DEGRADED);
 	uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 	    ZVOL_REBUILDING_INIT);
-	set_start_rebuild_mgmt_ack(mack, "pool1/vol1", "vol2");
-	handle_start_rebuild_req(conn, hdrp, payload, sizeof (mgmt_ack_t));
+	set_start_rebuild_mgmt_ack(req, "pool1/vol1", "vol2");
+	handle_start_rebuild_req(conn, hdrp, payload, sizeof (rebuild_req_t));
 	EXPECT_EQ(ZVOL_OP_STATUS_OK, ((zvol_io_hdr_t *)conn->conn_buf)->status);
 	while (1) {
 		/* wait to get FAILD status, and threads to return with refcnt to 2 */
@@ -1459,9 +1459,9 @@ TEST(uZFSRebuildStart, TestStartRebuild) {
 	uzfs_zinfo_set_status(zinfo, ZVOL_STATUS_DEGRADED);
 	uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 	    ZVOL_REBUILDING_INIT);
-	set_start_rebuild_mgmt_ack(mack, "pool1/vol1", "vol3");
-	set_start_rebuild_mgmt_ack(mack + 1, "vol2", "vol3");
-	handle_start_rebuild_req(conn, hdrp, payload, sizeof (mgmt_ack_t)*2);
+	set_start_rebuild_mgmt_ack(req, "pool1/vol1", "vol3");
+	set_start_rebuild_mgmt_ack(req + 1, "vol2", "vol3");
+	handle_start_rebuild_req(conn, hdrp, payload, sizeof (rebuild_req_t)*2);
 	EXPECT_EQ(ZVOL_OP_STATUS_FAILED, ((zvol_io_hdr_t *)conn->conn_buf)->status);
 	while (1) {
 		/* wait to get FAILD status, and threads to return with refcnt to 2 */
@@ -1478,10 +1478,10 @@ TEST(uZFSRebuildStart, TestStartRebuild) {
 	uzfs_zinfo_set_status(zinfo, ZVOL_STATUS_DEGRADED);
 	uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 	    ZVOL_REBUILDING_INIT);
-	set_start_rebuild_mgmt_ack(mack, "pool1/vol1", "vol3", 1000);
-	set_start_rebuild_mgmt_ack(mack + 1, "pool1/vol1", "vol3", 2000);
+	set_start_rebuild_mgmt_ack(req, "pool1/vol1", "vol3", 1000);
+	set_start_rebuild_mgmt_ack(req + 1, "pool1/vol1", "vol3", 2000);
 	zinfo->checkpointed_ionum = 3000;
-	handle_start_rebuild_req(conn, hdrp, payload, sizeof (mgmt_ack_t)*2);
+	handle_start_rebuild_req(conn, hdrp, payload, sizeof (rebuild_req_t)*2);
 	EXPECT_EQ(ZVOL_OP_STATUS_OK, ((zvol_io_hdr_t *)conn->conn_buf)->status);
 	while (1) {
 		/* wait to get FAILD status, and threads to return with refcnt to 2 */
@@ -1498,10 +1498,10 @@ TEST(uZFSRebuildStart, TestStartRebuild) {
 	uzfs_zinfo_set_status(zinfo, ZVOL_STATUS_DEGRADED);
 	uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 	    ZVOL_REBUILDING_INIT);
-	set_start_rebuild_mgmt_ack(mack, "pool1/vol1", "vol3", 1000);
-	set_start_rebuild_mgmt_ack(mack + 1, "pool1/vol1", "vol3", 2000);
+	set_start_rebuild_mgmt_ack(req, "pool1/vol1", "vol3", 1000);
+	set_start_rebuild_mgmt_ack(req + 1, "pool1/vol1", "vol3", 2000);
 	zinfo->checkpointed_ionum = 300;
-	handle_start_rebuild_req(conn, hdrp, payload, sizeof (mgmt_ack_t)*2);
+	handle_start_rebuild_req(conn, hdrp, payload, sizeof (rebuild_req_t)*2);
 	EXPECT_EQ(ZVOL_OP_STATUS_FAILED, ((zvol_io_hdr_t *)conn->conn_buf)->status);
 	while (1) {
 		/* Wait for refcnt to 2 */
@@ -1534,7 +1534,7 @@ create_rebuild_args(rebuild_thread_arg_t **r, std::string helping_vol = "vol2")
 	rebuild_args->port = REBUILD_IO_SERVER_PORT;
 	rc = uzfs_zvol_get_ip(rebuild_args->ip, MAX_IP_LEN);
 	EXPECT_NE(rc, -1);
-	
+
 	GtestUtils::strlcpy(rebuild_args->zvol_name, helping_vol.c_str(), MAXNAMELEN);
 	*r = rebuild_args;
 }
@@ -2811,7 +2811,7 @@ void mock_tgt_thread(void *arg)
 	zvol_state_t		*zv;
 	socklen_t		in_len;
 	zvol_io_hdr_t		hdr, phdr;
-	mgmt_ack_t		mgmt_ack;
+	rebuild_req_t	req;
 	struct sockaddr		in_addr;
 	zvol_op_resize_data_t	resize;
 	char 			buf[512];
@@ -2964,23 +2964,23 @@ void mock_tgt_thread(void *arg)
 	/* Rebuild payload mismatch */	
 	if (mgmt_test_case == 20) {
 		hdr.opcode = ZVOL_OPCODE_START_REBUILD;
-		hdr.len = sizeof (mgmt_ack_t) + 1;
+		hdr.len = sizeof (rebuild_req_t) + 1;
 	}
 
 	/* Rebuild wrong volume name */	
 	if (mgmt_test_case == 21) {
 		hdr.opcode = ZVOL_OPCODE_START_REBUILD;
-		hdr.len = sizeof (mgmt_ack_t);
-		strcpy(mgmt_ack.dw_volname, "XXXXXXX");
-		p = (char *)&mgmt_ack;
+		hdr.len = sizeof (rebuild_req_t);
+		strcpy(req.dw_volname, "XXXXXXX");
+		p = (char *)&req;
 	}
 
 	/* Rebuild Null zv */	
 	if (mgmt_test_case == 22) {
 		hdr.opcode = ZVOL_OPCODE_START_REBUILD;
-		hdr.len = sizeof (mgmt_ack_t);
-		strcpy(mgmt_ack.dw_volname, zinfo->name);
-		p = (char *)&mgmt_ack;
+		hdr.len = sizeof (rebuild_req_t);
+		strcpy(req.dw_volname, zinfo->name);
+		p = (char *)&req;
 		zv = zinfo->main_zv;
 		zinfo->main_zv = NULL;
 	}
@@ -2988,9 +2988,9 @@ void mock_tgt_thread(void *arg)
 	/*Volume is wrong rebuild state */
 	if (mgmt_test_case == 23) {
 		hdr.opcode = ZVOL_OPCODE_START_REBUILD;
-		hdr.len = sizeof (mgmt_ack_t);
-		strcpy(mgmt_ack.dw_volname, zinfo->name);
-		p = (char *)&mgmt_ack;
+		hdr.len = sizeof (rebuild_req_t);
+		strcpy(req.dw_volname, zinfo->name);
+		p = (char *)&req;
 		uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 		    ZVOL_REBUILDING_SNAP);
 	}
@@ -2998,10 +2998,10 @@ void mock_tgt_thread(void *arg)
 	/* Single Replica */
 	if (mgmt_test_case == 24) {
 		hdr.opcode = ZVOL_OPCODE_START_REBUILD;
-		hdr.len = sizeof (mgmt_ack_t);
-		bzero(&mgmt_ack, sizeof (mgmt_ack));
-		strcpy(mgmt_ack.dw_volname, zinfo->name);
-		p = (char *)&mgmt_ack;
+		hdr.len = sizeof (rebuild_req_t);
+		bzero(&req, sizeof (rebuild_req_t));
+		strcpy(req.dw_volname, zinfo->name);
+		p = (char *)&req;
 	}
 
 send_hdr:

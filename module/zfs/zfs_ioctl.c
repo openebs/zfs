@@ -2984,7 +2984,7 @@ zfs_ioc_set_prop(zfs_cmd_t *zc)
 	 */
 	curtargetip[0] = '\0';
 	(void) nvlist_lookup_string(nvl, ZFS_PROP_TARGET_IP, &targetip);
-	if (targetip != NULL && error == 0)
+	if (targetip != NULL)
 		error = zfs_set_targetip_prehook(zc->zc_name, source, targetip,
 		    &curtargetip[0]);
 #endif

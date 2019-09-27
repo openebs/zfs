@@ -50,8 +50,11 @@ commitcheck:
 	fi
 
 cstyle:
-	@find ${top_srcdir} -name '*.[hc]' ! -name 'zfs_config.*' \
-		! -name '*.mod.c' ! -name 'rte_*.[hc]' -type f -exec scripts/cstyle.pl -cpP {} \+
+	@if [ ! -z ${CSTORDIR} ]; then \
+		find ${top_srcdir} -name '*.[hc]' ! -name 'zfs_config.*' ! -name 'config.*' ! -name '*.mod.c' ! -name 'rte_*.[hc]' -type f -exec ${CSTORDIR}/scripts/cstyle.pl -cpP {} \+;	\
+	else \
+		find ${top_srcdir} -name '*.[hc]' ! -name 'zfs_config.*' ! -name '*.mod.c' ! -name 'rte_*.[hc]' -type f -exec scripts/cstyle.pl -cpP {} \+;	\
+	fi
 
 shellcheck:
 	@if type shellcheck > /dev/null 2>&1; then \

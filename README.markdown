@@ -11,7 +11,7 @@ in userspace. Unlike ZFS that acts on the kernel IOCTLs for both IO and CLI oper
 uZFS does the following:
 
 -   Exposes an IOCTL service over unix domain sockets
--   The DMU Layer(or ZVOL objects) IO operations are exposed as API that can be consumed by any embedded libary as opposed to accessing via system calls. 
+-   The DMU Layer(or ZVOL objects) IO operations are exposed as API that can be consumed by any embedded library as opposed to accessing via system calls. 
 -   The uZFS CLI operations that interact directly with the embedded IOCTL server in uZFS. uZFS CLI will be used to create Pool(zpool) and Volumes(zvol).
 
 uZFS embedds the [cStor Data Engine](https://github.com/openebs/libcstor) that helps with:

@@ -1372,7 +1372,6 @@ set_zvol_io_hdr(zvol_io_hdr_t *hdrp, zvol_op_status_t status,
 	hdrp->opcode = opcode;
 	hdrp->len = len;
 }
-
 TEST(uZFSRebuildStart, TestStartRebuild) {
 	int i;
 	uzfs_mgmt_conn_t *conn;
@@ -1413,6 +1412,7 @@ TEST(uZFSRebuildStart, TestStartRebuild) {
 	EXPECT_EQ(ZVOL_OP_STATUS_FAILED, ((zvol_io_hdr_t *)conn->conn_buf)->status);
 	EXPECT_EQ(2, zinfo->refcnt);
 
+	uzfs_zinfo_set_status(zinfo, ZVOL_STATUS_DEGRADED);
 	/* invalid rebuild state */
 	for (i = 1; i < 5; i++) {
 		conn->conn_buf = NULL;
@@ -1423,6 +1423,7 @@ TEST(uZFSRebuildStart, TestStartRebuild) {
 		EXPECT_EQ(ZVOL_OP_STATUS_FAILED, ((zvol_io_hdr_t *)conn->conn_buf)->status);
 		EXPECT_EQ(2, zinfo->refcnt);
 	}
+
 	/* We are covering this code path from zrepl_rebuild test case */
 #if 0
 	/* rebuild for single replica case */
@@ -2811,12 +2812,14 @@ void mock_tgt_thread(void *arg)
 	zvol_state_t		*zv;
 	socklen_t		in_len;
 	zvol_io_hdr_t		hdr, phdr;
-	rebuild_req_t	req;
+	rebuild_req_t		req;
 	struct sockaddr		in_addr;
 	zvol_op_resize_data_t	resize;
 	char 			buf[512];
 	bool			executed = false;
 	zvol_info_t 		*zinfo = (zvol_info_t *)arg;
+	zvol_status_t		zvol_status;
+	zvol_rebuild_status_t	rstatus;
 
 	p = buf;
 	ack = NULL;
@@ -3004,6 +3007,21 @@ void mock_tgt_thread(void *arg)
 		p = (char *)&req;
 	}
 
+	/* Single Replica when volumes are healthy */
+	if (mgmt_test_case == 25) {
+		zvol_status = uzfs_zinfo_get_status(zinfo);
+		rstatus = uzfs_zvol_get_rebuild_status(zinfo->main_zv);
+		hdr.opcode = ZVOL_OPCODE_START_REBUILD;
+		hdr.len = sizeof (rebuild_req_t);
+		bzero(&req, sizeof (rebuild_req_t));
+		strcpy(req.dw_volname, zinfo->name);
+		p = (char *)&req;
+		uzfs_zinfo_set_status(zinfo,
+		    ZVOL_STATUS_HEALTHY);
+		uzfs_zvol_set_rebuild_status(zinfo->main_zv,
+		    ZVOL_REBUILDING_DONE);
+	}
+
 send_hdr:
 
 	if (phdr.opcode == ZVOL_OPCODE_SNAP_PREPARE) {
@@ -3056,6 +3074,11 @@ send_hdr:
 	if (mgmt_test_case == 23)
 		uzfs_zvol_set_rebuild_status(zinfo->main_zv,
 		    ZVOL_REBUILDING_INIT);
+
+	if (mgmt_test_case == 25) {
+		uzfs_zinfo_set_status(zinfo, zvol_status);
+		uzfs_zvol_set_rebuild_status(zinfo->main_zv, rstatus);
+	}
 
 	if (hdr.status == ZVOL_OP_STATUS_FAILED) {
 		LOG_ERRNO("Status is not ok");
@@ -3342,11 +3365,18 @@ TEST(MgmtThreadTest, RebuildFailureWrongRebuildState) {
 	EXPECT_EQ(status, ZVOL_OP_STATUS_FAILED);
 }
 
-/* Rebuild success, Single replica success */
+/* Rebuild failed, Single replica */
 TEST(MgmtThreadTest, RebuildFailureSingleReplica) {
 	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
 	mgmt_thread_test_case(24);
 	EXPECT_EQ(status, ZVOL_OP_STATUS_FAILED); // errout on healthy replica
+}
+
+/* Rebuild success, Single replica case when volumes are healthy */
+TEST(MgmtThreadTest, RebuildSuccessSingleReplica) {
+	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
+	mgmt_thread_test_case(25);
+	EXPECT_EQ(status, ZVOL_OP_STATUS_OK);
 }
 
 TEST(RebuildMgmtTest, RebuildFailureOldDegraded) {

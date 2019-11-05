@@ -1149,8 +1149,8 @@ TEST(ReplicaState, SingleReplicaQuorumOff) {
 	wait_for_zvol_status(zvol_name1, ioseq1, control_fd1, ZVOL_STATUS_HEALTHY, ZVOL_REBUILDING_DONE);
 	wait_for_zvol_status(zvol_name2, ioseq1, control_fd2, ZVOL_STATUS_DEGRADED, ZVOL_REBUILDING_INIT);
 
-	/* transition the zvol to online state */
-	transition_zvol_to_online(ioseq1, control_fd1, zvol_name1, ZVOL_OP_STATUS_FAILED, MIN_SUPPORTED_REPLICA_VERSION);
+	/* transition the zvol to online state since replica is already Healthy it should return ZVOL_OP_STATUS_OK */
+	transition_zvol_to_online(ioseq1, control_fd1, zvol_name1, ZVOL_OP_STATUS_OK, MIN_SUPPORTED_REPLICA_VERSION);
 
 	zrepl.kill();
 }

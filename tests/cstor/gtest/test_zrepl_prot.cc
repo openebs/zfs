@@ -2037,7 +2037,7 @@ TEST(ZvolResizeTest, ResizeHealthyZvol) {
 }
 
 /*
- * Test zvol resize when it is degrade
+ * Test zvol resize when it is degraded
  */
 TEST(ZvolResizeTest, ResizeDegradedZvol) {
 	SocketFd datasock;

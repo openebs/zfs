@@ -3360,7 +3360,7 @@ TEST(MgmtThreadTest, RebuildFailureSingleReplica) {
 }
 
 /* Rebuild success, Single replica case when volumes are healthy but quorum is off*/
-TEST(MgmtThreadTest, RebuildSuccessSingleReplica) {
+TEST(MgmtThreadTest, RebuildFailureNonQuorumSingleHealthyReplica) {
 	uzfs_zinfo_set_status(zinfo, ZVOL_STATUS_HEALTHY);
 	uzfs_zvol_set_rebuild_status(zinfo->main_zv, ZVOL_REBUILDING_DONE);
 

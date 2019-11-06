@@ -3366,7 +3366,7 @@ TEST(MgmtThreadTest, RebuildSuccessSingleReplica) {
 
 	uint64_t quorum = 0;
 	EXPECT_EQ(0, dsl_prop_set_int(zinfo->main_zv->zv_name,
-	    zfs_prop_to_name(ZFS_PROP_QUORUM), ZPROP_SRC_NONE, quorum));
+	    zfs_prop_to_name(ZFS_PROP_QUORUM), ZPROP_SRC_LOCAL, quorum));
 
 	uzfs_mgmt_conn_t *conn = (uzfs_mgmt_conn_t *)zinfo->mgmt_conn;
 	mgmt_thread_test_case(25);

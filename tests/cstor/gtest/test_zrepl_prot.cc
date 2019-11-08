@@ -1041,6 +1041,10 @@ TEST_F(ZreplDataTest, RebuildFlag) {
 	output = execCmd("zfs", std::string("stats ") + m_zvol_name1);
 	ASSERT_NE(output.find("Degraded"), std::string::npos);
 
+	/* volume is created with quorum off */
+	output = execCmd("zfs", std::string("stats ") + m_zvol_name1);
+	ASSERT_NE(output.find("\"quorum\":0"), std::string::npos);
+
 	/* transition the zvol to online state */
 	transition_zvol_to_online(m_ioseq1, m_control_fd1, m_zvol_name1);
 
@@ -1056,6 +1060,10 @@ TEST_F(ZreplDataTest, RebuildFlag) {
 
 	output = execCmd("zfs", std::string("stats ") + m_zvol_name1);
 	ASSERT_NE(output.find("Healthy"), std::string::npos);
+
+	/* Volume became healthy so quorum is expected to be 1 from stats*/
+	output = execCmd("zfs", std::string("stats ") + m_zvol_name1);
+	ASSERT_NE(output.find("\"quorum\":1"), std::string::npos);
 
 	/* read the block without rebuild flag */
 	read_data_start(m_datasock1.fd(), m_ioseq1, 0, sizeof (buf), &hdr_in, &read_hdr);

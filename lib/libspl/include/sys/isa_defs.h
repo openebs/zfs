@@ -100,8 +100,27 @@ extern "C" {
 
 #define	_SUNOS_VTOC_16
 
-/* arm arch specific defines */
-#elif defined(__arm) || defined(__arm__) || defined(__aarch64__)
+/* aarch64 arch specific defines */
+#elif defined(__aarch64__)
+
+#if !defined(__arm)
+#define	__arm
+#endif
+
+#if !defined(_LP64)
+#define	_LP64
+#endif
+
+#if defined(__AARCH64EL__)
+#define	_LITTLE_ENDIAN
+#else
+#define	_BIG_ENDIAN
+#endif
+
+#define	_SUNOS_VTOC_16
+
+/* aarch32 arch specific defines */
+#elif defined(__arm) || defined(__arm__)
 
 #if !defined(__arm)
 #define	__arm
@@ -111,17 +130,11 @@ extern "C" {
 #define	__arm__
 #endif
 
-#if defined(__aarch64__)
-#if !defined(_LP64)
-#define	_LP64
-#endif
-#else
 #if !defined(_ILP32)
 #define	_ILP32
 #endif
-#endif
 
-#if defined(__ARMEL__) || defined(__AARCH64EL__)
+#if defined(__ARMEL__)
 #define	_LITTLE_ENDIAN
 #else
 #define	_BIG_ENDIAN

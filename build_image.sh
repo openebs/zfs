@@ -3,6 +3,10 @@ set -e
 
 pwd
 
+# Determine the arch/os we're building for
+ARCH=$(uname -m)
+OS=$(uname)
+
 # Build libcstor
 cd ../libcstor
 make clean
@@ -21,7 +25,18 @@ make clean
 make
 
 BUILD_DATE=$(date +'%Y%m%d%H%M%S')
-REPO_NAME="openebs/cstor-base"
+if [ "${ARCH}" = "x86_64" ]; then
+	REPO_NAME="openebs/cstor-base"
+	DOCKERFILE_BASE="Dockerfile.base"
+	DOCKERFILE="Dockerfile"
+elif [ "${ARCH}" = "aarch64" ]; then
+	REPO_NAME="openebs/cstor-base-arm64"
+	DOCKERFILE_BASE="Dockerfile.arm64.base"
+	DOCKERFILE="Dockerfile.arm64"
+else
+	echo "Unusable architecture: ${ARCH}"
+	exit 1
+fi
 
 mkdir -p ./docker/zfs/bin
 mkdir -p ./docker/zfs/lib
@@ -43,14 +58,19 @@ sudo docker build --help
 
 echo "Build image ${REPO_NAME}:ci with BUILD_DATE=${BUILD_DATE}"
 cd docker && \
- sudo docker build -f Dockerfile.base -t ${REPO_NAME}:ci --build-arg BUILD_DATE=${BUILD_DATE} . && \
+ sudo docker build -f ${DOCKERFILE_BASE} -t ${REPO_NAME}:ci --build-arg BUILD_DATE=${BUILD_DATE} . && \
  IMAGE_REPO=${REPO_NAME} ./push && \
  cd ..
 
-REPO_NAME="openebs/cstor-pool"
+if [ "${ARCH}" = "x86_64" ]; then
+	REPO_NAME="openebs/cstor-pool"
+elif [ "${ARCH}" = "aarch64" ]; then
+	REPO_NAME="openebs/cstor-pool-arm64"
+fi 
+
 echo "Build image ${REPO_NAME}:ci with BUILD_DATE=${BUILD_DATE}"
 cd docker && \
- sudo docker build -f Dockerfile -t ${REPO_NAME}:ci --build-arg BUILD_DATE=${BUILD_DATE} . && \
+ sudo docker build -f ${DOCKERFILE} -t ${REPO_NAME}:ci --build-arg BUILD_DATE=${BUILD_DATE} . && \
  IMAGE_REPO=${REPO_NAME} ./push && \
  cd ..
 

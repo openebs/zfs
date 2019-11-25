@@ -16,5 +16,6 @@ if [ -z "$LOGLEVEL" ]; then
 fi
 echo "sleeping for 2 sec"
 sleep 2
-export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so
+ARCH=$(uname -m)
+export LD_PRELOAD=/usr/lib/${ARCH}-linux-gnu/libjemalloc.so
 exec /usr/local/bin/zrepl -l $LOGLEVEL

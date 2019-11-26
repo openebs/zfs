@@ -14,11 +14,6 @@ RUN apt-get clean && \
     sed libjemalloc-dev
 RUN apt-get -y install apt-file && apt-file update
 
-COPY libkqueue_2.3.1_arm64.deb /tmp/libkqueue_2.3.1_arm64.deb
-COPY libkqueue-dev_2.3.1_arm64.deb /tmp/libkqueue-dev_2.3.1_arm64.deb
-RUN dpkg -i /tmp/libkqueue_2.3.1_arm64.deb /tmp/libkqueue-dev_2.3.1_arm64.deb
-RUN rm -f /tmp/libkqueue*.deb
-
 COPY zfs/bin/* /usr/local/bin/
 COPY zfs/lib/* /usr/lib/
 

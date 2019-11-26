@@ -30,10 +30,10 @@ if [ "${ARCH}" = "x86_64" ]; then
 	DOCKERFILE="Dockerfile"
 elif [ "${ARCH}" = "aarch64" ]; then
 	REPO_NAME="openebs/cstor-base-arm64"
-	DOCKERFILE_BASE="Dockerfile.arm64.base"
+	DOCKERFILE_BASE="Dockerfile.base.arm64"
 	DOCKERFILE="Dockerfile.arm64"
 else
-	echo "Unusable architecture: ${ARCH}"
+	echo "${ARCH} is not supported"
 	exit 1
 fi
 

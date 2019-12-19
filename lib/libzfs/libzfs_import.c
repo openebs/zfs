@@ -66,6 +66,7 @@
 #include "libzfs_impl.h"
 #include <libzfs.h>
 #include <libuzfs.h>
+#include <zrepl_mgmt.h>
 
 /*
  * Intermediate structures used to gather configuration information.
@@ -1533,12 +1534,17 @@ zpool_open_func(void *arg)
 	if (error)
 		return;
 
+	LOG_INFO("Verifying pool existance on the device %s\n", rn->rn_name);
+
 	/*
 	 * Ignore failed stats.  We only want regular files and block devices.
 	 */
 	if (stat64(rn->rn_name, &statbuf) != 0 ||
-	    (!S_ISREG(statbuf.st_mode) && !S_ISBLK(statbuf.st_mode)))
+	    (!S_ISREG(statbuf.st_mode) && !S_ISBLK(statbuf.st_mode))) {
+		LOG_INFO("Verified the device %s for pool existence\n",
+		    rn->rn_name);
 		return;
+	}
 
 	/*
 	 * Preferentially open using O_DIRECT to bypass the block device
@@ -1549,26 +1555,35 @@ zpool_open_func(void *arg)
 	if ((fd < 0) && (errno == EINVAL))
 		fd = open(rn->rn_name, O_RDONLY);
 
-	if (fd < 0)
+	if (fd < 0) {
+		LOG_INFO("Verified the device %s for pool existence\n",
+		    rn->rn_name);
 		return;
+	}
 
 	/*
 	 * This file is too small to hold a zpool
 	 */
 	if (S_ISREG(statbuf.st_mode) && statbuf.st_size < SPA_MINDEVSIZE) {
 		(void) close(fd);
+		LOG_INFO("Verified the device %s for pool existence\n",
+		    rn->rn_name);
 		return;
 	}
 
 	error = zpool_read_label(fd, &config, &num_labels);
 	if (error != 0) {
 		(void) close(fd);
+		LOG_INFO("Verified the device %s for pool existence\n",
+		    rn->rn_name);
 		return;
 	}
 
 	if (num_labels == 0) {
 		(void) close(fd);
 		nvlist_free(config);
+		LOG_INFO("Verified the device %s for pool existence\n",
+		    rn->rn_name);
 		return;
 	}
 
@@ -1581,10 +1596,13 @@ zpool_open_func(void *arg)
 	if (error || (rn->rn_vdev_guid && rn->rn_vdev_guid != vdev_guid)) {
 		(void) close(fd);
 		nvlist_free(config);
+		LOG_INFO("Verified the device %s for pool existence\n",
+		    rn->rn_name);
 		return;
 	}
 
 	(void) close(fd);
+	LOG_INFO("Verified the device %s for pool existence\n", rn->rn_name);
 
 	rn->rn_config = config;
 	rn->rn_num_labels = num_labels;

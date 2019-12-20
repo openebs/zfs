@@ -1534,7 +1534,7 @@ zpool_open_func(void *arg)
 	if (error)
 		return;
 
-	LOG_INFO("Verifying pool existance on the device %s\n", rn->rn_name);
+	LOG_INFO("Verifying pool existence on the device %s\n", rn->rn_name);
 
 	/*
 	 * Ignore failed stats.  We only want regular files and block devices.

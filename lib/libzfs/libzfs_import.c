@@ -1813,6 +1813,7 @@ zpool_find_import_blkid(libzfs_handle_t *hdl, kmutex_t *lock,
 		return (error);
 	}
 
+	LOG_INFO("Itterating over all the devices to find zfs devices\n");
 	iter = blkid_dev_iterate_begin(cache);
 	if (iter == NULL) {
 		blkid_put_cache(cache);

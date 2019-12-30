@@ -66,7 +66,9 @@
 #include "libzfs_impl.h"
 #include <libzfs.h>
 #include <libuzfs.h>
+#ifdef _UZFS
 #include <zrepl_mgmt.h>
+#endif
 
 /*
  * Intermediate structures used to gather configuration information.
@@ -1533,16 +1535,19 @@ zpool_open_func(void *arg)
 	free(dupname);
 	if (error)
 		return;
-
+#ifdef  _UZFS
 	LOG_INFO("Verifying pool existence on the device %s\n", rn->rn_name);
+#endif
 
 	/*
 	 * Ignore failed stats.  We only want regular files and block devices.
 	 */
 	if (stat64(rn->rn_name, &statbuf) != 0 ||
 	    (!S_ISREG(statbuf.st_mode) && !S_ISBLK(statbuf.st_mode))) {
-		LOG_INFO("Verified the device %s for pool existence\n",
-		    rn->rn_name);
+#ifdef  _UZFS
+		LOG_ERR("Failed to read stats or device %s is not a regular "
+		    "file/block device\n", rn->rn_name);
+#endif
 		return;
 	}
 
@@ -1556,8 +1561,9 @@ zpool_open_func(void *arg)
 		fd = open(rn->rn_name, O_RDONLY);
 
 	if (fd < 0) {
-		LOG_INFO("Verified the device %s for pool existence\n",
-		    rn->rn_name);
+#ifdef  _UZFS
+		LOG_ERR("Failed to open the device %s\n", rn->rn_name);
+#endif
 		return;
 	}
 
@@ -1566,24 +1572,30 @@ zpool_open_func(void *arg)
 	 */
 	if (S_ISREG(statbuf.st_mode) && statbuf.st_size < SPA_MINDEVSIZE) {
 		(void) close(fd);
-		LOG_INFO("Verified the device %s for pool existence\n",
+#ifdef  _UZFS
+		LOG_INFO("Device %s is too small to hold zpool\n",
 		    rn->rn_name);
+#endif
 		return;
 	}
 
 	error = zpool_read_label(fd, &config, &num_labels);
 	if (error != 0) {
 		(void) close(fd);
-		LOG_INFO("Verified the device %s for pool existence\n",
+#ifdef  _UZFS
+		LOG_ERR("Failed to read label on device %s\n",
 		    rn->rn_name);
+#endif
 		return;
 	}
 
 	if (num_labels == 0) {
 		(void) close(fd);
 		nvlist_free(config);
-		LOG_INFO("Verified the device %s for pool existence\n",
+#ifdef  _UZFS
+		LOG_INFO("no labels exist on the device %s\n",
 		    rn->rn_name);
+#endif
 		return;
 	}
 
@@ -1596,13 +1608,17 @@ zpool_open_func(void *arg)
 	if (error || (rn->rn_vdev_guid && rn->rn_vdev_guid != vdev_guid)) {
 		(void) close(fd);
 		nvlist_free(config);
-		LOG_INFO("Verified the device %s for pool existence\n",
-		    rn->rn_name);
+#ifdef  _UZFS
+		LOG_ERR("device %s guid is not matched with the expected "
+		    "guid error: %d\n", rn->rn_name, error);
+#endif
 		return;
 	}
 
 	(void) close(fd);
+#ifdef  _UZFS
 	LOG_INFO("Verified the device %s for pool existence\n", rn->rn_name);
+#endif
 
 	rn->rn_config = config;
 	rn->rn_num_labels = num_labels;
@@ -1813,7 +1829,9 @@ zpool_find_import_blkid(libzfs_handle_t *hdl, kmutex_t *lock,
 		return (error);
 	}
 
-	LOG_INFO("Itterating over all the devices to find zfs devices\n");
+#ifdef _UZFS
+	LOG_INFO("Iterating over all the devices to find zfs devices using blkid syscall\n");
+#endif
 	iter = blkid_dev_iterate_begin(cache);
 	if (iter == NULL) {
 		blkid_put_cache(cache);

@@ -1823,16 +1823,16 @@ zpool_find_import_blkid(libzfs_handle_t *hdl, kmutex_t *lock,
 	if (error != 0)
 		return (error);
 
+#ifdef _UZFS
+	LOG_INFO("Iterating over all the devices to find zfs devices "
+	    "using blkid\n");
+#endif
 	error = blkid_probe_all_new(cache);
 	if (error != 0) {
 		blkid_put_cache(cache);
 		return (error);
 	}
 
-#ifdef _UZFS
-	LOG_INFO("Iterating over all the devices to find zfs devices "
-	    "using blkid syscall\n");
-#endif
 	iter = blkid_dev_iterate_begin(cache);
 	if (iter == NULL) {
 		blkid_put_cache(cache);

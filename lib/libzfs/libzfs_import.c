@@ -1546,7 +1546,7 @@ zpool_open_func(void *arg)
 	    (!S_ISREG(statbuf.st_mode) && !S_ISBLK(statbuf.st_mode))) {
 #ifdef  _UZFS
 		LOG_ERR("Skipping %s device due to failure in read stats "
-		    "or it is not a regular file/block device",rn->rn_name);
+		    "or it is not a regular file/block device", rn->rn_name);
 #endif
 		return;
 	}
@@ -1610,8 +1610,8 @@ zpool_open_func(void *arg)
 		(void) close(fd);
 		nvlist_free(config);
 #ifdef  _UZFS
-		LOG_ERR("Skipping %s device due to mismatch of guid",
-		    rn->rn_name, error);
+		LOG_ERR("Skipping %s device due to error(%d) or mismatch "
+		    "of guid", rn->rn_name, error);
 #endif
 		return;
 	}

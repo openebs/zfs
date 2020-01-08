@@ -22,8 +22,12 @@ if [ -z "$ENABLE_COREDUMP" ]; then
 else
 	echo "Enabling coredumps"
 	ulimit -c unlimited
-	## dump the core on PERSISTENT_STORAGE_PATH in host machine
-	cd $PERSISTENT_STORAGE_PATH || exit
+	## /var/openebs is mounted as persistent directory on
+	## host machine
+	cd /var/openebs || exit
+	mkdir -p core
+	cd core
+
 fi
 # ulimit being shell specific, ulimit -c in container shows as unlimited
 

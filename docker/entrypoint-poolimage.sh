@@ -22,7 +22,12 @@ if [ -z "$ENABLE_COREDUMP" ]; then
 else
 	echo "Enabling coredumps"
 	ulimit -c unlimited
-	cd /var/openebs/sparse || exit
+	## /var/openebs is mounted as persistent directory on
+	## host machine
+	cd /var/openebs || exit
+	mkdir -p core
+	cd core
+
 fi
 # ulimit being shell specific, ulimit -c in container shows as unlimited
 

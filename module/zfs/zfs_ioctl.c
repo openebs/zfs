@@ -284,6 +284,7 @@ static int get_nvlist(uint64_t nvl, uint64_t size, int iflag, nvlist_t **nvp);
 #include <sys/dmu_impl.h>
 #include <uzfs_mgmt.h>
 #include <zrepl_mgmt.h>
+#include <uzfs_prop.h>
 
 #include "zfs_fletcher.h"
 #include "zfs_namecheck.h"
@@ -2984,9 +2985,12 @@ zfs_ioc_set_prop(zfs_cmd_t *zc)
 	 */
 	curtargetip[0] = '\0';
 	(void) nvlist_lookup_string(nvl, ZFS_PROP_TARGET_IP, &targetip);
-	if (targetip != NULL)
+	if (targetip != NULL) {
 		error = zfs_set_targetip_prehook(zc->zc_name, source, targetip,
 		    &curtargetip[0]);
+	} else {
+		error = uzfs_zfs_set_prop(zc->zc_name, source, nvl);
+	}
 #endif
 
 	errors = fnvlist_alloc();

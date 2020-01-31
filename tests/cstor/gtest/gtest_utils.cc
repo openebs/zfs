@@ -132,6 +132,10 @@ void GtestUtils::TestPool::import() {
 	execCmd("zpool", std::string("import ") + m_name + " -d /tmp");
 }
 
+void GtestUtils::TestPool::pExport() {
+	execCmd("zpool", std::string("export ") + m_name);
+}
+
 void GtestUtils::TestPool::createZvol(std::string name, std::string arg /*= ""*/) {
 	execCmd("zfs",
 	    std::string("create -sV ") + std::to_string(ZVOL_SIZE) +

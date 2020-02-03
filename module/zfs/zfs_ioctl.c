@@ -2950,6 +2950,7 @@ zfs_ioc_set_prop(zfs_cmd_t *zc)
 	zprop_source_t source = (received ? ZPROP_SRC_RECEIVED :
 	    ZPROP_SRC_LOCAL);
 	nvlist_t *errors;
+	char *val;
 	int error;
 
 #ifdef  _UZFS
@@ -2988,8 +2989,9 @@ zfs_ioc_set_prop(zfs_cmd_t *zc)
 	if (targetip != NULL) {
 		error = zfs_set_targetip_prehook(zc->zc_name, source, targetip,
 		    &curtargetip[0]);
-	} else {
-		error = uzfs_zfs_set_prop(zc->zc_name, source, nvl);
+	} else if (error == 0 && nvlist_lookup_string(nvl,
+	    zfs_prop_to_name(ZFS_PROP_ZVOL_READONLY), &val) == 0) {
+		error = uzfs_zinfo_update_rdonly(zc->zc_name, val);
 	}
 #endif
 

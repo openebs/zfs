@@ -79,6 +79,7 @@
 #include <sys/zvol.h>
 #ifdef _UZFS
 #include <uzfs_mgmt.h>
+#include <uzfs_prop.h>
 #endif
 #ifdef	_KERNEL
 #include <sys/fm/protocol.h>
@@ -635,7 +636,17 @@ spa_prop_validate(spa_t *spa, nvlist_t *props)
 			    intval != 0 && intval < ZIO_DEDUPDITTO_MIN)
 				error = SET_ERROR(EINVAL);
 			break;
+#ifdef	_UZFS
+		case ZPOOL_PROP_UZFS_READONLY:
+			if ((error = nvpair_value_string(elem, &strval)) != 0)
+				break;
 
+			if (strcmp(strval, "on") != 0 &&
+			    strcmp(strval, "off") != 0) {
+				error = SET_ERROR(EINVAL);
+				break;
+			}
+#endif
 		default:
 			break;
 		}
@@ -688,6 +699,9 @@ spa_prop_set(spa_t *spa, nvlist_t *nvp)
 	int error;
 	nvpair_t *elem = NULL;
 	boolean_t need_sync = B_FALSE;
+#ifdef	_UZFS
+	char *val;
+#endif
 
 	if ((error = spa_prop_validate(spa, nvp)) != 0)
 		return (error);
@@ -728,6 +742,20 @@ spa_prop_set(spa_t *spa, nvlist_t *nvp)
 				return (error);
 			continue;
 		}
+
+#ifdef	_UZFS
+		if (prop == ZPOOL_PROP_UZFS_READONLY) {
+			VERIFY(nvpair_value_string(elem, &val) == 0);
+			if (strcmp(val, "on") == 0) {
+				spa->readonly = B_TRUE;
+			} else if (strcmp(val, "off") == 0) {
+				spa->readonly = B_FALSE;
+			} else {
+				return (EINVAL);
+			}
+			dmu_objset_find(spa->spa_name, uzfs_zpool_rdonly_cb, val, DS_FIND_CHILDREN);
+		}
+#endif
 
 		need_sync = B_TRUE;
 		break;
@@ -2141,6 +2169,28 @@ spa_load_verify(spa_t *spa)
 	return (verify_ok ? 0 : EIO);
 }
 
+#ifdef	_UZFS
+static void
+uzfs_get_readonly_prop(spa_t *spa)
+{
+	char val[4];	// max strlen("off")
+	int err;
+
+	err = zap_lookup(spa->spa_meta_objset, spa->spa_pool_props_object,
+	    zpool_prop_to_name(ZPOOL_PROP_UZFS_READONLY), 1, 4, &val);
+	if (err) {
+		// ignore error if value doesn't exist
+		return;
+	}
+
+	if (strcmp(val, "on") == 0) {
+		spa->readonly = B_TRUE;
+	} else if (strcmp(val, "off") == 0) {
+		spa->readonly = B_FALSE;
+	}
+}
+#endif
+
 /*
  * Find a value in the pool props object.
  */
@@ -3094,6 +3144,9 @@ spa_load_impl(spa_t *spa, uint64_t pool_guid, nvlist_t *config,
 		spa_prop_find(spa, ZPOOL_PROP_MULTIHOST, &spa->spa_multihost);
 		spa_prop_find(spa, ZPOOL_PROP_DEDUPDITTO,
 		    &spa->spa_dedup_ditto);
+#ifdef	_UZFS
+		uzfs_get_readonly_prop(spa);
+#endif
 
 		spa->spa_autoreplace = (autoreplace != 0);
 	}

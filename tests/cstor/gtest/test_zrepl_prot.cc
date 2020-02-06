@@ -700,10 +700,11 @@ protected:
 	 * the setup hook should be simplified to minimum again.
 	 */
 	static void SetUpTestCase() {
-		Target target1, target2;
 		m_pool1 = new TestPool("ihandshake");
 		m_pool2 = new TestPool("handshake");
 		m_zrepl = new Zrepl();
+		target1 = new Target();
+		target2 = new Target();
 		int rc;
 
 		m_zrepl->start();
@@ -711,9 +712,9 @@ protected:
 		m_pool1->createZvol("ivol1", "-o io.openebs:targetip=127.0.0.1:6060 -o io.openebs:zvol_replica_id=12345");
 		m_zvol_name1 = m_pool1->getZvolName("ivol1");
 
-		rc = target1.listen();
+		rc = target1->listen();
 		ASSERT_GE(rc, 0);
-		m_control_fd1 = target1.accept(-1);
+		m_control_fd1 = target1->accept(-1);
 		ASSERT_GE(m_control_fd1, 0);
 
 		do_handshake(m_zvol_name1, m_host1, m_port1, NULL, NULL, m_control_fd1,
@@ -722,7 +723,7 @@ protected:
 
 		m_zrepl->start();
 		m_pool1->import();
-		m_control_fd1 = target1.accept(-1);
+		m_control_fd1 = target1->accept(-1);
 		ASSERT_GE(m_control_fd1, 0);
 
 		do_handshake(m_zvol_name1, m_host1, m_port1, NULL, NULL, m_control_fd1,
@@ -732,9 +733,9 @@ protected:
 		m_pool2->createZvol("vol1", "-o io.openebs:targetip=127.0.0.1:12345 -o io.openebs:zvol_replica_id=12345");
 		m_zvol_name2 = m_pool1->getZvolName("ivol1");
 
-		rc = target2.listen(12345);
+		rc = target2->listen(12345);
 		ASSERT_GE(rc, 0);
-		m_control_fd2 = target2.accept(-1);
+		m_control_fd2 = target2->accept(-1);
 		ASSERT_GE(m_control_fd2, 0);
 
 		do_handshake(m_zvol_name2, m_host2, m_port2, NULL, NULL, m_control_fd2,
@@ -755,6 +756,8 @@ protected:
 		if (m_control_fd2 >= 0)
 			close(m_control_fd2);
 		delete m_zrepl;
+		delete target1;
+		delete target2;
 	}
 
 	ZreplDataTest() {
@@ -786,6 +789,8 @@ protected:
 	static TestPool *m_pool2;
 	static std::string m_zvol_name1;
 	static std::string m_zvol_name2;
+	static Target *target1;
+	static Target *target2;
 
 	SocketFd m_datasock1;
 	SocketFd m_datasock2;
@@ -804,6 +809,9 @@ std::string ZreplDataTest::m_host2 = "";
 std::string ZreplDataTest::m_zvol_name2 = "";
 TestPool *ZreplDataTest::m_pool2 = nullptr;
 Zrepl *ZreplDataTest::m_zrepl = nullptr;
+
+Target *ZreplDataTest::target1 = nullptr;
+Target *ZreplDataTest::target2 = nullptr;
 
 TEST_F(ZreplDataTest, WrongVersion) {
 	zvol_io_hdr_t hdr_in, hdr_out = {0};
@@ -1114,6 +1122,79 @@ TEST_F(ZreplDataTest, ReadMetaDataFlag) {
 	rc = read(m_datasock1.fd(), buf, sizeof (buf));
 	ASSERT_ERRNO("read", rc >= 0);
 	ASSERT_EQ(rc, sizeof (buf));
+	m_datasock1.graceful_close();
+	m_datasock2.graceful_close();
+	sleep(5);
+}
+
+/*
+ * if zvol is readonly then..
+ *  	- write should fail
+ *  	- read should happen
+ */
+TEST_F(ZreplDataTest, ZVolReadOnly) {
+	zvol_io_hdr_t hdr_in;
+	struct zvol_io_rw_hdr read_hdr;
+	struct zvol_io_rw_hdr write_hdr;
+	struct zrepl_status_ack status;
+	struct mgmt_ack mgmt_ack;
+	char buf[4096];
+	int rc;
+	std::string output;
+
+	execCmd("zfs", std::string("set io.openebs:readonly=on ") + m_zvol_name1);
+	output = execCmd("zfs", std::string("get  io.openebs:readonly ") + std::string(" -Hpo value ") + m_zvol_name1);
+	ASSERT_NE(output.find("on"), std::string::npos);
+
+	// read should happen
+	read_data_start(m_datasock1.fd(), m_ioseq1, 0, sizeof (buf), &hdr_in, &read_hdr);
+	ASSERT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
+	ASSERT_EQ(hdr_in.len, sizeof (read_hdr) + sizeof (buf));
+	ASSERT_EQ(read_hdr.len, sizeof (buf));
+
+	rc = read(m_datasock1.fd(), buf, read_hdr.len);
+	ASSERT_ERRNO("read", rc >= 0);
+	ASSERT_EQ(rc, read_hdr.len);
+
+	// write should fail
+	init_buf(buf, sizeof (buf), "cStor-data");
+	write_data(m_datasock1.fd(), m_ioseq1, buf, 0, sizeof (buf), ++m_ioseq1);
+	rc = read(m_datasock1.fd(), &hdr_in, sizeof (hdr_in));
+	ASSERT_ERRNO("read", rc >= 0);
+	ASSERT_EQ(rc, sizeof (hdr_in));
+	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_WRITE);
+	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_FAILED);
+	EXPECT_EQ(hdr_in.io_seq, m_ioseq1);
+
+	m_pool1->pExport();
+	m_pool1->import();
+
+	// mgmt connection should not happen
+	m_control_fd1 = target1->accept(10);
+	ASSERT_EQ(m_control_fd1, -1);
+
+	execCmd("zfs", std::string("set io.openebs:readonly=off ") + m_zvol_name1);
+	output = execCmd("zfs", std::string("get  io.openebs:readonly ") + std::string(" -Hpo value ") + m_zvol_name1);
+	ASSERT_NE(output.find("off"), std::string::npos);
+
+	// mgmt connection should happen
+	m_control_fd1 = target1->accept(10);
+	ASSERT_GE(m_control_fd1, 0);
+
+	do_handshake(m_zvol_name1, m_host1, m_port1, NULL, NULL, m_control_fd1,
+	    ZVOL_OP_STATUS_OK);
+
+	do_data_connection(m_datasock1.fd(), m_host1, m_port1, m_zvol_name1);
+
+	// write should happen
+	write_data(m_datasock1.fd(), m_ioseq1, buf, 0, sizeof (buf), ++m_ioseq1);
+	rc = read(m_datasock1.fd(), &hdr_in, sizeof (hdr_in));
+	ASSERT_ERRNO("read", rc >= 0);
+	ASSERT_EQ(rc, sizeof (hdr_in));
+	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_WRITE);
+	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
+	EXPECT_EQ(hdr_in.io_seq, m_ioseq1);
+
 	m_datasock1.graceful_close();
 	m_datasock2.graceful_close();
 	sleep(5);
@@ -1888,6 +1969,85 @@ TEST(Snapshot, CreateAndDestroy) {
 	graceful_close(control_fd);
 	sleep(3);
 }
+
+TEST(Snapshot, ZVolReadOnly) {
+	zvol_io_hdr_t hdr_in, hdr_out = {0};
+	Zrepl zrepl;
+	Target target;
+	int rc, control_fd;
+	SocketFd datasock;
+	TestPool pool("snappool");
+	char *buf;
+	std::string vol_name = pool.getZvolName("vol");
+	std::string snap_name = pool.getZvolName("vol@snap");
+	uint64_t ioseq;
+	std::string host;
+	uint16_t port;
+	struct zvol_snapshot_list *snaplist;
+	std::string output;
+
+	zrepl.start();
+	pool.create();
+	pool.createZvol("vol", "-o io.openebs:targetip=127.0.0.1 -o io.openebs:zvol_replica_id=12345");
+
+	rc = target.listen();
+	ASSERT_GE(rc, 0);
+	control_fd = target.accept(-1);
+	ASSERT_GE(control_fd, 0);
+
+	do_handshake(vol_name, host, port, NULL, NULL, control_fd, ZVOL_OP_STATUS_OK);
+	do_data_connection(datasock.fd(), host, port, vol_name, 4096, 2);
+
+	// create the snapshot
+	transition_zvol_to_online(ioseq, control_fd, vol_name);
+	sleep(5);
+	hdr_out.io_seq = 2;
+	hdr_out.len = snap_name.length() + 1;
+
+	// make zvol readonly
+	execCmd("zfs", std::string("set io.openebs:readonly=on ") + vol_name);
+	output = execCmd("zfs", std::string("get  io.openebs:readonly ") + std::string(" -Hpo value ") + vol_name);
+	ASSERT_NE(output.find("on"), std::string::npos);
+	// snap prepare should fail
+	prep_snap(control_fd, snap_name, hdr_out.io_seq, ZVOL_OP_STATUS_FAILED);
+
+	// disable zvol readonly
+	execCmd("zfs", std::string("set io.openebs:readonly=off ") + vol_name);
+	output = execCmd("zfs", std::string("get  io.openebs:readonly ") + std::string(" -Hpo value ") + vol_name);
+	ASSERT_NE(output.find("off"), std::string::npos);
+	// snap prepare should happen
+	prep_snap(control_fd, snap_name, hdr_out.io_seq, ZVOL_OP_STATUS_OK);
+
+
+	// set zvol readonly
+	execCmd("zfs", std::string("set io.openebs:readonly=on ") + vol_name);
+	output = execCmd("zfs", std::string("get  io.openebs:readonly ") + std::string(" -Hpo value ") + vol_name);
+	ASSERT_NE(output.find("on"), std::string::npos);
+
+	hdr_out.version = REPLICA_VERSION;
+	hdr_out.opcode = ZVOL_OPCODE_SNAP_CREATE;
+	hdr_out.status = ZVOL_OP_STATUS_OK;
+	hdr_out.io_seq = 0;
+	hdr_out.len = snap_name.length() + 1;
+	rc = write(control_fd, &hdr_out, sizeof (hdr_out));
+	ASSERT_EQ(rc, sizeof (hdr_out));
+	rc = write(control_fd, snap_name.c_str(), hdr_out.len);
+	ASSERT_EQ(rc, hdr_out.len);
+
+	// snap create should fail
+	rc = read(control_fd, &hdr_in, sizeof (hdr_in));
+	ASSERT_EQ(rc, sizeof (hdr_in));
+	EXPECT_EQ(hdr_in.version, REPLICA_VERSION);
+	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_SNAP_CREATE);
+	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_FAILED);
+	EXPECT_EQ(hdr_in.io_seq, 0);
+	ASSERT_EQ(hdr_in.len, 0);
+
+	datasock.graceful_close();
+	graceful_close(control_fd);
+	sleep(3);
+}
+
 
 /*
  * resize the cloned volume when while making

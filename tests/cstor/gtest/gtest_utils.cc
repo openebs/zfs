@@ -136,6 +136,18 @@ void GtestUtils::TestPool::pExport() {
 	execCmd("zpool", std::string("export ") + m_name);
 }
 
+bool GtestUtils::TestPool::isReadOnly() {
+	std::string output;
+	output = execCmd("zpool", std::string("get -Hp -ovalue io.openebs:readonly ") + m_name);
+	if (output.compare("on") == 0)
+		return true;
+	if (output.compare("off") == 0)
+		return false;
+
+	throw std::system_error(EINVAL, std::system_category(),
+		"Invalid readonly value:" + output);
+}
+
 void GtestUtils::TestPool::createZvol(std::string name, std::string arg /*= ""*/) {
 	execCmd("zfs",
 	    std::string("create -sV ") + std::to_string(ZVOL_SIZE) +

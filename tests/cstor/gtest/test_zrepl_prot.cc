@@ -1127,6 +1127,22 @@ TEST_F(ZreplDataTest, ReadMetaDataFlag) {
 	sleep(5);
 }
 
+static bool is_zvol_readonly(std::string zvol) {
+	std::string output;
+
+	output = execCmd("zfs", std::string("get  io.openebs:readonly ") + std::string(" -Hpo value ") + zvol);
+	if (output.compare("on") == 0)
+		return true;
+
+	output = execCmd("zfs", std::string("stats ") + zvol);
+	std::size_t found = output.find("\"readOnly\":on");
+	if (found != std::string::npos) {
+		return true;
+	}
+
+	return false;
+}
+
 /*
  * if zvol is readonly then..
  *  	- write should fail
@@ -1143,8 +1159,7 @@ TEST_F(ZreplDataTest, ZVolReadOnly) {
 	std::string output;
 
 	execCmd("zfs", std::string("set io.openebs:readonly=on ") + m_zvol_name1);
-	output = execCmd("zfs", std::string("get  io.openebs:readonly ") + std::string(" -Hpo value ") + m_zvol_name1);
-	ASSERT_NE(output.find("on"), std::string::npos);
+	EXPECT_EQ(is_zvol_readonly(m_zvol_name1), true);
 
 	// read should happen
 	read_data_start(m_datasock1.fd(), m_ioseq1, 0, sizeof (buf), &hdr_in, &read_hdr);
@@ -1174,8 +1189,7 @@ TEST_F(ZreplDataTest, ZVolReadOnly) {
 	ASSERT_EQ(m_control_fd1, -1);
 
 	execCmd("zfs", std::string("set io.openebs:readonly=off ") + m_zvol_name1);
-	output = execCmd("zfs", std::string("get  io.openebs:readonly ") + std::string(" -Hpo value ") + m_zvol_name1);
-	ASSERT_NE(output.find("off"), std::string::npos);
+	EXPECT_EQ(is_zvol_readonly(m_zvol_name1), false);
 
 	// mgmt connection should happen
 	m_control_fd1 = target1->accept(10);
@@ -1216,8 +1230,7 @@ TEST_F(ZreplDataTest, ZpoolReadOnly) {
 	std::string output;
 
 	execCmd("zpool", std::string("set io.openebs:readonly=on ") + m_pool1->m_name);
-	output = execCmd("zpool", std::string("get  io.openebs:readonly ") + std::string(" -Hpo value ") + m_pool1->m_name);
-	ASSERT_NE(output.find("on"), std::string::npos);
+	EXPECT_EQ(m_pool1->isReadOnly(), true);
 
 	// read should happen
 	read_data_start(m_datasock1.fd(), m_ioseq1, 0, sizeof (buf), &hdr_in, &read_hdr);
@@ -1247,8 +1260,7 @@ TEST_F(ZreplDataTest, ZpoolReadOnly) {
 	ASSERT_EQ(m_control_fd1, -1);
 
 	execCmd("zpool", std::string("set io.openebs:readonly=off ") + m_pool1->m_name);
-	output = execCmd("zpool", std::string("get  io.openebs:readonly ") + std::string(" -Hpo value ") + m_pool1->m_name);
-	ASSERT_NE(output.find("off"), std::string::npos);
+	EXPECT_EQ(m_pool1->isReadOnly(), false);
 
 	// mgmt connection should happen
 	m_control_fd1 = target1->accept(10);
@@ -2079,23 +2091,20 @@ TEST(Snapshot, ZVolReadOnly) {
 
 	// make zvol readonly
 	execCmd("zfs", std::string("set io.openebs:readonly=on ") + vol_name);
-	output = execCmd("zfs", std::string("get  io.openebs:readonly ") + std::string(" -Hpo value ") + vol_name);
-	ASSERT_NE(output.find("on"), std::string::npos);
+	EXPECT_EQ(is_zvol_readonly(vol_name), true);
 	// snap prepare should fail
 	prep_snap(control_fd, snap_name, hdr_out.io_seq, ZVOL_OP_STATUS_FAILED);
 
 	// disable zvol readonly
 	execCmd("zfs", std::string("set io.openebs:readonly=off ") + vol_name);
-	output = execCmd("zfs", std::string("get  io.openebs:readonly ") + std::string(" -Hpo value ") + vol_name);
-	ASSERT_NE(output.find("off"), std::string::npos);
+	EXPECT_EQ(is_zvol_readonly(vol_name), false);
 	// snap prepare should happen
 	prep_snap(control_fd, snap_name, hdr_out.io_seq, ZVOL_OP_STATUS_OK);
 
 
 	// set zvol readonly
 	execCmd("zfs", std::string("set io.openebs:readonly=on ") + vol_name);
-	output = execCmd("zfs", std::string("get  io.openebs:readonly ") + std::string(" -Hpo value ") + vol_name);
-	ASSERT_NE(output.find("on"), std::string::npos);
+	EXPECT_EQ(is_zvol_readonly(vol_name), true);
 
 	hdr_out.version = REPLICA_VERSION;
 	hdr_out.opcode = ZVOL_OPCODE_SNAP_CREATE;
@@ -2157,23 +2166,20 @@ TEST(Snapshot, ZpoolReadOnly) {
 
 	// make zvol readonly
 	execCmd("zpool", std::string("set io.openebs:readonly=on ") + pool.m_name);
-	output = execCmd("zpool", std::string("get  io.openebs:readonly ") + std::string(" -Hpo value ") + pool.m_name);
-	ASSERT_NE(output.find("on"), std::string::npos);
+	EXPECT_EQ(pool.isReadOnly(), true);
 	// snap prepare should fail
 	prep_snap(control_fd, snap_name, hdr_out.io_seq, ZVOL_OP_STATUS_FAILED);
 
 	// disable zvol readonly
 	execCmd("zpool", std::string("set io.openebs:readonly=off ") + pool.m_name);
-	output = execCmd("zpool", std::string("get  io.openebs:readonly ") + std::string(" -Hpo value ") + pool.m_name);
-	ASSERT_NE(output.find("off"), std::string::npos);
+	EXPECT_EQ(pool.isReadOnly(), false);
 	// snap prepare should happen
 	prep_snap(control_fd, snap_name, hdr_out.io_seq, ZVOL_OP_STATUS_OK);
 
 
 	// set zvol readonly
 	execCmd("zpool", std::string("set io.openebs:readonly=on ") + pool.m_name);
-	output = execCmd("zpool", std::string("get  io.openebs:readonly ") + std::string(" -Hpo value ") + pool.m_name);
-	ASSERT_NE(output.find("on"), std::string::npos);
+	EXPECT_EQ(pool.isReadOnly(), true);
 
 	hdr_out.version = REPLICA_VERSION;
 	hdr_out.opcode = ZVOL_OPCODE_SNAP_CREATE;

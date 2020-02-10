@@ -373,6 +373,8 @@ uzfs_ioc_stats(zfs_cmd_t *zc, nvlist_t *nvl)
 
 			fnvlist_add_string(innvl, "status",
 			    status_to_str(zv));
+			fnvlist_add_string(innvl, "readOnly",
+			    IS_ZVOL_READONLY(zv->main_zv) ? "on" : "off");
 
 			fnvlist_add_string(innvl, "rebuildStatus",
 			    rebuild_status_to_str(

@@ -1143,6 +1143,26 @@ static bool is_zvol_readonly(std::string zvol) {
 	return false;
 }
 
+static bool isIOAckSenderCreated(std::string zvol) {
+	std::string output;
+
+	output = execCmd("zfs", std::string("stats ") + zvol);
+	if (output.find("\"isIOAckSenderCreated\":1") != std::string::npos)
+		return true;
+
+	return false;
+}
+
+static bool isIOReceiverCreated(std::string zvol) {
+	std::string output;
+
+	output = execCmd("zfs", std::string("stats ") + zvol);
+	if (output.find("\"isIOReceiverCreated\":1") != std::string::npos)
+		return true;
+
+	return false;
+}
+
 /*
  * if zvol is readonly then..
  *  	- write should fail
@@ -1160,6 +1180,8 @@ TEST_F(ZreplDataTest, ZVolReadOnly) {
 
 	execCmd("zfs", std::string("set io.openebs:readonly=on ") + m_zvol_name1);
 	EXPECT_EQ(is_zvol_readonly(m_zvol_name1), true);
+	EXPECT_EQ(isIOAckSenderCreated(m_zvol_name1), true);
+	EXPECT_EQ(isIOReceiverCreated(m_zvol_name1), true);
 
 	// read should happen
 	read_data_start(m_datasock1.fd(), m_ioseq1, 0, sizeof (buf), &hdr_in, &read_hdr);
@@ -1187,6 +1209,8 @@ TEST_F(ZreplDataTest, ZVolReadOnly) {
 	// mgmt connection should not happen
 	m_control_fd1 = target1->accept(10);
 	ASSERT_EQ(m_control_fd1, -1);
+	EXPECT_EQ(isIOAckSenderCreated(m_zvol_name1), false);
+	EXPECT_EQ(isIOReceiverCreated(m_zvol_name1), false);
 
 	execCmd("zfs", std::string("set io.openebs:readonly=off ") + m_zvol_name1);
 	EXPECT_EQ(is_zvol_readonly(m_zvol_name1), false);
@@ -1199,6 +1223,8 @@ TEST_F(ZreplDataTest, ZVolReadOnly) {
 	    ZVOL_OP_STATUS_OK);
 
 	do_data_connection(m_datasock1.fd(), m_host1, m_port1, m_zvol_name1);
+	EXPECT_EQ(isIOAckSenderCreated(m_zvol_name1), true);
+	EXPECT_EQ(isIOReceiverCreated(m_zvol_name1), true);
 
 	// write should happen
 	write_data(m_datasock1.fd(), m_ioseq1, buf, 0, sizeof (buf), ++m_ioseq1);
@@ -1231,6 +1257,8 @@ TEST_F(ZreplDataTest, ZpoolReadOnly) {
 
 	execCmd("zpool", std::string("set io.openebs:readonly=on ") + m_pool1->m_name);
 	EXPECT_EQ(m_pool1->isReadOnly(), true);
+	EXPECT_EQ(isIOAckSenderCreated(m_zvol_name1), true);
+	EXPECT_EQ(isIOReceiverCreated(m_zvol_name1), true);
 
 	// read should happen
 	read_data_start(m_datasock1.fd(), m_ioseq1, 0, sizeof (buf), &hdr_in, &read_hdr);
@@ -1258,6 +1286,8 @@ TEST_F(ZreplDataTest, ZpoolReadOnly) {
 	// mgmt connection should not happen
 	m_control_fd1 = target1->accept(10);
 	ASSERT_EQ(m_control_fd1, -1);
+	EXPECT_EQ(isIOAckSenderCreated(m_zvol_name1), false);
+	EXPECT_EQ(isIOReceiverCreated(m_zvol_name1), false);
 
 	execCmd("zpool", std::string("set io.openebs:readonly=off ") + m_pool1->m_name);
 	EXPECT_EQ(m_pool1->isReadOnly(), false);
@@ -1270,6 +1300,8 @@ TEST_F(ZreplDataTest, ZpoolReadOnly) {
 	    ZVOL_OP_STATUS_OK);
 
 	do_data_connection(m_datasock1.fd(), m_host1, m_port1, m_zvol_name1);
+	EXPECT_EQ(isIOAckSenderCreated(m_zvol_name1), true);
+	EXPECT_EQ(isIOReceiverCreated(m_zvol_name1), true);
 
 	// write should happen
 	write_data(m_datasock1.fd(), m_ioseq1, buf, 0, sizeof (buf), ++m_ioseq1);

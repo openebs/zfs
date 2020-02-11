@@ -755,6 +755,8 @@ spa_prop_set(spa_t *spa, nvlist_t *nvp)
 			}
 			dmu_objset_find(spa->spa_name, uzfs_zpool_rdonly_cb,
 			    val, DS_FIND_CHILDREN);
+			need_sync = B_TRUE;
+			continue;
 		}
 #endif
 

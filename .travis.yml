@@ -8,7 +8,7 @@ branches:
     - /^v\d+\.\d+(\.\S*)?$/
 env:
   global:
-    # Travis limits maximum log size, we have to cut tests output 
+    # Travis limits maximum log size, we have to cut tests output
     - CODECOV_TOKEN="987cf0f1-ae3b-477e-b645-954e682f99ec"
     - ZFS_TEST_TRAVIS_LOG_MAX_LENGTH=800
   matrix:
@@ -31,6 +31,8 @@ before_install:
     - sudo unlink /usr/bin/gcc && sudo ln -s /usr/bin/gcc-6 /usr/bin/gcc
     - sudo unlink /usr/bin/g++ && sudo ln -s /usr/bin/g++-6 /usr/bin/g++
 install:
+    # zrepl will make use of /var/tmp/sock directory to create a sock file.
+    - mkdir -p /var/tmp/sock
     - pushd .
     - cd /usr/src/gtest
     - sudo cmake CMakeLists.txt

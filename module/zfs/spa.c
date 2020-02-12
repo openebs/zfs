@@ -644,8 +644,8 @@ spa_prop_validate(spa_t *spa, nvlist_t *props)
 			if (strcmp(strval, "on") != 0 &&
 			    strcmp(strval, "off") != 0) {
 				error = SET_ERROR(EINVAL);
-				break;
 			}
+			break;
 #endif
 		default:
 			break;
@@ -701,6 +701,7 @@ spa_prop_set(spa_t *spa, nvlist_t *nvp)
 	boolean_t need_sync = B_FALSE;
 #ifdef	_UZFS
 	char *val;
+	boolean_t update_rdonly = B_FALSE;
 #endif
 
 	if ((error = spa_prop_validate(spa, nvp)) != 0)
@@ -747,15 +748,24 @@ spa_prop_set(spa_t *spa, nvlist_t *nvp)
 		if (prop == ZPOOL_PROP_UZFS_READONLY) {
 			VERIFY(nvpair_value_string(elem, &val) == 0);
 			if (strcmp(val, "on") == 0) {
-				spa->readonly = B_TRUE;
+				if (!spa->readonly) {
+					update_rdonly = B_TRUE;
+					spa->readonly = B_TRUE;
+				}
 			} else if (strcmp(val, "off") == 0) {
-				spa->readonly = B_FALSE;
+				if (spa->readonly) {
+					update_rdonly =  B_TRUE;
+					spa->readonly = B_FALSE;
+				}
 			} else {
 				return (EINVAL);
 			}
-			dmu_objset_find(spa->spa_name, uzfs_zpool_rdonly_cb,
-			    val, DS_FIND_CHILDREN);
-			need_sync = B_TRUE;
+			if (update_rdonly) {
+				dmu_objset_find(spa->spa_name,
+				    uzfs_zpool_rdonly_cb, val,
+				    DS_FIND_CHILDREN);
+				need_sync = B_TRUE;
+			}
 			continue;
 		}
 #endif
@@ -2180,7 +2190,8 @@ uzfs_get_readonly_prop(spa_t *spa)
 	int err;
 
 	err = zap_lookup(spa->spa_meta_objset, spa->spa_pool_props_object,
-	    zpool_prop_to_name(ZPOOL_PROP_UZFS_READONLY), 1, 4, &val);
+	    zpool_prop_to_name(ZPOOL_PROP_UZFS_READONLY), 1,
+	    sizeof (val), &val);
 	if (err) {
 		// ignore error if value doesn't exist
 		return;

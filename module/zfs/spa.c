@@ -761,6 +761,8 @@ spa_prop_set(spa_t *spa, nvlist_t *nvp)
 				return (EINVAL);
 			}
 			if (update_rdonly) {
+				fprintf(stderr, "Updating readonly for %s "
+				    "to %s\n", spa->spa_name, val);
 				dmu_objset_find(spa->spa_name,
 				    uzfs_zpool_rdonly_cb, val,
 				    DS_FIND_CHILDREN);
@@ -2202,6 +2204,8 @@ uzfs_get_readonly_prop(spa_t *spa)
 	} else if (strcmp(val, "off") == 0) {
 		spa->readonly = B_FALSE;
 	}
+	fprintf(stderr, "pool %s imported with readonly:%s\n",
+	    spa->spa_name, val);
 }
 #endif
 

@@ -1828,7 +1828,7 @@ TEST(DiskReplaceTest, SpareReplacement) {
 	sleep(5);
 }
 
-static void verify_snapshot_details(std::string zvol_name, std::string json) {
+static void verify_snapshot_details(std::string zvol_name, std::string json, std::string requested_snap) {
 	struct json_object *jobj = NULL, *jarr = NULL;
 	struct json_object *jsnap, *jsnapname, *jprop;
 	int arrlen, i;
@@ -1845,10 +1845,16 @@ static void verify_snapshot_details(std::string zvol_name, std::string json) {
 	for (i = 0; i < arrlen; i++) {
 		jsnap = json_object_array_get_idx(jarr, i);
 		ASSERT_NE((jsnap == NULL), 1);
+
 		json_object_object_get_ex(jsnap, "name", &jsnapname);
 		ASSERT_NE((jsnapname == NULL), 1);
+
 		json_object_object_get_ex(jsnap, "properties", &jprop);
 		ASSERT_NE((jprop == NULL), 1);
+
+		if (!requested_snap.empty())
+			EXPECT_EQ(zvol_name + std::string("@") + (char *)json_object_get_string(jsnapname), requested_snap);
+
 		json_object_object_foreach(jprop, key, val) {
 			output = execCmd("zfs", std::string("get ") + key +
 			    std::string(" -Hpo value ") + zvol_name +
@@ -1919,12 +1925,13 @@ TEST(Snapshot, CreateAndDestroy) {
 	zvol_io_hdr_t hdr_in, hdr_out = {0};
 	Zrepl zrepl;
 	Target target;
-	int rc, control_fd;
+	int rc, control_fd, io_seq;
 	SocketFd datasock;
 	TestPool pool("snappool");
 	char *buf;
 	std::string vol_name = pool.getZvolName("vol");
 	std::string snap_name = pool.getZvolName("vol@snap");
+	std::string snap1_name = pool.getZvolName("vol@snap1");
 	std::string bad_snap_name = pool.getZvolName("vol");
 	std::string unknown_snap_name = pool.getZvolName("unknown@snap");
 	uint64_t ioseq;
@@ -1933,6 +1940,7 @@ TEST(Snapshot, CreateAndDestroy) {
 	struct zvol_snapshot_list *snaplist;
 	std::string output;
 
+	io_seq = 0;
 	zrepl.start();
 	pool.create();
 	pool.createZvol("vol", "-o io.openebs:targetip=127.0.0.1 -o io.openebs:zvol_replica_id=12345");
@@ -1949,7 +1957,7 @@ TEST(Snapshot, CreateAndDestroy) {
 	hdr_out.version = REPLICA_VERSION;
 	hdr_out.opcode = ZVOL_OPCODE_SNAP_CREATE;
 	hdr_out.status = ZVOL_OP_STATUS_OK;
-	hdr_out.io_seq = 0;
+	hdr_out.io_seq = io_seq;
 	hdr_out.len = bad_snap_name.length() + 1;
 	prep_snap(control_fd, bad_snap_name, hdr_out.io_seq, ZVOL_OP_STATUS_FAILED);
 	rc = write(control_fd, &hdr_out, sizeof (hdr_out));
@@ -1962,7 +1970,7 @@ TEST(Snapshot, CreateAndDestroy) {
 	ASSERT_EQ(hdr_in.len, 0);
 
 	// try to create snap of unknown zvol
-	hdr_out.io_seq = 1;
+	hdr_out.io_seq = ++io_seq;
 	hdr_out.len = unknown_snap_name.length() + 1;
 	prep_snap(control_fd, unknown_snap_name, hdr_out.io_seq, ZVOL_OP_STATUS_FAILED);
 	rc = write(control_fd, &hdr_out, sizeof (hdr_out));
@@ -1975,7 +1983,7 @@ TEST(Snapshot, CreateAndDestroy) {
 	ASSERT_EQ(hdr_in.len, 0);
 
 	// try to create snap on degraded zvol
-	hdr_out.io_seq = 1;
+	hdr_out.io_seq = ++io_seq;
 	hdr_out.len = snap_name.length() + 1;
 	prep_snap(control_fd, snap_name, hdr_out.io_seq, ZVOL_OP_STATUS_OK);
 	rc = write(control_fd, &hdr_out, sizeof (hdr_out));
@@ -1990,7 +1998,7 @@ TEST(Snapshot, CreateAndDestroy) {
 	// create the snapshot
 	transition_zvol_to_online(ioseq, control_fd, vol_name);
 	sleep(5);
-	hdr_out.io_seq = 2;
+	hdr_out.io_seq = ++io_seq;
 	hdr_out.len = snap_name.length() + 1;
 	prep_snap(control_fd, snap_name, hdr_out.io_seq, ZVOL_OP_STATUS_OK);
 	rc = write(control_fd, &hdr_out, sizeof (hdr_out));
@@ -2002,13 +2010,30 @@ TEST(Snapshot, CreateAndDestroy) {
 	EXPECT_EQ(hdr_in.version, REPLICA_VERSION);
 	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_SNAP_CREATE);
 	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
-	EXPECT_EQ(hdr_in.io_seq, 2);
+	EXPECT_EQ(hdr_in.io_seq, io_seq);
 	ASSERT_EQ(hdr_in.len, 0);
 
 	ASSERT_NO_THROW(execCmd("zfs", std::string("list ") + snap_name));
 
+	// create one more snapshot
+	hdr_out.io_seq = ++io_seq;
+	hdr_out.len = snap1_name.length() + 1;
+	prep_snap(control_fd, snap_name, hdr_out.io_seq, ZVOL_OP_STATUS_OK);
+	rc = write(control_fd, &hdr_out, sizeof (hdr_out));
+	ASSERT_EQ(rc, sizeof (hdr_out));
+	rc = write(control_fd, snap1_name.c_str(), hdr_out.len);
+	ASSERT_EQ(rc, hdr_out.len);
+	rc = read(control_fd, &hdr_in, sizeof (hdr_in));
+	ASSERT_EQ(rc, sizeof (hdr_in));
+	EXPECT_EQ(hdr_in.version, REPLICA_VERSION);
+	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_SNAP_CREATE);
+	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
+	EXPECT_EQ(hdr_in.io_seq, io_seq);
+	ASSERT_EQ(hdr_in.len, 0);
+	ASSERT_NO_THROW(execCmd("zfs", std::string("list ") + snap1_name));
+
 	// Try to fetch snapshot list
-	hdr_out.io_seq = 3;
+	hdr_out.io_seq = ++io_seq;
 	hdr_out.len = vol_name.length() + 1;
 	hdr_out.opcode = ZVOL_OPCODE_SNAP_LIST;
 	rc = write(control_fd, &hdr_out, sizeof (hdr_out));
@@ -2020,7 +2045,31 @@ TEST(Snapshot, CreateAndDestroy) {
 	EXPECT_EQ(hdr_in.version, REPLICA_VERSION);
 	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_SNAP_LIST);
 	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
-	EXPECT_EQ(hdr_in.io_seq, 3);
+	EXPECT_EQ(hdr_in.io_seq, io_seq);
+	ASSERT_GE(hdr_in.len, sizeof (struct zvol_snapshot_list));
+	buf = (char *)malloc(hdr_in.len);
+	rc = read(control_fd, buf, hdr_in.len);
+	ASSERT_EQ(rc, hdr_in.len);
+	snaplist = (struct zvol_snapshot_list *) buf;
+	output = execCmd("zfs", std::string("get guid -Hpo value ") +
+	    vol_name);
+	EXPECT_EQ(snaplist->zvol_guid, std::stoul(output));
+	verify_snapshot_details(vol_name, snaplist->data, "");
+
+	// Try to fetch snapshot list using snapshot name
+	hdr_out.io_seq = ++io_seq;
+	hdr_out.len = snap_name.length() + 1;
+	hdr_out.opcode = ZVOL_OPCODE_SNAP_LIST;
+	rc = write(control_fd, &hdr_out, sizeof (hdr_out));
+	ASSERT_EQ(rc, sizeof (hdr_out));
+	rc = write(control_fd, snap_name.c_str(), hdr_out.len);
+	ASSERT_EQ(rc, hdr_out.len);
+	rc = read(control_fd, &hdr_in, sizeof (hdr_in));
+	ASSERT_EQ(rc, sizeof (hdr_in));
+	EXPECT_EQ(hdr_in.version, REPLICA_VERSION);
+	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_SNAP_LIST);
+	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
+	EXPECT_EQ(hdr_in.io_seq, io_seq);
 	ASSERT_GE(hdr_in.len, sizeof (struct zvol_snapshot_list));
 	buf = (char *)malloc(hdr_in.len);
 	rc = read(control_fd, buf, hdr_in.len);
@@ -2029,12 +2078,11 @@ TEST(Snapshot, CreateAndDestroy) {
 	output = execCmd("zfs", std::string("get guid -Hpo value ") +
 	    vol_name);
         EXPECT_EQ(snaplist->zvol_guid, std::stoul(output));
-	verify_snapshot_details(vol_name, snaplist->data);
-	ASSERT_NO_THROW(execCmd("zfs", std::string("list ") + snap_name));
+	verify_snapshot_details(vol_name, snaplist->data, snap_name);
 
 	// destroy the snapshot
 	hdr_out.opcode = ZVOL_OPCODE_SNAP_DESTROY;
-	hdr_out.io_seq = 4;
+	hdr_out.io_seq = ++io_seq;
 	hdr_out.len = snap_name.length() + 1;
 	rc = write(control_fd, &hdr_out, sizeof (hdr_out));
 	ASSERT_EQ(rc, sizeof (hdr_out));
@@ -2046,11 +2094,11 @@ TEST(Snapshot, CreateAndDestroy) {
 	EXPECT_EQ(hdr_in.version, REPLICA_VERSION);
 	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_SNAP_DESTROY);
 	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
-	EXPECT_EQ(hdr_in.io_seq, 4);
+	EXPECT_EQ(hdr_in.io_seq, io_seq);
 	ASSERT_EQ(hdr_in.len, 0);
 
 	// try to create snap without snap prep
-	hdr_out.io_seq = 5;
+	hdr_out.io_seq = ++io_seq;
 	hdr_out.len = snap_name.length() + 1;
 	hdr_out.opcode = ZVOL_OPCODE_SNAP_CREATE;
 	rc = write(control_fd, &hdr_out, sizeof (hdr_out));
@@ -2064,7 +2112,7 @@ TEST(Snapshot, CreateAndDestroy) {
 
 	// destroy the snapshot
 	hdr_out.opcode = ZVOL_OPCODE_SNAP_DESTROY;
-	hdr_out.io_seq = 6;
+	hdr_out.io_seq = ++io_seq;
 	hdr_out.len = snap_name.length() + 1;
 	rc = write(control_fd, &hdr_out, sizeof (hdr_out));
 	ASSERT_EQ(rc, sizeof (hdr_out));
@@ -2076,7 +2124,7 @@ TEST(Snapshot, CreateAndDestroy) {
 	EXPECT_EQ(hdr_in.version, REPLICA_VERSION);
 	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_SNAP_DESTROY);
 	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
-	EXPECT_EQ(hdr_in.io_seq, 6);
+	EXPECT_EQ(hdr_in.io_seq, io_seq);
 	ASSERT_EQ(hdr_in.len, 0);
 
 	ASSERT_THROW(execCmd("zfs", std::string("list ") + snap_name),

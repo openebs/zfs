@@ -2077,7 +2077,7 @@ TEST(Snapshot, CreateAndDestroy) {
 	snaplist = (struct zvol_snapshot_list *) buf;
 	output = execCmd("zfs", std::string("get guid -Hpo value ") +
 	    vol_name);
-        EXPECT_EQ(snaplist->zvol_guid, std::stoul(output));
+	EXPECT_EQ(snaplist->zvol_guid, std::stoul(output));
 	verify_snapshot_details(vol_name, snaplist->data, snap_name);
 
 	// destroy the snapshot
@@ -2096,6 +2096,27 @@ TEST(Snapshot, CreateAndDestroy) {
 	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
 	EXPECT_EQ(hdr_in.io_seq, io_seq);
 	ASSERT_EQ(hdr_in.len, 0);
+
+	// Try to fetch snapshot list using wrong snapshot name
+	hdr_out.io_seq = ++io_seq;
+	hdr_out.len = strlen("vol@pqrst") + 1;
+	hdr_out.opcode = ZVOL_OPCODE_SNAP_LIST;
+	rc = write(control_fd, &hdr_out, sizeof (hdr_out));
+	ASSERT_EQ(rc, sizeof (hdr_out));
+	rc = write(control_fd, "vol@pqrst", hdr_out.len);
+	ASSERT_EQ(rc, hdr_out.len);
+	rc = read(control_fd, &hdr_in, sizeof (hdr_in));
+	ASSERT_EQ(rc, sizeof (hdr_in));
+	EXPECT_EQ(hdr_in.version, REPLICA_VERSION);
+	EXPECT_EQ(hdr_in.opcode, ZVOL_OPCODE_SNAP_LIST);
+	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
+	EXPECT_EQ(hdr_in.io_seq, io_seq);
+	ASSERT_GE(hdr_in.len, sizeof (struct zvol_snapshot_list));
+	buf = (char *)malloc(hdr_in.len);
+	rc = read(control_fd, buf, hdr_in.len);
+	ASSERT_EQ(rc, hdr_in.len);
+	snaplist = (struct zvol_snapshot_list *) buf;
+	ASSERT_NE((strstr(snaplist->data, "pqrst"), NULL), 1);
 
 	// try to create snap without snap prep
 	hdr_out.io_seq = ++io_seq;

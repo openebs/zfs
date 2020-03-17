@@ -1,3 +1,9 @@
+1.8.0 / 2020-03-13
+========================
+* test cases for uzfs pool readonly support ([#289](https://github.com/openebs/cstor/pull/289),[@mynktl](https://github.com/mynktl))
+* test cases to fetch specific snapshot information using target ([#292](https://github.com/openebs/cstor/pull/292),[@mynktl](https://github.com/mynktl))
+
+
 1.8.0-RC1 / 2020-03-06
 ========================
 * test cases for uzfs pool readonly support ([#289](https://github.com/openebs/cstor/pull/289),[@mynktl](https://github.com/mynktl))

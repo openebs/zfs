@@ -1071,6 +1071,7 @@ typedef enum zfs_ioc {
 	ZFS_IOC_RECV_NEW,
 	ZFS_IOC_POOL_SYNC,
 	ZFS_IOC_STATS,
+	ZFS_IOC_LIST_SNAP,
 
 	/*
 	 * Linux - 3/64 numbers reserved.

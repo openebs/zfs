@@ -406,6 +406,12 @@ lzc_stats(const char *dataset, nvlist_t *innvl, nvlist_t **outnvl)
 	return (lzc_ioctl(ZFS_IOC_STATS, dataset, NULL, outnvl));
 }
 
+int
+lzc_list_snap(const char *dataset, nvlist_t *innvl, nvlist_t **outnvl)
+{
+	return (lzc_ioctl(ZFS_IOC_LIST_SNAP, dataset, NULL, outnvl));
+}
+
 /*
  * Create "user holds" on snapshots.  If there is a hold on a snapshot,
  * the snapshot can not be destroyed.  (However, it can be marked for deletion

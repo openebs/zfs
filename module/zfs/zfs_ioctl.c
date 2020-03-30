@@ -7484,6 +7484,14 @@ uzfs_handle_ioctl(const char *pool, zfs_cmd_t *zc, uzfs_info_t *ucmd_info)
 		nvlist_free(outnvl);
 		break;
 	}
+	case ZFS_IOC_LIST_SNAP: {
+		nvlist_t *outnvl = fnvlist_alloc();
+		err = uzfs_ioc_list_snap(zc, outnvl);
+		if (err == 0)
+			err = put_nvlist(zc, outnvl);
+		nvlist_free(outnvl);
+		break;
+	}
 #endif
 	case ZFS_IOC_CLEAR: {
 		err = zfs_ioc_clear(zc);

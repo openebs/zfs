@@ -94,9 +94,9 @@
 #else
 #include <libuzfs.h>
 #include <uzfs_mgmt.h>
+#include <mgmt_conn.h>
 #include <sys/uzfs_zvol.h>
 #include <zrepl_mgmt.h>
-
 #endif
 
 unsigned int zvol_inhibit_dev = 0;
@@ -346,6 +346,23 @@ status_to_str(zvol_info_t *zv)
 	    (rebuild_status != ZVOL_REBUILDING_DONE))
 		return ("Rebuilding");
 	return ("Degraded");
+}
+
+int
+uzfs_ioc_list_snap(zfs_cmd_t *zc, nvlist_t *nvl)
+{
+	zvol_info_t *zinfo;
+	int error;
+
+	zinfo = uzfs_zinfo_lookup(zc->zc_name);
+	if (zinfo == NULL)
+		return (ENOENT);
+
+	error = uzfs_zvol_add_nvl_snapshot_list(zinfo, nvl);
+
+	uzfs_zinfo_drop_refcnt(zinfo);
+
+	return (error);
 }
 
 int

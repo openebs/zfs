@@ -108,6 +108,7 @@ static int zfs_do_release(int argc, char **argv);
 static int zfs_do_diff(int argc, char **argv);
 static int zfs_do_bookmark(int argc, char **argv);
 static int zfs_do_stats(int argc, char **argv);
+static int zfs_do_list_snap(int argc, char **argv);
 
 /*
  * Enable a reasonable set of defaults for libumem debugging on DEBUG builds.
@@ -156,6 +157,7 @@ typedef enum {
 	HELP_DIFF,
 	HELP_BOOKMARK,
 	HELP_STATS,
+	HELP_LIST_SNAP,
 } zfs_help_t;
 
 typedef struct zfs_command {
@@ -210,6 +212,7 @@ static zfs_command_t command_table[] = {
 	{ "release",	zfs_do_release,		HELP_RELEASE		},
 	{ "diff",	zfs_do_diff,		HELP_DIFF		},
 	{ "stats",	zfs_do_stats,		HELP_STATS		},
+	{ "listsnap",	zfs_do_list_snap,	HELP_LIST_SNAP		},
 };
 
 #define	NCOMMAND	(sizeof (command_table) / sizeof (command_table[0]))
@@ -332,6 +335,8 @@ get_usage(zfs_help_t idx)
 		return (gettext("\tbookmark <snapshot> <bookmark>\n"));
 	case HELP_STATS:
 		return (gettext("\tstats [dataset]\n"));
+	case HELP_LIST_SNAP:
+		return (gettext("\tlistsnap [dataset]\n"));
 	}
 
 	abort();
@@ -7079,6 +7084,40 @@ get_stats(nvlist_t *outnvl)
 		}
 	}
 	return (jobj);
+}
+
+static int
+zfs_do_list_snap(int argc, char **argv)
+{
+	nvlist_t *outnvl = NULL;
+	nvpair_t *elem = NULL;
+	int error = 0;
+	char *str_val;
+
+	if (argc != 2) {
+		fprintf(stderr, "got listsnap command %d\n", argc);
+		usage(B_FALSE);
+	}
+
+	if ((error = lzc_list_snap(argv[1], NULL, &outnvl)) != 0) {
+		fprintf(stderr, "failed listsnap command for %s with err %d\n",
+		    argv[1], error);
+		return (error);
+	}
+
+	while ((elem = nvlist_next_nvpair(outnvl, elem)) != NULL) {
+		switch (nvpair_type(elem)) {
+			case DATA_TYPE_STRING:
+				nvpair_value_string(elem, &str_val);
+				fprintf(stdout, "%s\n", str_val);
+				break;
+			default:
+				error = EAGAIN;
+				fprintf(stderr, "nvpair type : %d name:%s\n",
+				    nvpair_type(elem), nvpair_name(elem));
+		}
+	}
+	return (error);
 }
 
 int

@@ -1828,6 +1828,54 @@ TEST(DiskReplaceTest, SpareReplacement) {
 	sleep(5);
 }
 
+static void verify_listsnap_details(std::string zvol_name) {
+	struct json_object *jobj = NULL, *jsnaplist_map = NULL;
+	struct json_object *jstrvolname, *jsnap = NULL;
+	std::string snapshot_output;
+	const char *volname, *snapname;
+	struct json_object_iterator it;
+	struct json_object_iterator itEnd;
+	std::string json, volsnap, snap;
+
+	json = execCmd("zfs", std::string("listsnap ") +
+	    zvol_name);
+
+	jobj = json_tokener_parse(json.c_str());
+	printf("%s\n", json.c_str());
+	ASSERT_NE((jobj == NULL), 1);
+
+	json_object_object_get_ex(jobj, "name", &jstrvolname);
+	volname = json_object_get_string(jstrvolname);
+	ASSERT_EQ(volname, zvol_name);
+
+	json_object_object_get_ex(jobj, "snaplist", &jsnaplist_map);
+
+	it = json_object_iter_begin(jsnaplist_map);
+	itEnd = json_object_iter_end(jsnaplist_map);
+
+	while (!json_object_iter_equal(&it, &itEnd)) {
+		snapname = json_object_iter_peek_name(&it);
+		snapshot_output = execCmd("zfs", std::string("list -t snapshot -Ho name " + zvol_name + std::string("@") + snapname));
+		ASSERT_EQ(zvol_name + std::string("@") + snapname, snapshot_output);
+		json_object_iter_next(&it);
+	}
+
+	snapshot_output = execCmd("zfs", std::string("list -t snapshot -Ho name"));
+	std::stringstream ss(snapshot_output);
+	while (std::getline(ss, volsnap, '\n')) {
+		std::stringstream volss(volsnap);
+		int count = 1;
+		while (std::getline(volss, snap, '@')) {
+			if (count == 2)
+				break;
+			count = count + 1;
+		}
+		json_bool ret = json_object_object_get_ex(jsnaplist_map, snap.c_str(), &jsnap);
+		printf("%s\n", snap.c_str());
+		ASSERT_EQ(ret, 1);
+	}
+}
+
 static void verify_snapshot_details(std::string zvol_name, std::string json, std::string requested_snap) {
 	struct json_object *jobj = NULL, *jarr = NULL;
 	struct json_object *jsnap, *jsnapname, *jprop;
@@ -2056,6 +2104,8 @@ TEST(Snapshot, CreateAndDestroy) {
 	EXPECT_EQ(snaplist->zvol_guid, std::stoul(output));
 	verify_snapshot_details(vol_name, snaplist->data, "");
 
+	verify_listsnap_details(vol_name);
+
 	// Try to fetch snapshot list using snapshot name
 	hdr_out.io_seq = ++io_seq;
 	hdr_out.len = snap_name.length() + 1;
@@ -2079,6 +2129,7 @@ TEST(Snapshot, CreateAndDestroy) {
 	    vol_name);
 	EXPECT_EQ(snaplist->zvol_guid, std::stoul(output));
 	verify_snapshot_details(vol_name, snaplist->data, snap_name);
+	verify_listsnap_details(vol_name);
 
 	// destroy the snapshot
 	hdr_out.opcode = ZVOL_OPCODE_SNAP_DESTROY;
@@ -2096,6 +2147,7 @@ TEST(Snapshot, CreateAndDestroy) {
 	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
 	EXPECT_EQ(hdr_in.io_seq, io_seq);
 	ASSERT_EQ(hdr_in.len, 0);
+	verify_listsnap_details(vol_name);
 
 	// Try to fetch snapshot list using wrong snapshot name
 	hdr_out.io_seq = ++io_seq;
@@ -2130,6 +2182,7 @@ TEST(Snapshot, CreateAndDestroy) {
 	ASSERT_EQ(rc, sizeof (hdr_in));
 	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
 	ASSERT_EQ(hdr_in.len, 0);
+	verify_listsnap_details(vol_name);
 
 	// destroy the snapshot
 	hdr_out.opcode = ZVOL_OPCODE_SNAP_DESTROY;
@@ -2147,6 +2200,7 @@ TEST(Snapshot, CreateAndDestroy) {
 	EXPECT_EQ(hdr_in.status, ZVOL_OP_STATUS_OK);
 	EXPECT_EQ(hdr_in.io_seq, io_seq);
 	ASSERT_EQ(hdr_in.len, 0);
+	verify_listsnap_details(vol_name);
 
 	ASSERT_THROW(execCmd("zfs", std::string("list ") + snap_name),
 	    std::runtime_error);

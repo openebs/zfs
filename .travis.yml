@@ -11,19 +11,49 @@ env:
     # Travis limits maximum log size, we have to cut tests output
     - CODECOV_TOKEN="987cf0f1-ae3b-477e-b645-954e682f99ec"
     - ZFS_TEST_TRAVIS_LOG_MAX_LENGTH=800
-  matrix:
-    # tags are mainly in ascending order
-    - ZFS_BUILD_TAGS=0
-    - ZFS_BUILD_TAGS=1
+
+jobs:
+  include:
+    - os: linux
+      arch: amd64
+      env:
+        - ZFS_BUILD_TAGS=1
+        - RUN_UZFS_TESTS=1
+        - RUN_ZTESTS=0
+        - PUSH_CODE_COV=1
+    - os: linux
+      arch: amd64
+      env:
+        - ZFS_BUILD_TAGS=0
+        - RUN_UZFS_TESTS=0
+        - RUN_ZTESTS=1
+        - PUSH_CODE_COV=1
+    - os: linux
+      arch: arm64
+      env:
+        - ZFS_BUILD_TAGS=1
+        - RUN_UZFS_TESTS=0
+        - RUN_ZTESTS=0
+        - PUSH_CODE_COV=0
+
+
 before_install:
     - sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
     - sudo apt-get update -qq
     - sudo apt-get install --yes -qq gcc-6 g++-6
-    - sudo apt-get install --yes -qq build-essential autoconf libtool gawk alien fakeroot linux-headers-$(uname -r) libaio-dev
+    - sudo apt-get install --yes -qq build-essential autoconf libtool gawk alien fakeroot libaio-dev
+    # linux-header package name is different on arm. 
+    - if [ "$TRAVIS_CPU_ARCH" == "arm64" ]; then
+        sudo apt-get install --yes -qq linux-headers-generic;
+      else
+        sudo apt-get install --yes -qq linux-headers-$(uname -r);
+      fi
     - sudo apt-get install --yes -qq zlib1g-dev uuid-dev libattr1-dev libblkid-dev libselinux-dev libudev-dev libssl-dev libjson-c-dev
     - sudo apt-get install --yes -qq lcov libjemalloc-dev
-    # packages for tests
-    - sudo apt-get install --yes -qq parted lsscsi ksh attr acl nfs-kernel-server fio
+    # packages for tests - only on amd64
+    - if [ "$TRAVIS_CPU_ARCH" == "amd64" ]; then
+        sudo apt-get install --yes -qq parted lsscsi ksh attr acl nfs-kernel-server fio;
+      fi
     - sudo apt-get install --yes -qq libgtest-dev cmake
     # packages for debugging
     - sudo apt-get install gdb
@@ -54,7 +84,7 @@ install:
     - git checkout spl-0.7.9
     - sh autogen.sh
     - ./configure
-    - if [ $ZFS_BUILD_TAGS = 0 ]; then
+    - if [ $ZFS_BUILD_TAGS = 1 ]; then
         make -j4;
       else
         make --no-print-directory -s pkg-utils pkg-kmod;
@@ -73,7 +103,7 @@ install:
     # return to cstor code
     - popd
     - sh autogen.sh
-    - if [ $ZFS_BUILD_TAGS = 0 ]; then
+    - if [ $ZFS_BUILD_TAGS = 1 ]; then
         ./configure --with-config=user --enable-code-coverage=yes --enable-debug --enable-uzfs=yes --with-jemalloc --with-fio=$PWD/../fio --with-libcstor=$PWD/../libcstor/include || travis_terminate 1;
         make -j4;
       else
@@ -85,17 +115,22 @@ before_script:
     - make cstyle;
 script:
     # run ztest and test supported zio backends
-    - if [ $ZFS_BUILD_TAGS = 0 ]; then
+    - if [ $RUN_UZFS_TESTS = 1 ]; then
         export FIO_SRCDIR=$PWD/../fio;
         sudo bash ./print_debug_info.sh &
         sudo bash ../libcstor/tests/cstor/script/test_uzfs.sh -T all || travis_terminate 1;
-        ./build_image.sh || travis_terminate 1;
-      else
+      fi
+    - if [ $RUN_ZTESTS = 1 ]; then
         sudo /sbin/modprobe zfs;
         travis_wait 10 /sbin/ztest || travis_terminate 1;
+      fi
+    - if [ $ZFS_BUILD_TAGS = 1 ]; then
+        ./build_image.sh || travis_terminate 1;
       fi
 after_failure:
     - find /var/tmp/test_results/current/log -type f -name '*' -printf "%f\n" -exec cut -c -$ZFS_TEST_TRAVIS_LOG_MAX_LENGTH {} \;
 after_success:
     - find /var/tmp/test_results/current/log -type f -name '*' -printf "%f\n" -exec cut -c -$ZFS_TEST_TRAVIS_LOG_MAX_LENGTH {} \;
-    - bash <(curl -s https://codecov.io/bash)
+    - if [ $PUSH_CODE_COV = 1 ]; then
+        bash <(curl -s https://codecov.io/bash)
+      fi

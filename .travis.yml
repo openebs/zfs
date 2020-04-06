@@ -129,18 +129,18 @@ script:
     - if [ $ZFS_BUILD_TAGS = 1 ]; then
         ./build_image.sh || travis_terminate 1;
       fi
-after_failure:
-    - find /var/tmp/test_results/current/log -type f -name '*' -printf "%f\n" -exec cut -c -$ZFS_TEST_TRAVIS_LOG_MAX_LENGTH {} \;
-after_success:
-    - find /var/tmp/test_results/current/log -type f -name '*' -printf "%f\n" -exec cut -c -$ZFS_TEST_TRAVIS_LOG_MAX_LENGTH {} \;
-    - if [ $PUSH_CODE_COV = 1 ]; then
-        bash <(curl -s https://codecov.io/bash)
-      fi
     # If this build is running due to travis release tag, and
     # this job indicates to push the release downstream, then
     # go ahead and tag the dependent repo.
     # Note that ZFS_BUILD_TAGs can be enabled for arm and amd and we are setting to downstream
     # after amd images have been pushed.
     - if [ ! -z $TRAVIS_TAG ] && [ $RELEASE_TAG_DOWNSTREAM = 1 ] && [ "$TRAVIS_REPO_SLUG" == "openebs/cstor" ]; then
-        ./buildscripts/git-release "openebs/istgt" "$TRAVIS_TAG" "$TRAVIS_BRANCH";
+        ./buildscripts/git-release "openebs/istgt" "$TRAVIS_TAG" "$TRAVIS_BRANCH" || travis_terminate 1;
+      fi
+after_failure:
+    - find /var/tmp/test_results/current/log -type f -name '*' -printf "%f\n" -exec cut -c -$ZFS_TEST_TRAVIS_LOG_MAX_LENGTH {} \;
+after_success:
+    - find /var/tmp/test_results/current/log -type f -name '*' -printf "%f\n" -exec cut -c -$ZFS_TEST_TRAVIS_LOG_MAX_LENGTH {} \;
+    - if [ $PUSH_CODE_COV = 1 ]; then
+        bash <(curl -s https://codecov.io/bash)
       fi

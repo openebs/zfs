@@ -43,12 +43,13 @@ RELEASE_CREATE_JSON=$(echo \
 #using a fixed name means that this script 
 #is not thread safe. only one execution is permitted 
 #at a time.
-rm -rf temp-curl-response.txt
+TEMP_RESP_FILE=temp-curl-response.txt
+rm -rf ${TEMP_RESP_FILE}
 
 response_code=$(curl -u ${GIT_NAME}:${GIT_TOKEN} \
  -w "%{http_code}" \
  --silent \
- --output temp-curl-response.txt \
+ --output ${TEMP_RESP_FILE} \
  --url ${C_GIT_URL} \
  --request POST --header 'content-type: application/json' \
  --data "$RELEASE_CREATE_JSON")
@@ -77,15 +78,15 @@ if [ $response_code != "201" ]; then
     #  ],
     #  "documentation_url": "https://developer.github.com/v3/repos/releases/#create-a-release"
     #}
-    cat temp-curl-response.txt
     rc_code=1
 else
     #Note. In case of success, lots of details of returned, but just 
     #knowing that creation worked is all that matters now.
     echo "Successfully tagged $1 with release tag ${C_GIT_TAG_NAME} on branch ${C_GIT_TAG_BRANCH}"
 fi
+cat ${TEMP_RESP_FILE}
 
 #delete the temporary response file
-rm -rf temp-curl-response.txt
+rm -rf ${TEMP_RESP_FILE}
 
 exit ${rc_code}

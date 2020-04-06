@@ -132,8 +132,10 @@ script:
     # If this build is running due to travis release tag, and
     # this job indicates to push the release downstream, then
     # go ahead and tag the dependent repo.
-    # Note that ZFS_BUILD_TAGs can be enabled for arm and amd and we are setting to downstream
-    # after amd images have been pushed.
+    # Note that ZFS_BUILD_TAGs is enabled for `arm` and `amd`, 
+    # but, release on downstream repository is triggered 
+    # after `amd` images have been created. This is controlled
+    # by ENV RELEASE_TAG_DOWNSTREAM.
     - if [ ! -z $TRAVIS_TAG ] && [ $RELEASE_TAG_DOWNSTREAM = 1 ] && [ "$TRAVIS_REPO_SLUG" == "openebs/cstor" ]; then
         ./buildscripts/git-release "openebs/istgt" "$TRAVIS_TAG" "$TRAVIS_BRANCH" || travis_terminate 1;
       fi

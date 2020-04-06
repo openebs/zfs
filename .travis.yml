@@ -21,6 +21,7 @@ jobs:
         - RUN_UZFS_TESTS=1
         - RUN_ZTESTS=0
         - PUSH_CODE_COV=1
+        - RELEASE_TAG_DOWNSTREAM=1
     - os: linux
       arch: amd64
       env:
@@ -28,6 +29,7 @@ jobs:
         - RUN_UZFS_TESTS=0
         - RUN_ZTESTS=1
         - PUSH_CODE_COV=1
+        - RELEASE_TAG_DOWNSTREAM=0
     - os: linux
       arch: arm64
       env:
@@ -35,7 +37,7 @@ jobs:
         - RUN_UZFS_TESTS=0
         - RUN_ZTESTS=0
         - PUSH_CODE_COV=0
-
+        - RELEASE_TAG_DOWNSTREAM=0
 
 before_install:
     - sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
@@ -126,6 +128,16 @@ script:
       fi
     - if [ $ZFS_BUILD_TAGS = 1 ]; then
         ./build_image.sh || travis_terminate 1;
+      fi
+    # If this build is running due to travis release tag, and
+    # this job indicates to push the release downstream, then
+    # go ahead and tag the dependent repo.
+    # Note that ZFS_BUILD_TAGs is enabled for `arm` and `amd`, 
+    # but, release on downstream repository is triggered 
+    # after `amd` images have been created. This is controlled
+    # by ENV RELEASE_TAG_DOWNSTREAM.
+    - if [ ! -z $TRAVIS_TAG ] && [ $RELEASE_TAG_DOWNSTREAM = 1 ] && [ "$TRAVIS_REPO_SLUG" == "openebs/cstor" ]; then
+        ./buildscripts/git-release "openebs/istgt" "$TRAVIS_TAG" "$TRAVIS_BRANCH" || travis_terminate 1;
       fi
 after_failure:
     - find /var/tmp/test_results/current/log -type f -name '*' -printf "%f\n" -exec cut -c -$ZFS_TEST_TRAVIS_LOG_MAX_LENGTH {} \;

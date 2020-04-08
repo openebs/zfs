@@ -136,8 +136,14 @@ script:
     # but, release on downstream repository is triggered 
     # after `amd` images have been created. This is controlled
     # by ENV RELEASE_TAG_DOWNSTREAM.
+    #
+    # $TRAVIS_BRANCH contains the same value as $TRAVIS_TAG.
+    # Example: 1.9.0-RC1 tag and 1.9.0-RC1 branch. 
+    # OpenEBS release are done from branches named as v1.9.x. 
+    # Convert the TRAVIS_TAG to the corresponding release branch.
     - if [ ! -z $TRAVIS_TAG ] && [ $RELEASE_TAG_DOWNSTREAM = 1 ] && [ "$TRAVIS_REPO_SLUG" == "openebs/cstor" ]; then
-        ./buildscripts/git-release "openebs/istgt" "$TRAVIS_TAG" "$TRAVIS_BRANCH" || travis_terminate 1;
+        REL_BRANCH=$(echo v$(echo "$TRAVIS_TAG" | cut -d'-' -f1 | rev | cut -d'.' -f2- | rev).x) ;
+        ./buildscripts/git-release "openebs/istgt" "$TRAVIS_TAG" "$REL_BRANCH" || travis_terminate 1;
       fi
 after_failure:
     - find /var/tmp/test_results/current/log -type f -name '*' -printf "%f\n" -exec cut -c -$ZFS_TEST_TRAVIS_LOG_MAX_LENGTH {} \;

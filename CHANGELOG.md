@@ -1,4 +1,4 @@
-1.9.0-RC1 / 2020-04-07
+1.9.0-RC1 / 2020-04-08
 ========================
 * added new command listsnap under zfs to list the snapshots for dataset from cache ([#295](https://github.com/openebs/cstor/pull/295),[@vishnuitta](https://github.com/vishnuitta))
 * support to automate ARM build in Travis ([#296](https://github.com/openebs/cstor/pull/296),[@kmova](https://github.com/kmova))

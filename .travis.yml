@@ -20,7 +20,6 @@ jobs:
         - ZFS_BUILD_TAGS=1
         - RUN_UZFS_TESTS=1
         - RUN_ZTESTS=0
-        - PUSH_CODE_COV=1
         - RELEASE_TAG_DOWNSTREAM=1
     - os: linux
       arch: amd64
@@ -28,7 +27,6 @@ jobs:
         - ZFS_BUILD_TAGS=0
         - RUN_UZFS_TESTS=0
         - RUN_ZTESTS=1
-        - PUSH_CODE_COV=1
         - RELEASE_TAG_DOWNSTREAM=0
     - os: linux
       arch: arm64
@@ -36,7 +34,6 @@ jobs:
         - ZFS_BUILD_TAGS=1
         - RUN_UZFS_TESTS=0
         - RUN_ZTESTS=0
-        - PUSH_CODE_COV=0
         - RELEASE_TAG_DOWNSTREAM=0
 
 before_install:
@@ -106,10 +103,10 @@ install:
     - popd
     - sh autogen.sh
     - if [ $ZFS_BUILD_TAGS = 1 ]; then
-        ./configure --with-config=user --enable-code-coverage=yes --enable-debug --enable-uzfs=yes --with-jemalloc --with-fio=$PWD/../fio --with-libcstor=$PWD/../libcstor/include || travis_terminate 1;
+        ./configure --with-config=user --enable-debug --enable-uzfs=yes --with-jemalloc --with-fio=$PWD/../fio --with-libcstor=$PWD/../libcstor/include || travis_terminate 1;
         make -j4;
       else
-        ./configure --enable-code-coverage=yes --enable-debug || travis_terminate 1;
+        ./configure  --enable-debug || travis_terminate 1;
         make --no-print-directory -s pkg-utils pkg-kmod || travis_terminate 1;
         sudo dpkg -i *.deb || travis_terminate 1;
       fi
@@ -149,6 +146,3 @@ after_failure:
     - find /var/tmp/test_results/current/log -type f -name '*' -printf "%f\n" -exec cut -c -$ZFS_TEST_TRAVIS_LOG_MAX_LENGTH {} \;
 after_success:
     - find /var/tmp/test_results/current/log -type f -name '*' -printf "%f\n" -exec cut -c -$ZFS_TEST_TRAVIS_LOG_MAX_LENGTH {} \;
-    - if [ $PUSH_CODE_COV = 1 ]; then
-        bash <(curl -s https://codecov.io/bash)
-      fi

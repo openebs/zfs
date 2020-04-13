@@ -65,7 +65,6 @@ AC_CONFIG_FILES([
 	udev/Makefile
 	udev/rules.d/Makefile
 	etc/Makefile
-	etc/init.d/Makefile
 	etc/zfs/Makefile
 	etc/systemd/Makefile
 	etc/systemd/system/Makefile
@@ -142,8 +141,6 @@ AC_CONFIG_FILES([
 	include/sys/crypto/Makefile
 	include/sys/sysevent/Makefile
 	scripts/Makefile
-	scripts/zpios-profile/Makefile
-	scripts/zpios-test/Makefile
 	scripts/zpool-config/Makefile
 	scripts/common.sh
 	tests/Makefile

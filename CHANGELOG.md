@@ -1,15 +1,13 @@
 1.9.0 / 2020-04-14
 ========================
 * added new command listsnap under zfs to list the snapshots for dataset from cache ([#295](https://github.com/openebs/cstor/pull/295),[@vishnuitta](https://github.com/vishnuitta))
-* support to automate ARM build in Travis ([#296](https://github.com/openebs/cstor/pull/296),[@kmova](https://github.com/kmova))
-* support to trigger release for openebs/istgt from openebs/cstor ([#297](https://github.com/openebs/cstor/pull/297),[@kmova](https://github.com/kmova))
+* support for ARM build, ARM images are pushed under openebs/cstor-pool-arm64 ([#296](https://github.com/openebs/cstor/pull/296),[@kmova](https://github.com/kmova))
 
 
 1.9.0-RC1 / 2020-04-08
 ========================
 * added new command listsnap under zfs to list the snapshots for dataset from cache ([#295](https://github.com/openebs/cstor/pull/295),[@vishnuitta](https://github.com/vishnuitta))
-* support to automate ARM build in Travis ([#296](https://github.com/openebs/cstor/pull/296),[@kmova](https://github.com/kmova))
-* support to trigger release for openebs/istgt from openebs/cstor ([#297](https://github.com/openebs/cstor/pull/297),[@kmova](https://github.com/kmova))
+* support for ARM build, ARM images are pushed under openebs/cstor-pool-arm64 ([#296](https://github.com/openebs/cstor/pull/296),[@kmova](https://github.com/kmova))
 
 
 1.8.0 / 2020-03-13

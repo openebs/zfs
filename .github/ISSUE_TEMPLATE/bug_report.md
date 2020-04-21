@@ -18,6 +18,7 @@ labels: Bug
 * `kubectl logs deployment/maya-apiserver -n openebs`
 * `kubectl logs deployment/<pv-name>-target -n <openebs_namespace> -c cstor-istgt`
 * `kubectl get pods -n openebs`
+* `kubectl get csp -l openebs.io/storage-pool-claim=<spc_name> -o yaml`
 
 **Anything else you would like to add:**
 [Miscellaneous information that will assist in solving the issue.]

@@ -22,3 +22,12 @@ If PR is about adding a new feature or bug fixe then the Author of the PR is exp
 cstor/changelogs/unreleased   <- folder
     12-github_user_name            <- file
 ```
+For example, if `xyz` user has raised a PR `16` to add support for snapshot destroy then
+channgelog file name will be
+```sh
+cstor/changelogs/unreleased/16-xyz
+```
+and  content of the file will be
+```sh
+adding support for snapshot destroy
+```

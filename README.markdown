@@ -2,16 +2,17 @@
 [![codecov](https://codecov.io/gh/zfsonlinux/zfs/branch/master/graph/badge.svg)](https://codecov.io/gh/zfsonlinux/zfs)
 [![FOSSA Status](https://app.fossa.io/api/projects/git%2Bgithub.com%2Fopenebs%2Fcstor.svg?type=shield)](https://app.fossa.io/projects/git%2Bgithub.com%2Fopenebs%2Fcstor?ref=badge_shield)
 [![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/2739/badge)](https://bestpractices.coreinfrastructure.org/projects/2739)
+[![Slack](https://img.shields.io/badge/chat!!!-slack-ff1493.svg?style=flat-square)](https://kubernetes.slack.com/messages/openebs)
 
 
-# uZFS ( aka cStor ) 
+# uZFS ( aka cStor )
 
 uZFS enables running the DMU layer of [ZFS on Linux](https://github.com/zfsonlinux/zfs)
-in userspace. Unlike ZFS that acts on the kernel IOCTLs for both IO and CLI operations, 
+in userspace. Unlike ZFS that acts on the kernel IOCTLs for both IO and CLI operations,
 uZFS does the following:
 
 -   Exposes an IOCTL service over unix domain sockets
--   The DMU Layer(or ZVOL objects) IO operations are exposed as API that can be consumed by any embedded library as opposed to accessing via system calls. 
+-   The DMU Layer(or ZVOL objects) IO operations are exposed as API that can be consumed by any embedded library as opposed to accessing via system calls.
 -   The uZFS CLI operations that interact directly with the embedded IOCTL server in uZFS. uZFS CLI will be used to create Pool(zpool) and Volumes(zvol).
 
 For a full list of changes between ZFS and uZFS - refer to [wiki](https://github.com/openebs/cstor/wiki/Using-uZFS-for-storing-cStor-Volume-Data)

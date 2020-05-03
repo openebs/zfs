@@ -23,13 +23,49 @@ sh autogen.sh
 make clean
 make
 
-BUILD_DATE=$(date +'%Y%m%d%H%M%S')
+# The images can be pushed to any docker/image registeries
+# like docker hub, quay. The registries are specified in 
+# the `build/push` script.
+#
+# The images of a project or company can then be grouped
+# or hosted under a unique organization key like `openebs`
+#
+# Each component (container) will be pushed to a unique 
+# repository under an organization. 
+# Putting all this together, an unique uri for a given 
+# image comprises of:
+#   <registry url>/<image org>/<image repo>:<image-tag>
+#
+# IMAGE_ORG can be used to customize the organization 
+# under which images should be pushed. 
+# By default the organization name is `openebs`. 
+
+if [ -z "${IMAGE_ORG}" ]; then
+  IMAGE_ORG="openebs"
+fi
+
+# Specify the date of build
+DBUILD_DATE=$(date +'%Y-%m-%dT%H:%M:%SZ')
+
+# Specify the docker arg for repository url
+if [ -z "${DBUILD_REPO_URL}" ]; then
+  DBUILD_REPO_URL="https://github.com/openebs/cstor"
+fi
+
+# Specify the docker arg for website url
+if [ -z "${DBUILD_SITE_URL}" ]; then
+  DBUILD_SITE_URL="https://openebs.io"
+fi
+
+DBUILD_ARGS=--build-arg DBUILD_DATE=${DBUILD_DATE} --build-arg DBUILD_REPO_URL=${DBUILD_REPO_URL} --build-arg DBUILD_SITE_URL=${DBUILD_SITE_URL} --build-arg ARCH=${ARCH}
+
+
 if [ "${ARCH}" = "x86_64" ]; then
-	REPO_NAME="openebs/cstor-base"
+	REPO_NAME="$IMAGE_ORG/cstor-base"
 	DOCKERFILE_BASE="Dockerfile.base"
 	DOCKERFILE="Dockerfile"
 elif [ "${ARCH}" = "aarch64" ]; then
-	REPO_NAME="openebs/cstor-base-arm64"
+	REPO_NAME="$IMAGE_ORG/cstor-base-arm64"
 	DOCKERFILE_BASE="Dockerfile.base.arm64"
 	DOCKERFILE="Dockerfile.arm64"
 else
@@ -55,21 +91,21 @@ cp ../libcstor/src/.libs/*.so* ./docker/zfs/lib
 sudo docker version
 sudo docker build --help
 
-echo "Build image ${REPO_NAME}:ci with BUILD_DATE=${BUILD_DATE}"
+echo "Build image ${REPO_NAME}:ci with BUILD_DATE=${DBUILD_DATE}"
 cd docker && \
- sudo docker build -f ${DOCKERFILE_BASE} -t ${REPO_NAME}:ci --build-arg BUILD_DATE=${BUILD_DATE} . && \
+ sudo docker build -f ${DOCKERFILE_BASE} -t ${REPO_NAME}:ci ${DBUILD_ARGS} . && \
  IMAGE_REPO=${REPO_NAME} ./push && \
  cd ..
 
 if [ "${ARCH}" = "x86_64" ]; then
-	REPO_NAME="openebs/cstor-pool"
+	REPO_NAME="$IMAGE_ORG/cstor-pool"
 elif [ "${ARCH}" = "aarch64" ]; then
-	REPO_NAME="openebs/cstor-pool-arm64"
+	REPO_NAME="$IMAGE_ORG/cstor-pool-arm64"
 fi 
 
-echo "Build image ${REPO_NAME}:ci with BUILD_DATE=${BUILD_DATE}"
+echo "Build image ${REPO_NAME}:ci with BUILD_DATE=${DBUILD_DATE}"
 cd docker && \
- sudo docker build -f ${DOCKERFILE} -t ${REPO_NAME}:ci --build-arg BUILD_DATE=${BUILD_DATE} . && \
+ sudo docker build -f ${DOCKERFILE} -t ${REPO_NAME}:ci ${DBUILD_ARGS} . && \
  IMAGE_REPO=${REPO_NAME} ./push && \
  cd ..
 

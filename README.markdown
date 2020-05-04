@@ -3,6 +3,7 @@
 [![FOSSA Status](https://app.fossa.io/api/projects/git%2Bgithub.com%2Fopenebs%2Fcstor.svg?type=shield)](https://app.fossa.io/projects/git%2Bgithub.com%2Fopenebs%2Fcstor?ref=badge_shield)
 [![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/2739/badge)](https://bestpractices.coreinfrastructure.org/projects/2739)
 [![Slack](https://img.shields.io/badge/chat!!!-slack-ff1493.svg?style=flat-square)](https://kubernetes.slack.com/messages/openebs)
+[![Releases](https://img.shields.io/github/v/release/openebs/cstor.svg?include_prereleases&style=flat-square)](https://github.com/openebs/cstor/releases)
 
 
 # uZFS ( aka cStor )

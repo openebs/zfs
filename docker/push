@@ -41,7 +41,7 @@ else
   CURRENT_BRANCH=${TRAVIS_BRANCH}
 fi
 
-#Depending on the branch where builds are generated, 
+#Depending on the branch where builds are generated,
 # set the tag CI (fixed) and build tags.
 BUILD_TAG="${CURRENT_BRANCH}-${BUILD_ID}"
 CI_TAG="${CURRENT_BRANCH}-ci"
@@ -55,7 +55,7 @@ echo "Set the build/unique image tag as: ${BUILD_TAG}"
 function TagAndPushImage() {
   REPO="$1"
   TAG="$2"
-  
+
   #Add an option to specify a custom TAG_SUFFIX 
   #via environment variable. Default is no tag.
   #Example suffix could be "-debug" of "-dev"
@@ -82,7 +82,11 @@ then
     # Push with different tags if tagged as a release
     # When github is tagged with a release, then Travis will
     # set the release tag in env TRAVIS_TAG
-    TagAndPushImage "${IMAGE_REPO}" "${TRAVIS_TAG}"
+    # Trim the `v` from the TRAVIS_TAG if it exists
+    # Example: v1.10.0 maps to 1.10.0
+    # Example: 1.10.0 maps to 1.10.0
+    # Example: v1.10.0-custom maps to 1.10.0-custom
+    TagAndPushImage "${IMAGE_REPO}" "${TRAVIS_TAG#v}"
     TagAndPushImage "${IMAGE_REPO}" "latest"
   fi;
 else
@@ -90,8 +94,8 @@ else
 fi;
 
 # Push ci image to quay.io for security scanning
-if [ ! -z "${QNAME}" ] && [ ! -z "${QPASS}" ]; 
-then 
+if [ ! -z "${QNAME}" ] && [ ! -z "${QPASS}" ];
+then
   sudo docker login -u "${QNAME}" -p "${QPASS}" quay.io;
 
   # Push CI tagged image - :ci or :branch-ci
@@ -102,7 +106,8 @@ then
     # Push with different tags if tagged as a release
     # When github is tagged with a release, then Travis will
     # set the release tag in env TRAVIS_TAG
-    TagAndPushImage "quay.io/${IMAGE_REPO}" "${TRAVIS_TAG}"
+    # Trim the `v` from the TRAVIS_TAG if it exists
+    TagAndPushImage "quay.io/${IMAGE_REPO}" "${TRAVIS_TAG#v}"
     TagAndPushImage "quay.io/${IMAGE_REPO}" "latest"
   fi;
 else
@@ -110,7 +115,7 @@ else
 fi;
 #Push image to run openebs-e2e based on git commit
 if [ ! -z "${GITLAB_DNAME}" ] && [ ! -z "${GITLAB_DPASS}" ] && [ ! -z "${COMMIT}" ]; 
-then 
+then
   sudo docker login -u "${GITLAB_DNAME}" -p "${GITLAB_DPASS}";
 
   # Push COMMIT tagged image - :COMMIT

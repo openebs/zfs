@@ -1,3 +1,7 @@
+1.10.0 / 2020-05-14
+========================
+
+
 1.9.0 / 2020-04-14
 ========================
 * added new command listsnap under zfs to list the snapshots for dataset from cache ([#295](https://github.com/openebs/cstor/pull/295),[@vishnuitta](https://github.com/vishnuitta))

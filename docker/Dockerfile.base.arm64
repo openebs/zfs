@@ -3,7 +3,7 @@
 # libraries.
 #
 
-FROM arm64v8/ubuntu:18.04
+FROM openebs/arm64v8-ubuntu:xenial-20200326
 
 RUN apt-get clean && \
     rm -rf /var/lib/apt/lists/* && \ 

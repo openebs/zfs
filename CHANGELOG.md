@@ -1,3 +1,19 @@
+v1.11.0 / 2020-06-12
+========================
+* Fixing ubuntu version in ARM cstor-base image, issue([#3037](https://github.com/openebs/openebs/issues/3037)) ([#310](https://github.com/openebs/cstor/pull/310),[@mynktl](https://github.com/mynktl))
+* Fix wrong value of CPU_SEQID causing a crash on arm64 ([#309](https://github.com/openebs/cstor/pull/309),[@sgielen](https://github.com/sgielen))
+
+
+v1.11.0-RC2 / 2020-06-11
+========================
+
+
+v1.11.0-RC1 / 2020-06-09
+========================
+* Fix wrong value of CPU_SEQID causing a crash on arm64 ([#309](https://github.com/openebs/cstor/pull/309),[@sgielen](https://github.com/sgielen))
+* Fixing ubuntu version in ARM cstor-base image, issue([#3037](https://github.com/openebs/openebs/issues/3037))([#310](https://github.com/openebs/cstor/pull/310),[@mynktl](https://github.com/mynktl))
+
+
 1.10.0 / 2020-05-14
 ========================
 

@@ -1,3 +1,7 @@
+v1.12.0 / 2020-07-13
+========================
+
+
 v1.11.0 / 2020-06-12
 ========================
 * Fixing ubuntu version in ARM cstor-base image, issue([#3037](https://github.com/openebs/openebs/issues/3037)) ([#310](https://github.com/openebs/cstor/pull/310),[@mynktl](https://github.com/mynktl))

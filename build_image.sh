@@ -91,6 +91,9 @@ cp ../libcstor/src/.libs/*.so* ./docker/zfs/lib
 sudo docker version
 sudo docker build --help
 
+curl --fail https://raw.githubusercontent.com/openebs/charts/gh-pages/scripts/release/buildscripts/push > ./docker/push
+chmod +x ./docker/push
+
 echo "Build image ${REPO_NAME}:ci with BUILD_DATE=${DBUILD_DATE}"
 cd docker && \
  sudo docker build -f ${DOCKERFILE_BASE} -t ${REPO_NAME}:ci ${DBUILD_ARGS} . && \

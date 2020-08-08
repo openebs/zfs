@@ -94,11 +94,16 @@ sudo docker build --help
 curl --fail https://raw.githubusercontent.com/openebs/charts/gh-pages/scripts/release/buildscripts/push > ./docker/push
 chmod +x ./docker/push
 
+## Building image for cstor-base
 echo "Build image ${REPO_NAME}:ci with BUILD_DATE=${DBUILD_DATE}"
 cd docker && \
  sudo docker build -f ${DOCKERFILE_BASE} -t ${REPO_NAME}:ci ${DBUILD_ARGS} . && \
  DIMAGE=${REPO_NAME} ./push && \
  cd ..
+if [ $? -ne 0 ]; then
+ echo "Failed to run push script for ${REPO_NAME}"
+ exit 1
+fi
 
 if [ "${ARCH}" = "x86_64" ]; then
 	REPO_NAME="$IMAGE_ORG/cstor-pool"
@@ -111,5 +116,9 @@ cd docker && \
  sudo docker build -f ${DOCKERFILE} -t ${REPO_NAME}:ci ${DBUILD_ARGS} . && \
  DIMAGE=${REPO_NAME} ./push && \
  cd ..
+if [ $? -ne 0 ]; then
+ echo "Failed to run push script for ${REPO_NAME}"
+ exit 1
+fi
 
 rm -rf ./docker/zfs

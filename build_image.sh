@@ -97,7 +97,7 @@ chmod +x ./docker/push
 echo "Build image ${REPO_NAME}:ci with BUILD_DATE=${DBUILD_DATE}"
 cd docker && \
  sudo docker build -f ${DOCKERFILE_BASE} -t ${REPO_NAME}:ci ${DBUILD_ARGS} . && \
- IMAGE_REPO=${REPO_NAME} ./push && \
+ DIMAGE=${REPO_NAME} ./push && \
  cd ..
 
 if [ "${ARCH}" = "x86_64" ]; then
@@ -109,7 +109,7 @@ fi
 echo "Build image ${REPO_NAME}:ci with BUILD_DATE=${DBUILD_DATE}"
 cd docker && \
  sudo docker build -f ${DOCKERFILE} -t ${REPO_NAME}:ci ${DBUILD_ARGS} . && \
- IMAGE_REPO=${REPO_NAME} ./push && \
+ DIMAGE=${REPO_NAME} ./push && \
  cd ..
 
 rm -rf ./docker/zfs

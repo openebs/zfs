@@ -1,0 +1,64 @@
+# Copyright 2020 The OpenEBS Authors. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+set -xe
+
+apt-get update -qq && apt-get install -y make git gcc-6 g++-6
+apt-get install --yes -qq build-essential autoconf libtool gawk alien fakeroot linux-headers-generic libaio-dev
+apt-get install --yes -qq zlib1g-dev uuid-dev libattr1-dev libblkid-dev libselinux-dev libudev-dev libssl-dev libjson-c-dev
+apt-get install --yes -qq lcov libjemalloc-dev
+apt-get install --yes -qq parted lsscsi ksh attr acl nfs-kernel-server
+apt-get install --yes -qq libgtest-dev cmake
+unlink /usr/bin/gcc && ln -s /usr/bin/gcc-6 /usr/bin/gcc
+unlink /usr/bin/g++ && ln -s /usr/bin/g++-6 /usr/bin/g++
+
+cd /usr/src/gtest
+cmake -DBUILD_SHARED_LIBS=ON CMakeLists.txt
+make
+
+# copy or symlink libgtest.a and libgtest_main.a to your /usr/lib folder
+cp *.so /usr/lib
+
+cd /
+
+git clone https://github.com/openebs/libcstor.git
+cd libcstor
+git checkout master
+sh autogen.sh;
+./configure --enable-debug --with-zfs-headers=$PWD/../cstor/include --with-spl-headers=$PWD/../cstor/lib/libspl/include
+make -j4;
+make install;
+ldconfig
+cd ..
+
+cd cstor
+sh autogen.sh
+./configure --enable-uzfs=yes --with-config=user --with-jemalloc --with-libcstor=$PWD/../libcstor/include
+make clean
+make
+
+mkdir -p ./docker/zfs/bin
+mkdir -p ./docker/zfs/lib
+
+cp cmd/zrepl/.libs/zrepl ./docker/zfs/bin
+cp cmd/zpool/.libs/zpool ./docker/zfs/bin
+cp cmd/zfs/.libs/zfs ./docker/zfs/bin
+cp cmd/zstreamdump/.libs/zstreamdump ./docker/zfs/bin
+
+cp lib/libzpool/.libs/*.so* ./docker/zfs/lib
+cp lib/libuutil/.libs/*.so* ./docker/zfs/lib
+cp lib/libnvpair/.libs/*.so* ./docker/zfs/lib
+cp lib/libzfs/.libs/*.so* ./docker/zfs/lib
+cp lib/libzfs_core/.libs/*.so* ./docker/zfs/lib
+cp ../libcstor/src/.libs/*.so* ./docker/zfs/lib

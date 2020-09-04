@@ -28,6 +28,10 @@ USER_C = \
 	libzfs_status.c \
 	libzfs_util.c
 
+if ENABLE_UZFS
+USER_C += zfs_events.c
+endif
+
 KERNEL_C = \
 	zfs_ioctl.c \
 	zfs_vfsops.c \

@@ -14,6 +14,7 @@ USER_H = \
 	$(top_srcdir)/include/libuutil.h \
 	$(top_srcdir)/include/libuutil_impl.h \
 	$(top_srcdir)/include/libzfs.h \
+	$(top_srcdir)/include/zfs_events.h \
 	$(top_srcdir)/include/libzfs_core.h \
 	$(top_srcdir)/include/libzfs_impl.h
 

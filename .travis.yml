@@ -96,6 +96,17 @@ install:
         make --no-print-directory -s pkg-utils pkg-kmod || travis_terminate 1;
         sudo dpkg -i *.deb || travis_terminate 1;
       fi
+    # Return to libcstor code to complie zrepl which contains main and to run lint checks
+    # save the current location to get back
+    - pushd .
+    - cd ..
+    - cd libcstor
+    # Go to zrepl directory to build zrepl related targets
+    - cd cmd/zrepl
+    - make
+    - cd ../../
+    # return to cstor code
+    - popd
 before_script:
     - make cstyle;
 script:

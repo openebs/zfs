@@ -60,7 +60,7 @@ install:
     # we need fio repo to build zfs replica fio engine
     - git clone https://github.com/axboe/fio
     - cd fio
-    - git checkout fio-3.7
+    - git checkout fio-3.9
     - ./configure
     - make -j4
     - cd ..
@@ -76,7 +76,7 @@ install:
         sudo dpkg -i *.deb;
       fi
     - cd ..
-    # Clone libcstor for uzfs feature
+    # Clone and build libcstor for uzfs feature
     - git clone https://github.com/openebs/libcstor.git
     - cd libcstor
     - if [ ${TRAVIS_BRANCH} == "develop" ]; then git checkout master; else git checkout ${TRAVIS_BRANCH} || git checkout master; fi
@@ -96,12 +96,12 @@ install:
         make --no-print-directory -s pkg-utils pkg-kmod || travis_terminate 1;
         sudo dpkg -i *.deb || travis_terminate 1;
       fi
-    # Return to libcstor code to complie zrepl which contains main and to run lint checks
-    # save the current location to get back
+    # Return to libcstor code to complie zrepl which is responsible for uZFS feature.
+    # Save the current location to get back
     - pushd .
     - cd ..
     - cd libcstor
-    # Go to zrepl directory to build zrepl related targets
+    # Go to zrepl directory to build zrepl
     - cd cmd/zrepl
     - make
     - cd ../../
@@ -164,7 +164,7 @@ script:
 
         REL_BRANCH=$(echo $(echo "$TRAVIS_TAG" | cut -d'-' -f1 | rev | cut -d'.' -f2- | rev).x$REL_SUFFIX);
 
-        ./buildscripts/git-release "$REPO_ORG/istgt" "$TRAVIS_TAG" "$REL_BRANCH" || travis_terminate 1;
+        ./buildscripts/git-release "$REPO_ORG/libcstor" "$TRAVIS_TAG" "$REL_BRANCH" || travis_terminate 1;
       fi
 after_failure:
     - find /var/tmp/test_results/current/log -type f -name '*' -printf "%f\n" -exec cut -c -$ZFS_TEST_TRAVIS_LOG_MAX_LENGTH {} \;

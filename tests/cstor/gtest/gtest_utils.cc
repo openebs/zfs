@@ -64,7 +64,14 @@ std::string GtestUtils::getCmdPath(std::string zfsCmd) {
 	std::string cmdPath;
 	const char *srcPath = std::getenv("SRC_PATH");
 
-	if (srcPath == nullptr) {
+	// Since the zrepl has been moved from cstor
+	// to libcstor base path of zrepl will be ../libcstor
+
+	// NOTE: It is assumed that cstor and libcstor will
+	// exist in same parent directory
+	if (zfsCmd == "zrepl" ) {
+		cmdPath = "../libcstor";
+	} else if (srcPath == nullptr) {
 		cmdPath += ".";
 	} else {
 		cmdPath = srcPath;

@@ -28,28 +28,14 @@ jobs:
         - RUN_UZFS_TESTS=0
         - RUN_ZTESTS=1
         - RELEASE_TAG_DOWNSTREAM=0
-    - os: linux
-      arch: arm64
-      env:
-        - ZFS_BUILD_TAGS=1
-        - RUN_UZFS_TESTS=0
-        - RUN_ZTESTS=0
-        - RELEASE_TAG_DOWNSTREAM=0
-
 before_install:
     - sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
     - sudo apt-get update -qq
     - sudo apt-get install --yes -qq gcc-6 g++-6
     - sudo apt-get install --yes -qq build-essential autoconf libtool gawk alien fakeroot libaio-dev jq
-    # linux-header package name is different on arm. 
-    - if [ "$TRAVIS_CPU_ARCH" == "arm64" ]; then
-        sudo apt-get install --yes -qq linux-headers-generic;
-      else
-        sudo apt-get install --yes -qq linux-headers-$(uname -r);
-      fi
+    - sudo apt-get install --yes -qq linux-headers-$(uname -r);
     - sudo apt-get install --yes -qq zlib1g-dev uuid-dev libattr1-dev libblkid-dev libselinux-dev libudev-dev libssl-dev libjson-c-dev
     - sudo apt-get install --yes -qq lcov libjemalloc-dev
-    # packages for tests - only on amd64
     - if [ "$TRAVIS_CPU_ARCH" == "amd64" ]; then
         sudo apt-get install --yes -qq parted lsscsi ksh attr acl nfs-kernel-server fio;
       fi
@@ -74,7 +60,7 @@ install:
     # we need fio repo to build zfs replica fio engine
     - git clone https://github.com/axboe/fio
     - cd fio
-    - git checkout fio-3.7
+    - git checkout fio-3.9
     - ./configure
     - make -j4
     - cd ..
@@ -90,7 +76,7 @@ install:
         sudo dpkg -i *.deb;
       fi
     - cd ..
-    # Build libcstor for uzfs feature
+    # Clone and build libcstor for uzfs feature
     - git clone https://github.com/openebs/libcstor.git
     - cd libcstor
     - if [ ${TRAVIS_BRANCH} == "develop" ]; then git checkout master; else git checkout ${TRAVIS_BRANCH} || git checkout master; fi
@@ -110,6 +96,14 @@ install:
         make --no-print-directory -s pkg-utils pkg-kmod || travis_terminate 1;
         sudo dpkg -i *.deb || travis_terminate 1;
       fi
+    # Return to libcstor code to complie zrepl which is responsible for uZFS feature.
+    # Save the current location to get back
+    - pushd .
+    # Go to zrepl directory to build zrepl
+    - cd ../libcstor/cmd/zrepl
+    - make
+    # return to cstor code
+    - popd
 before_script:
     - make cstyle;
 script:
@@ -123,9 +117,7 @@ script:
         sudo /sbin/modprobe zfs;
         travis_wait 10 /sbin/ztest || travis_terminate 1;
       fi
-    - if [ $ZFS_BUILD_TAGS = 1 ]; then
-        ./build_image.sh || travis_terminate 1;
-      fi
+
     # If this build is running due to travis release tag, and
     # this job indicates to push the release downstream, then
     # go ahead and tag the dependent repo.
@@ -169,7 +161,7 @@ script:
 
         REL_BRANCH=$(echo $(echo "$TRAVIS_TAG" | cut -d'-' -f1 | rev | cut -d'.' -f2- | rev).x$REL_SUFFIX);
 
-        ./buildscripts/git-release "$REPO_ORG/istgt" "$TRAVIS_TAG" "$REL_BRANCH" || travis_terminate 1;
+        ./buildscripts/git-release "$REPO_ORG/libcstor" "$TRAVIS_TAG" "$REL_BRANCH" || travis_terminate 1;
       fi
 after_failure:
     - find /var/tmp/test_results/current/log -type f -name '*' -printf "%f\n" -exec cut -c -$ZFS_TEST_TRAVIS_LOG_MAX_LENGTH {} \;

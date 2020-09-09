@@ -28,8 +28,7 @@
 #include <sys/txg.h>
 #include <libzfs.h>
 #include <zrepl_mgmt.h>
-
-#include "zfs_events.h"
+#include <zfs_events.h>
 
 /*
  * Print vdev state change event in user friendly way.

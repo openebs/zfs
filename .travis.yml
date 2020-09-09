@@ -99,12 +99,9 @@ install:
     # Return to libcstor code to complie zrepl which is responsible for uZFS feature.
     # Save the current location to get back
     - pushd .
-    - cd ..
-    - cd libcstor
     # Go to zrepl directory to build zrepl
-    - cd cmd/zrepl
+    - cd ../libcstor/cmd/zrepl
     - make
-    - cd ../../
     # return to cstor code
     - popd
 before_script:

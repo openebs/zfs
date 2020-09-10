@@ -96,14 +96,15 @@ install:
         make --no-print-directory -s pkg-utils pkg-kmod || travis_terminate 1;
         sudo dpkg -i *.deb || travis_terminate 1;
       fi
-    # Return to libcstor code to complie zrepl which is responsible for uZFS feature.
-    # Save the current location to get back
-    - pushd .
-    # Go to zrepl directory to build zrepl
-    - cd ../libcstor/cmd/zrepl
-    - make
-    # return to cstor code
-    - popd
+    - if [ $ZFS_BUILD_TAGS = 1 ]; then
+        # Return to libcstor code to complie zrepl which is responsible for uZFS feature.
+        # Save the current location to get back
+        pushd .;
+        # Go to zrepl directory to build zrepl
+        cd ../libcstor/cmd/zrepl && make || travis_terminate 1;
+        # return to cstor code
+        popd;
+      fi
 before_script:
     - make cstyle;
 script:

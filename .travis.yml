@@ -101,7 +101,9 @@ install:
     - pushd .
     # Go to zrepl directory to build zrepl
     - cd ../libcstor/cmd/zrepl
-    - make
+    - if [ $ZFS_BUILD_TAGS = 1 ]; then
+         make;
+      fi
     # return to cstor code
     - popd
 before_script:

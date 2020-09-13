@@ -91,9 +91,9 @@ install:
       fi
     - cd ..
     # Get base name of from where we need to download libcstor
-    - repo_name=${PWD##*/}
+    - repo_org=${PWD##*/}
     # Build libcstor for uzfs feature
-    - git clone https://github.com/${repo_name}/libcstor.git
+    - git clone https://github.com/${repo_org}/libcstor.git
     - cd libcstor
     - if [ ${TRAVIS_BRANCH} == "develop" ]; then git checkout master; else git checkout ${TRAVIS_BRANCH} || git checkout master; fi
     - sh autogen.sh;

@@ -94,8 +94,8 @@ install:
     - repo_org=${PWD##*/}
     # Build libcstor for uzfs feature
     - git clone https://github.com/${repo_org}/libcstor.git
+    - ./cstor/checkout_libcstor_relavantbranch.sh
     - cd libcstor
-    - if [ ${TRAVIS_BRANCH} == "develop" ]; then git checkout master; else git checkout ${TRAVIS_BRANCH} || git checkout master; fi
     - sh autogen.sh;
     - ./configure --enable-debug --with-zfs-headers=$PWD/../cstor/include --with-spl-headers=$PWD/../cstor/lib/libspl/include
     - make -j4;

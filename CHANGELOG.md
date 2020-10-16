@@ -1,3 +1,7 @@
+v2.2.0 / 2020-10-13
+========================
+
+
 v2.1.0 / 2020-09-14
 ========================
 * chore(build): remove build process from repo ([#319](https://github.com/openebs/cstor/pull/319),[@mittachaitu](https://github.com/mittachaitu))

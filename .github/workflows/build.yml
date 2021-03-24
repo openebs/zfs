@@ -39,5 +39,9 @@ jobs:
             sudo bash ../libcstor/tests/cstor/script/test_uzfs.sh -T all || exit 1
           else
             sudo /sbin/modprobe zfs
-            travis_wait 10 /sbin/ztest || exit 1
+            /sbin/ztest || exit 1
           fi
+
+      - name: Print Logs
+        if: ${{ success() || failure() }}
+        run: find /var/tmp/test_results/current/log -type f -name '*' -printf "%f\n"

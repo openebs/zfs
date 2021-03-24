@@ -9,17 +9,19 @@
 
 if [ -z "${REPO_ORG}" ]; then
   echo "REPO_ORG variable not set. Required for fetching dependent build repositories"
+  exit 1
 else
   echo "Using repository organization: ${REPO_ORG}"
 fi
 
 if [ -z "${BRANCH}" ]; then
   echo "BRANCH variable not set. Required for checking out libcstor repository"
+  exit 1
 else
-  echo "Using branch: ${BRANHC} for libcstor"
+  echo "Using branch: ${BRANCH} for libcstor"
 fi
 
-if [ $UZFS_BUILD = 1 ]; then
+if [ "$UZFS_BUILD" = 1 ]; then
   echo "Installing dependencies for uZFS features"
 else
   echo "Installing dependencies for kernel mode ZFS"
@@ -56,7 +58,7 @@ git checkout spl-0.7.9
 sh autogen.sh
 ./configure
 
-if [ $UZFS_BUILD = 1 ]; then
+if [ "$UZFS_BUILD" = 1 ]; then
   make -j4
 else
   make --no-print-directory -s pkg-utils pkg-kmod
@@ -68,7 +70,7 @@ cd ..
 # Build libcstor for uzfs feature
 git clone https://github.com/${REPO_ORG}/libcstor.git
 cd libcstor || exit 1
-if [ ${BRANCH} == "develop" ]; then
+if [ "${BRANCH}" == "develop" ]; then
   git checkout master
 else
   git checkout ${BRANCH} || git checkout master
@@ -84,7 +86,7 @@ sudo ldconfig
 popd || exit 1
 
 sh autogen.sh
-if [ $UZFS_BUILD = 1 ]; then
+if [ "$UZFS_BUILD" = 1 ]; then
   ./configure --with-config=user --enable-debug --enable-uzfs=yes --with-jemalloc --with-fio=$PWD/../fio --with-libcstor=$PWD/../libcstor/include || exit 1
   make -j4
 else
@@ -94,7 +96,7 @@ else
 fi
 
 # If build is to build uZFS feature then go to zrepl in libcstor and build zrepl binary
-if [ $UZFS_BUILD = 1 ]; then
+if [ "$UZFS_BUILD" = 1 ]; then
   pushd .
   cd ../libcstor/cmd/zrepl && make || exit 1
   popd || exit 1

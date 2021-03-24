@@ -25,12 +25,13 @@ jobs:
         run: buildscripts/install-tool-dep.sh
 
       - name: Install Build dependencies
-        run: UZFS_BUILD=${{ matrix.uzfs_build }} buildscipts/install-build-dep.sh
+        run: UZFS_BUILD=${{ matrix.uzfs_build }} buildscripts/install-build-dep.sh
 
       - name: Check style
         run: make cstyle
 
       - name: Run Tests
+        # run ztest and test supported zio backends
         run: |
           if [ "${{ matrix.uzfs_build }}" = 1 ]; then
             export FIO_SRCDIR=$PWD/../fio

@@ -7,7 +7,6 @@
 # Optional variables
 # $UZFS_BUILD variable need to be set. If not kernel mode zfs will be built
 
-# TODO add checks here for variables
 if [ -z "${REPO_ORG}" ]; then
   echo "REPO_ORG variable not set. Required for fetching dependent build repositories"
 else

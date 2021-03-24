@@ -36,8 +36,9 @@ sudo make -j4
 sudo cp *.a /usr/lib
 popd || exit 1
 
-# move to parent directory and clone dependent repositories
+# save the current location of cstor code to get back after installing dependencies
 pushd .
+# move to parent directory and clone dependent repositories
 cd ..
 
 # we need fio repo to build zfs replica fio engine
@@ -46,9 +47,6 @@ cd fio || exit 1
 git checkout fio-3.9
 ./configure
 make -j4
-
-# save the current location of cstor code to get back after installing dependencies
-pushd .
 
 cd ..
 
@@ -85,8 +83,6 @@ sudo ldconfig
 
 # return to cstor code
 popd || exit 1
-
-echo "Current directory = $PWD"
 
 sh autogen.sh
 if [ "$UZFS_BUILD" = 1 ]; then

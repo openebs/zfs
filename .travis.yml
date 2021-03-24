@@ -31,7 +31,7 @@ jobs:
 before_install:
     - buildscripts/install-tool-dep.sh
 install:
-    - buildscripts/install-build-dep.sh
+    - UZFS_BUILD=${ZFS_BUILD_TAGS} BRANCH=${TRAVIS_BRANCH} REPO_ORG=openebs buildscripts/install-build-dep.sh
 before_script:
     - make cstyle;
 script:

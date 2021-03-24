@@ -33,7 +33,7 @@ before_install:
 install:
     - UZFS_BUILD=${ZFS_BUILD_TAGS} BRANCH=${TRAVIS_BRANCH} REPO_ORG=openebs buildscripts/install-build-dep.sh
 before_script:
-    - make cstyle
+    - make cstyle;
 script:
     # run ztest and test supported zio backends
     - if [ $RUN_UZFS_TESTS = 1 ]; then

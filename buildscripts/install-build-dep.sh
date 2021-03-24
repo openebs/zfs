@@ -37,6 +37,7 @@ sudo cp *.a /usr/lib
 popd || exit 1
 
 # move to parent directory and clone dependent repositories
+pushd .
 cd ..
 
 # we need fio repo to build zfs replica fio engine

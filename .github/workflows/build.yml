@@ -19,7 +19,7 @@ jobs:
           BRANCH="${GITHUB_REF##*/}"
           REPO_ORG=${{ github.repository_owner }}
           echo "BRANCH=${BRANCH}" >> $GITHUB_ENV
-          echo "REPO_ORG=${REPO}" >> $GITHUB_ENV
+          echo "REPO_ORG=${REPO_ORG}" >> $GITHUB_ENV
 
       - name: Install Tool dependencies
         run: buildscripts/install-tool-dep.sh

@@ -86,6 +86,8 @@ sudo ldconfig
 # return to cstor code
 popd || exit 1
 
+echo "Current directory = $PWD"
+
 sh autogen.sh
 if [ "$UZFS_BUILD" = 1 ]; then
   ./configure --with-config=user --enable-debug --enable-uzfs=yes --with-jemalloc --with-fio=$PWD/../fio --with-libcstor=$PWD/../libcstor/include || exit 1

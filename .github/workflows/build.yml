@@ -44,4 +44,10 @@ jobs:
 
       - name: Print Logs
         if: ${{ success() || failure() }}
-        run: find /var/tmp/test_results/current/log -type f -name '*' -printf "%f\n"
+        run: |
+          LOG_FILE="/var/tmp/test_results/current/log"
+          if [ -f "${LOG_FILE}" ]; then
+            find /var/tmp/test_results/current/log -type f -name '*' -printf "%f\n"
+          else
+            echo "Log file: ${LOG_FILE} not found"
+          fi

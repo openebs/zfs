@@ -28,7 +28,11 @@ jobs:
         run: UZFS_BUILD=${{ matrix.uzfs_build }} buildscripts/install-build-dep.sh
 
       - name: Check style
-        run: make cstyle
+        run: |
+          ls $PWD
+          ls $PWD/..
+          ls $PWD/../..
+          make cstyle
 
       - name: Run Tests
         # run ztest and test supported zio backends
@@ -36,7 +40,7 @@ jobs:
           if [ "${{ matrix.uzfs_build }}" = 1 ]; then
             export FIO_SRCDIR=$PWD/../fio
             sudo bash ./print_debug_info.sh &
-            sudo bash FIO_SRCDIR=$PWD/../fio ../libcstor/tests/cstor/script/test_uzfs.sh -T all || exit 1
+            sudo bash ../libcstor/tests/cstor/script/test_uzfs.sh -T all || exit 1
           else
             sudo /sbin/modprobe zfs
             /sbin/ztest || exit 1

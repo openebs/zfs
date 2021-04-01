@@ -28,11 +28,7 @@ jobs:
         run: UZFS_BUILD=${{ matrix.uzfs_build }} buildscripts/install-build-dep.sh
 
       - name: Check style
-        run: |
-          ls $PWD
-          ls $PWD/..
-          ls $PWD/../..
-          make cstyle
+        run: make cstyle
 
       - name: Run Tests
         # run ztest and test supported zio backends

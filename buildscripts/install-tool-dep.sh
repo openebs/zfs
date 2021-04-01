@@ -10,6 +10,7 @@ sudo apt-get install --yes -qq build-essential autoconf libtool gawk alien faker
 sudo apt-get install --yes -qq linux-headers-$(uname -r);
 sudo apt-get install --yes -qq zlib1g-dev uuid-dev libattr1-dev libblkid-dev libselinux-dev libudev-dev libssl-dev libjson-c-dev
 sudo apt-get install --yes -qq lcov libjemalloc-dev
+sudo apt-get install --yes -qq bc
 
 # The below packages are to be installed only if the processor is x86_64
 if [ "$ARCH" == "x86_64" ]; then

@@ -9,7 +9,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        uzfs_build: [1]
+        uzfs_build: [0]
     steps:
       - name: Checkout
         uses: actions/checkout@v2

@@ -51,6 +51,3 @@ jobs:
             sudo /sbin/modprobe zfs
             /sbin/ztest || exit 1
           fi
-
-  downstream-tagging:
-    if:

@@ -9,7 +9,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        uzfs_build: [0]
+        uzfs_build: [0, 1]
     steps:
       - name: Checkout
         uses: actions/checkout@v2
@@ -32,22 +32,12 @@ jobs:
 
       - name: Run Tests
         # run ztest and test supported zio backends
+        shell: bash
         run: |
           if [ "${{ matrix.uzfs_build }}" = 1 ]; then
-            export FIO_SRCDIR=$PWD/../fio
             sudo bash ./print_debug_info.sh &
-            sudo bash ../libcstor/tests/cstor/script/test_uzfs.sh -T all || exit 1
+            sudo FIO_SRCDIR=$PWD/../fio bash ../libcstor/tests/cstor/script/test_uzfs.sh -T all || exit 1
           else
             sudo /sbin/modprobe zfs
             /sbin/ztest || exit 1
-          fi
-
-      - name: Print Logs
-        if: ${{ success() || failure() }}
-        run: |
-          LOG_FILE="/var/tmp/test_results/current/log"
-          if [ -f "${LOG_FILE}" ]; then
-            find /var/tmp/test_results/current/log -type f -name '*' -printf "%f\n"
-          else
-            echo "Log file: ${LOG_FILE} not found"
           fi

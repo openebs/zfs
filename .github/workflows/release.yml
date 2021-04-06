@@ -1,13 +1,8 @@
-name: Build & CI
+name: Release
 
 on:
-  push:
-    branches:
-      - develop
-      - 'v*'
-  pull_request:
-    branches:
-      - develop
+  create:
+    tags:
       - 'v*'
 
 jobs:
@@ -51,4 +46,15 @@ jobs:
           fi
 
   downstream-tagging:
-    if:
+    runs-on: ubuntu-latest
+    needs: ['cstor']
+    steps:
+      - name: Downstream tagging
+        uses: akhilerm@openebs-release-mgmt@v1.1.0
+        with:
+          tag-name: ${{ github.ref }}
+          body: 'Release created from cstor'
+          repo: |
+            libcstor
+          # GR_TOKEN secret is the access token to perform github releases
+          github-token: ${{ secrets.GR_TOKEN }}

@@ -4,10 +4,12 @@ on:
   push:
     branches:
       - develop
+      - zfs-0.7-release
       - 'v*'
   pull_request:
     branches:
       - develop
+      - zfs-0.7-release
       - 'v*'
 
 jobs:

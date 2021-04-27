@@ -1,0 +1,53 @@
+name: Build & CI
+
+on:
+  push:
+    branches:
+      - develop
+      - zfs-0.7-release
+      - 'v*'
+  pull_request:
+    branches:
+      - develop
+      - zfs-0.7-release
+      - 'v*'
+
+jobs:
+
+  cstor:
+    runs-on: ubuntu-16.04
+    strategy:
+      fail-fast: true
+      matrix:
+        uzfs_build: [0, 1]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Set Branch
+        run: |
+          BRANCH="${GITHUB_REF##*/}"
+          REPO_ORG=${{ github.repository_owner }}
+          echo "BRANCH=${BRANCH}" >> $GITHUB_ENV
+          echo "REPO_ORG=${REPO_ORG}" >> $GITHUB_ENV
+
+      - name: Install Tool dependencies
+        run: buildscripts/install-tool-dep.sh
+
+      - name: Install Build dependencies
+        run: UZFS_BUILD=${{ matrix.uzfs_build }} buildscripts/install-build-dep.sh
+
+      - name: Check style
+        run: make cstyle
+
+      - name: Run Tests
+        # run ztest and test supported zio backends
+        shell: bash
+        run: |
+          if [ "${{ matrix.uzfs_build }}" = 1 ]; then
+            sudo bash ./print_debug_info.sh &
+            sudo FIO_SRCDIR=$PWD/../fio bash ../libcstor/tests/cstor/script/test_uzfs.sh -T all || exit 1
+          else
+            sudo /sbin/modprobe zfs
+            /sbin/ztest || exit 1
+          fi

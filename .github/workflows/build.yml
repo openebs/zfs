@@ -1,16 +1,23 @@
 name: Build & CI
 
 on:
+  create:
   push:
     branches:
       - develop
       - zfs-0.7-release
       - 'v*'
+    paths-ignore:
+      - '*.md'
+      - 'changelogs/**'
   pull_request:
     branches:
       - develop
       - zfs-0.7-release
       - 'v*'
+    paths-ignore:
+      - '*.md'
+      - 'changelogs/**'
 
 jobs:
 

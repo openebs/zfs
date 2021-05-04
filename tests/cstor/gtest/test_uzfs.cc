@@ -2344,7 +2344,7 @@ TEST(uZFSRebuild, TestErroredRebuild) {
 	reader_thread = zk_thread_create(NULL, 0,
 	    verify_ios_from_two_replica, &wargs, 0, NULL, TS_RUN,
 	    0, 0);
-	zk_thread_join(writer_thread->t_tid);
+	zk_thread_join(reader_thread->t_tid);
 
 	uint64_t quorum = 0;
 	EXPECT_EQ(0, dsl_prop_get_integer(zinfo->main_zv->zv_name,

@@ -2329,15 +2329,13 @@ TEST(uZFSRebuild, TestErroredRebuild) {
 	writer_thread = zk_thread_create(NULL, 0,
 	    send_ios_to_replicas, &wargs, 0, NULL, TS_RUN,
 	    0, 0);
-
+    zk_thread_join(writer_thread->t_tid);
 	zvol_rebuild_step_size =  (10 * 1024ULL * 1024ULL * 1024ULL);
 #ifdef DEBUG
 	inject_error.inject_rebuild_error.dw_replica_rebuild_error_io = 0;
 #endif
 	execute_rebuild_test_case("complete rebuild with data conn", 15,
 	    ZVOL_REBUILDING_SNAP, ZVOL_REBUILDING_DONE, 6, "vol3");
-
-	zk_thread_join(writer_thread->t_tid);
 
 	wargs.start_offset = 0;
 	wargs.total_len = (2 * total_ios) *4096;
